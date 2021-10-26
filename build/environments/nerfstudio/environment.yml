@@ -1,0 +1,19 @@
+name: ns
+channels:
+  - nvidia/label/cuda-12.1.0
+  - conda-forge
+dependencies:
+  - python=3.11
+  - cuda-toolkit=12.1
+  - cuda-cudart=12.1.55
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - sysroot_linux-64=2.17
+  - cmake
+  - ninja
+  - libxcrypt
+  - libxcrypt1
+  - setuptools
+  - uv
+  - ffmpeg
+

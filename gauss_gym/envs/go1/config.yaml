@@ -1,0 +1,710 @@
+seed: -1
+task: 'go1'
+print_config: False
+rl_device: 'cuda:0'
+sim_device: 'cuda:0'
+graphics_device: 'cuda:0'
+headless: False
+logdir: 'default'
+multi_gpu: False
+multi_gpu_global_rank: 0
+multi_gpu_local_rank: 0
+multi_gpu_world_size: 1
+master_addr: '127.0.0.1'
+
+env:
+  num_envs: 2048
+  env_spacing: 8.0
+  send_timeouts: True # For value bootstrap.
+  episode_length_s: 40.
+
+  force_renderer: False
+  camera_params:
+    # Different realsense intrinsics: https://pastebin.com/fRwwuBmd
+    # 69.95 x 43.18 FOV
+    cam_width: 424
+    cam_height: 240
+    fl_x: 303.042358398438
+    fl_y: 303.17578125
+    pp_x: 213.575500488281
+    pp_y: 124.642997741699
+    # # 70.29 x 43.18 FOV
+    # cam_width: 320
+    # cam_height: 180
+    # fl_x: 227.281799316406
+    # fl_y: 227.381851196289
+    # pp_x: 161.181625366211
+    # pp_y: 93.4822463989258
+
+    # How much to downscale the image (and intrinsics) by.
+    downscale_factor: 5.0
+
+    # Cam offset relative to `asset.camera_link_name`.
+    cam_xyz_offset: [0., 0., 0.]
+    cam_rpy_offset: [0., 0., 3.1416]
+
+observations:
+  # image_encoder:
+  #   add_noise: True
+  #   add_latency: True
+  #   latency_resampling_interval_s: 3.0
+  #   observations: [
+  #     CAMERA_IMAGE, PROJECTED_GRAVITY #, DOF_POS, DOF_VEL, ACTIONS
+  #   ]
+  critic:
+    observations: [
+        BASE_LIN_VEL,
+        BASE_ANG_VEL,
+        PROJECTED_GRAVITY,
+        VELOCITY_COMMANDS,
+        DOF_POS,
+        DOF_VEL,
+        ACTIONS,
+        RAY_CAST,
+        BASE_MASS_SCALED,
+        DOF_FRICTION,
+        DOF_ARMATURE,
+        PUSHING_FORCES,
+        PUSHING_TORQUES,
+        HIP_HEIGHTS,
+        BASE_HEIGHT,
+        FEET_AIR_TIME,
+        FEET_CONTACT_TIME,
+        FEET_CONTACT,
+        STIFFNESS,
+        DAMPING,
+        MOTOR_STRENGTH,
+        MOTOR_ERROR,
+        #, IMAGE_ENCODER_LATENT
+      ]
+  policy:
+    add_noise: True
+    add_latency: True
+    latency_resampling_interval_s: 3.0
+    observations: [
+        BASE_ANG_VEL,
+        PROJECTED_GRAVITY,
+        VELOCITY_COMMANDS,
+        DOF_POS,
+        DOF_VEL,
+        ACTIONS,
+        #, IMAGE_ENCODER_LATENT
+      ]
+    sync_latency:
+      [BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS, DOF_POS, DOF_VEL]
+
+symmetries:
+  image_encoder:
+    symmetries:
+      [CAMERA_IMAGE, PROJECTED_GRAVITY, A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS]
+  critic:
+    symmetries:
+      [
+        BASE_LIN_VEL,
+        BASE_ANG_VEL,
+        PROJECTED_GRAVITY,
+        VELOCITY_COMMANDS,
+        A1_DOF_POS,
+        A1_DOF_VEL,
+        A1_ACTIONS,
+        RAY_CAST,
+        BASE_MASS_SCALED,
+        A1_DOF_FRICTION,
+        A1_DOF_ARMATURE,
+        PUSHING_FORCES,
+        PUSHING_TORQUES,
+        A1_HIP_HEIGHTS,
+        BASE_HEIGHT,
+        A1_FEET_AIR_TIME,
+        A1_FEET_CONTACT_TIME,
+        A1_FEET_CONTACT,
+        A1_STIFFNESS,
+        A1_DAMPING,
+        A1_MOTOR_STRENGTH,
+        A1_MOTOR_ERROR,
+        CAMERA_IMAGE,
+        IMAGE_ENCODER_LATENT,
+      ]
+  policy:
+    symmetries:
+      [
+        BASE_ANG_VEL,
+        PROJECTED_GRAVITY,
+        VELOCITY_COMMANDS,
+        A1_DOF_POS,
+        A1_DOF_VEL,
+        A1_ACTIONS,
+        CAMERA_IMAGE,
+        RAY_CAST,
+        IMAGE_ENCODER_LATENT,
+      ]
+  actions:
+    symmetries: [A1_ACTIONS, A1_STIFFNESS, A1_DAMPING]
+
+terrain:
+  scene_root: '{GAUSS_GYM_ROOT_DIR}/scenes'
+  cams_yaw_only: False
+  static_friction: 1.0
+  dynamic_friction: 1.0
+  restitution: 0.
+  num_mesh_repeats: 1
+
+  scenes:
+    max_num_scenes: 10
+    iphone_data:
+      class_name: GaussGymData
+      split_frac: 0.5
+      repo_id: 'escontra/gauss_gym_data'
+      scene: ''
+    grand_tour:
+      class_name: GrandTourData
+      split_frac: 0.5
+      mission: ''
+    arkit:
+      class_name: ARKitData
+      split_frac: 0.0
+      split: 'Training'
+
+init_state:
+  pos: [0.0, 0.0, 0.55]
+  rot: [0.0, 0.0, 0.0, 1.0]
+  lin_vel: [0.0, 0.0, 0.0]
+  ang_vel: [0.0, 0.0, 0.0]
+  default_joint_angles:
+    {
+      'FL_hip_joint': 0.1,
+      'RL_hip_joint': 0.1,
+      'FR_hip_joint': -0.1,
+      'RR_hip_joint': -0.1,
+      'FL_thigh_joint': 0.8,
+      'RL_thigh_joint': 1.0,
+      'FR_thigh_joint': 0.8,
+      'RR_thigh_joint': 1.0,
+      'FL_calf_joint': -1.5,
+      'RL_calf_joint': -1.5,
+      'FR_calf_joint': -1.5,
+      'RR_calf_joint': -1.5,
+    }
+
+control:
+  control_type: 'P'
+  stiffness: { 'joint': 40.0 }
+  damping: { 'joint': 0.5 }
+  decimation: 4
+  torque_limits: [20., 20., 25., 20., 20., 25., 20., 20., 25., 20., 20., 25.]
+  computer_clip_torque: False
+  motor_clip_torque: False
+
+asset:
+  file: '{GAUSS_GYM_ROOT_DIR}/resources/robots/go1/urdf/go1.urdf'
+  mujoco_file: '{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/xml/a1.xml'
+  name: 'go1'
+  base_link_name: 'trunk'
+  camera_link_name: 'camera_optical_face'
+  foot_name: 'foot'
+  hip_link_names: ['FR_hip', 'FL_hip', 'RR_hip', 'RL_hip']
+  front_hip_names: ['FR_hip_joint', 'FL_hip_joint']
+  rear_hip_names: ['RR_hip_joint', 'RL_hip_joint']
+  penalize_contacts_on: ['thigh', 'calf', 'hip', 'imu']
+  terminate_after_contacts_on: ['trunk', 'base', 'imu']
+  feet_edge_pos: [[0.0, 0.0, 0.0]]
+  feet_contact_radius: 0.0201
+
+  disable_joint_limits: False # To overcome Sim2Real exploit jonas mentioned.
+  disable_gravity: False
+  collapse_fixed_joints: False
+  fix_base_link: False
+  default_dof_drive_mode: 3
+  self_collisions: 1
+  replace_cylinder_with_capsule: True
+  flip_visual_attachments: True
+
+  density: 0.001
+  angular_damping: 0.
+  linear_damping: 0.
+  max_angular_velocity: 1000.
+  max_linear_velocity: 1000.
+  armature: 0.
+  thickness: 0.01
+
+domain_rand:
+  apply_domain_rand: True
+
+  camera_refresh_interval_s: 3.0
+  # Refresh duration. How often the camera image is refreshed.
+  # Not to be confused with the sythetic refresh_duration used in
+  # observation_manager.
+  refresh_duration:
+    apply: True
+    range: [0.05, 0.15]
+    operation: 'additive'
+    distribution: 'uniform'
+  focal_length:
+    apply: True
+    range: [0.0, 3.0]
+    operation: 'additive'
+    distribution: 'gaussian'
+  principal_point:
+    apply: True
+    range: [0.0, 1.0]
+    operation: 'additive'
+    distribution: 'gaussian'
+  camera_pos:
+    apply: True
+    range: [-0.02, 0.02]
+    operation: 'additive'
+    distribution: 'uniform'
+  camera_rot:
+    apply: True
+    range: [-0.03, 0.03]
+    operation: 'additive'
+    distribution: 'uniform'
+
+  init_dof_pos:
+    apply: True
+    range: [0.0, 0.05]
+    operation: 'additive'
+    distribution: 'gaussian'
+  init_base_lin_vel_xy:
+    apply: True
+    range: [0.0, 0.1]
+    operation: 'additive'
+    distribution: 'gaussian'
+  init_base_yaw:
+    apply: False
+    range: [0.0, 0.78]
+    operation: 'additive'
+    distribution: 'gaussian'
+
+  base_com_x:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: 'additive'
+    distribution: 'uniform'
+  base_com_y:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: 'additive'
+    distribution: 'uniform'
+  base_com_z:
+    apply: True
+    range: [-0.05, 0.05]
+    operation: 'additive'
+    distribution: 'uniform'
+  base_mass:
+    apply: True
+    range: [0.6, 1.4]
+    operation: 'scaling'
+    distribution: 'uniform'
+  other_com:
+    apply: True
+    range: [-0.005, 0.005]
+    operation: 'additive'
+    distribution: 'uniform'
+  other_mass:
+    apply: True
+    range: [0.9, 1.1]
+    operation: 'scaling'
+    distribution: 'uniform'
+
+  motor_strength:
+    apply: True
+    range: [0.8, 1.2]
+    operation: 'scaling'
+    distribution: 'uniform'
+  motor_error:
+    apply: True
+    range: [-0.03, 0.03]
+    operation: 'additive'
+    distribution: 'uniform'
+
+  dof_stiffness:
+    apply: True
+    range: [0.9, 1.1]
+    operation: 'scaling'
+    distribution: 'uniform'
+  dof_damping:
+    apply: True
+    range: [0.9, 1.1]
+    operation: 'scaling'
+    distribution: 'uniform'
+  dof_damping_ankles:
+    apply: False
+    ankle_names:
+      [
+        'Left_Ankle_Pitch',
+        'Right_Ankle_Pitch',
+        'Left_Ankle_Roll',
+        'Right_Ankle_Roll',
+      ]
+    range: [-0.5, 2.0]
+    operation: 'additive'
+    distribution: 'uniform'
+  dof_friction:
+    apply: False
+    range: [0.0, 2.0]
+    operation: 'additive'
+    distribution: 'uniform'
+  dof_friction_ig_property:
+    apply: True
+    range: [0.0, 0.1]
+    operation: 'additive'
+    distribution: 'uniform_buckets'
+    buckets: 255
+  dof_armature_ig_property:
+    apply: True
+    range: [0.0, 0.015]
+    operation: 'additive'
+    distribution: 'uniform'
+
+  foot_friction:
+    apply: True
+    range: [0.3, 2.0]
+    operation: 'additive'
+    distribution: 'uniform'
+  foot_compliance:
+    apply: True
+    range: [0.5, 1.5]
+    operation: 'additive'
+    distribution: 'uniform'
+  foot_restitution:
+    apply: True
+    range: [0.1, 0.9]
+    operation: 'additive'
+    distribution: 'uniform'
+
+  kick_interval_s: 4.0
+  kick_lin_vel:
+    apply: True
+    range: [-1.5, 1.5]
+    operation: 'additive'
+    distribution: 'uniform'
+  kick_ang_vel:
+    apply: True
+    range: [-1.5, 1.5]
+    operation: 'additive'
+    distribution: 'uniform'
+
+  push_interval_s: 8.0
+  push_duration_s: 1.0
+  push_force:
+    apply: True
+    range: [0., 10.]
+    operation: 'additive'
+    distribution: 'gaussian'
+  push_torque:
+    apply: True
+    range: [0., 2.]
+    operation: 'additive'
+    distribution: 'gaussian'
+
+termination:
+  base_height_threshold: 0.08
+  projected_gravity_z_threshold: 0.0
+
+rewards:
+  only_positive_rewards: False
+  scale_by_dt: False
+
+  task:
+    velocity:
+      vel_tracking.scale: 1.0
+      vel_tracking.tracking_sigma: 0.25
+      yaw_vel_tracking.scale: 0.5
+      yaw_vel_tracking.tracking_sigma: 0.25
+    goal:
+      pos_tracking.scale: 10.0
+      yaw_tracking.scale: 5.0
+      stand_at_target.scale: 0.0
+      move_in_direction.scale: 1.0
+      dont_wait.scale: -1.0
+      dont_wait.vel_threshold: 0.2
+  ang_vel_xy.scale: -0.15
+  action_rate.scale: -1.0
+  action_rate.use_action_mean: False
+  a1_pose2.scale: -0.5
+  feet_air_time:
+    scale: 1.0
+    min_air_time: 0.2
+    max_air_time: 0.2
+  stumble:
+    scale: -3.0
+    multiplier: 2.0
+  feet_slip:
+    scale: -0.1
+  feet_clearance:
+    scale: 1.0
+    clearance_distance: 0.08
+
+  # energy_substeps:
+  #   scale: -2.e-5
+  # lin_vel_z:
+  #   scale: -1.0
+  # ang_vel_xy:
+  #   scale: -0.05
+  # dof_acc:
+  #   scale: -6.25e-8
+  #   method: last
+  # torques:
+  #   scale: -0.0001
+  # feet_air_time:
+  #   scale: 1.0
+  #   min_air_time: 0.2
+  #   max_air_time: 0.2
+  # collision:
+  #   scale: -1.0
+  # action_rate:
+  #   scale: -0.1
+  #   use_action_mean: False
+  # a1_pose:
+  #   scale: 0.25
+  #   hip_weight: 1.0
+  #   thigh_weight: 0.1
+  #   calf_weight: 0.1
+  # stumble:
+  #   scale: -3.0
+  #   multiplier: 2.0
+  # feet_slip:
+  #   scale: -0.1
+  # feet_clearance:
+  #   scale: 1.0
+  #   clearance_distance: 0.08
+  # dof_pos_limits:
+  #   scale: -10.0
+  #   soft_dof_pos_limit: 0.9
+  # stand_still:
+  #   scale: -1.0
+  # # energy_substeps:
+  # #   scale: -0.0001
+
+reward_penalty_curriculum:
+  apply: True
+  init_penalty_scale: 0.5
+  min_penalty_scale: 0.3
+  max_penalty_scale: 1.0
+  min_episodes: 20
+  completion_down_threshold: 0.3
+  completion_up_threshold: 0.7
+  percent_change: 0.01
+
+  keys:
+    [
+      energy_substeps,
+      lin_vel_z,
+      ang_vel_xy,
+      dof_acc,
+      torques,
+      collision,
+      action_rate,
+      stumble,
+      feet_slip,
+      dof_pos_limits,
+      stand_still,
+    ]
+
+commands:
+  name: 'goal'
+
+  command_gains: False
+  command_gains_stiffness_range: [0.8, 1.2]
+  command_gains_damping_range: [0.8, 1.2]
+  gait_frequency: [0.8, 1.2]
+
+  velocity:
+    use_ground_positions: True
+    lin_vel_range: [0.1, 0.7]
+    ang_vel_yaw_range: [-1, 1]
+
+    max_traj_pos_distance: 1.0
+    max_traj_yaw_distance_rad: 6.28
+    still_proportion: 0.05
+
+    resampling_time: 4.
+
+    small_lin_vel_threshold: 0.0
+    small_ang_vel_threshold: 0.0
+
+    success_on_loop: False
+    truncate_on_success: True
+
+  goal:
+    goal_window_s: [10.0, 20.0]
+    use_ground_positions: True
+
+    goal_xyz: False
+    goal_distance: 5.0
+    goal_evaluation_time_s: 1.0
+    goal_reached_pos_only: True
+    goal_reached_pos_threshold: 0.25
+    goal_reached_yaw_threshold: 0.5
+    random_heading_goal: True
+
+    distance_curriculum: True
+    distance_schedule: [0.5, 10.0]
+    completion_up_threshold: 0.7
+    distance_up_amount: 0.5
+
+normalization:
+  filter_weight: 0.1
+
+sim:
+  physics_engine: 'SIM_PHYSX' # or "SIM_FLEX"
+  dt: 0.005
+  substeps: 1
+  gravity: [0.0, 0.0, -9.81]
+  up_axis: 1
+
+  physx:
+    num_subscenes: 0
+    num_threads: 10
+    solver_type: 1
+    num_position_iterations: 4
+    num_velocity_iterations: 0
+    contact_offset: 0.01
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.5
+    max_depenetration_velocity: 1.0
+    max_gpu_contact_pairs: 8_388_608 # 2^23
+    default_buffer_size_multiplier: 5
+    contact_collection: 2
+
+image_encoder:
+  class_name: RecurrentCNNModel
+  freeze_encoder: True
+  obs_key: image_encoder
+  reconstruct_observations:
+    [critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL]
+  voxel_height_levels: 24
+  num_updates_range: [1, 100]
+  init_num_updates: 20
+  num_steps_per_env: 10
+  train_ratio_scheduler:
+    warmup_steps: 100
+    train_ratio_warmup: 1.0
+    train_ratio_after: 0.1
+  learning_rate_scheduler:
+    warmup_steps: 100
+    learning_rate_warmup: 1.e-4
+    learning_rate_after: 5.e-5
+  params:
+    layer_activation: silu
+    recurrent_state_size: 512
+    recurrent_skip_connection: True
+    hidden_layer_sizes: [512, 256, 256]
+    symlog_inputs: True
+    normalize_obs: True
+    from_local: True
+    model_type: timm_test_convnext.r160_in1k
+    embedding_dim: 128
+    torchaug_transforms: True
+
+policy:
+  class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
+  learning_rate: 1.e-5
+  obs_key: policy
+  params:
+    layer_activation: silu
+    recurrent_state_size: 256
+    recurrent_skip_connection: True
+    hidden_layer_sizes: [256, 128]
+    symlog_inputs: True
+    normalize_obs: True
+    head:
+      actions:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.2
+          maxstd: 1.0
+          init_std: 0.9
+          outscale: 0.01
+      stiffness:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.1
+          bounded: True
+          outscale: 0.01
+      damping:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.1
+          bounded: True
+          outscale: 0.01
+
+value:
+  class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
+  learning_rate: 3.e-4
+  obs_key: critic
+  params:
+    layer_activation: silu
+    recurrent_state_size: 512
+    recurrent_skip_connection: True
+    hidden_layer_sizes: [512, 256, 128]
+    symlog_inputs: True
+    normalize_obs: True
+    head:
+      value:
+        class_name: TwoHotHead
+        params:
+          outscale: 0.0
+          bins: 254
+
+algorithm:
+  gamma: 0.97
+  lam: 0.95
+  actor_loss_coefs:
+    actions: 1.0
+    stiffness: 0.1
+    damping: 0.1
+  entropy_coefs:
+    actions: -0.01
+    stiffness: -0.001
+    damping: -0.001
+  desired_kl: 0.01
+  kl_adjust_value_lr: False
+  kl_key: actions
+  symmetry_loss: False
+  symmetry_augmentation: True
+  symmetry_flip_latents: True
+  symmetry_coefs:
+    actions: 3.0
+    stiffness: 3.0
+    damping: 3.0
+  num_learning_epochs: 5
+  num_mini_batches: 4
+  value_loss_coef: 1.0
+  use_clipped_value_loss: False
+  clip_param: 0.2
+  bound_coefs:
+    actions: 0.0
+  train_image_encoder: False
+  image_encoder_batch_size: 48
+  normalize_rewards: False
+  pmpo_advantages: False
+
+runner:
+  record_video: False
+  record_distance: [-1.8, -1.8, 0.5]
+  num_steps_per_env: 24
+  class_name: Runner
+  use_wandb: False
+  wandb_save_model: True
+  description: ''
+  log_every: 120.
+  save_every: 3600.
+  record_every: 3600.
+  record_frames: 300.
+  run_name: ''
+  resume: False
+  load_run: ''
+  checkpoint: -1
+  resume_path: ''
+  max_iterations: 30000
+  share_url: False

@@ -1,0 +1,20 @@
+name: gauss_gym
+channels:
+  - nvidia/label/cuda-12.1.0
+  - conda-forge
+dependencies:
+  - python=3.8
+  - cuda-toolkit=12.1
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - sysroot_linux-64=2.17
+  - cmake
+  - ninja
+  - libxcrypt
+  - libxcrypt1
+  - setuptools
+  - uv
+  - ffmpeg
+  - s5cmd
+  - unzip
+  - zlib

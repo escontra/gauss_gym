@@ -1,0 +1,19 @@
+name: masaenv
+channels:
+  - nvidia/label/cuda-11.8.0
+  - conda-forge
+dependencies:
+  - python=3.11
+  - cuda-toolkit=11.8
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - sysroot_linux-64=2.17
+  - cmake
+  - ninja
+  - libxcrypt
+  - libxcrypt1
+  - setuptools
+  - uv
+  - ffmpeg
+  - s5cmd
+

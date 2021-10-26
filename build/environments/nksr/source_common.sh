@@ -1,0 +1,2 @@
+WORKSPACE_DIR=$HOME/.nksr_deps
+CONDA_ROOT=$WORKSPACE_DIR/miniconda3

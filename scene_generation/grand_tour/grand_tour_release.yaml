@@ -1,0 +1,74 @@
+skip_start_seconds: 0
+skip_end_seconds: 0
+
+world_frame: dlio_map
+
+human_mask_erosion_tolerance: 200
+undistort_mask_erosion_tolerance: 10
+
+gsplat_slice_distance: 10.0
+
+global_lidar_distance_threshold: 0.1
+global_lidar_rot_threshold: 0.25 # rad.
+
+max_lidar_projection_distance: 12.0
+lidar_distance_threshold: 0.05
+lidar_rot_threshold: 0.25
+min_slice_size: 100
+pcl_voxel_size: 0.01
+mesh_bbox_width: 10
+mesh_bbox_height: 4.0
+mesh_detail_level: 0.5
+
+statistical_nb_neighbors: 50
+statistical_std_ratio: 1.5
+cluster_eps: 0.1
+cluster_min_points: 10
+cluster_min_size: 100
+
+create_mask_based_on_semantics: True
+create_depth_based_on_lidar: False
+
+lidars:
+  - tag: livox_points_undistorted
+    accumulate_scans: 1
+    scan_section: 'all'
+  - tag: hesai_points_undistorted
+    accumulate_scans: 1
+    scan_section: 'above'
+
+cameras:
+  - tag: hdr_front
+    blur_threshold: 0
+    distance_threshold: 0.05
+    rot_threshold: 0.25
+    hz: 4
+    # max_images: 300
+
+  - tag: hdr_left
+    blur_threshold: 0
+    distance_threshold: 0.05
+    rot_threshold: 0.25
+    hz: 4
+    # max_images: 300
+
+  - tag: hdr_right
+    blur_threshold: 0
+    distance_threshold: 0.05
+    rot_threshold: 0.25
+    hz: 4
+    # max_images: 300
+
+  # - tag: zed2i_right
+  #   blur_threshold: 125
+  #   distance_threshold: 0.25
+  #   hz: 2
+  #   # use_depth_image: False
+  #   # depth_image_topic: zed2i_depth
+  #   # offset_in_ms: 45
+
+  # - tag: zed2i_left
+  #   offset_in_ms: 45
+  #   blur_threshold: 125
+  #   distance_threshold: 0.25
+  #   hz: 2

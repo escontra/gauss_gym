@@ -1,0 +1,3 @@
+ENV_NAME=gauss_gym
+WORKSPACE_DIR=$HOME/.${ENV_NAME}_deps
+CONDA_ROOT=$WORKSPACE_DIR/miniconda3

@@ -1,0 +1,148 @@
+# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+# contributors may be used to endorse or promote products derived from
+# this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Copyright (c) 2021 ETH Zurich, Nikita Rudin
+
+import sys
+from isaacgym import gymapi
+import torch
+
+from gauss_gym.utils import timer
+
+
+# Base class for RL tasks
+class BaseTask:
+  def __init__(self, cfg):
+    self.gym = gymapi.acquire_gym()
+
+    self.num_envs = cfg['env']['num_envs']
+
+    # optimization flags for pytorch JIT
+    torch._C._jit_set_profiling_mode(False)
+    torch._C._jit_set_profiling_executor(False)
+
+    # allocate buffers
+    self.extras = {}
+
+    # create envs, sim and viewer
+    self.create_sim()
+
+    self.rew_dict = {}
+    self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+    self.episode_length_buf = torch.zeros(
+      self.num_envs, device=self.device, dtype=torch.long
+    )
+
+    self.gym.prepare_sim(self.sim)
+
+    # todo: read from config
+    self.enable_viewer_sync = True
+    self.viewer = None
+
+    self.selected_environment_changed = True
+    self.selected_environment = 0
+
+    # if running with a viewer, set up keyboard shortcuts and camera
+    if not self.headless:
+      # subscribe to keyboard shortcuts
+      self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
+      self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_ESCAPE, 'QUIT')
+      self.gym.subscribe_viewer_keyboard_event(
+        self.viewer, gymapi.KEY_V, 'toggle_viewer_sync'
+      )
+      self.gym.subscribe_viewer_keyboard_event(
+        self.viewer, gymapi.KEY_M, 'increase_selected'
+      )
+      self.gym.subscribe_viewer_keyboard_event(
+        self.viewer, gymapi.KEY_N, 'decrease_selected'
+      )
+      self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_L, 'select_all')
+
+  def get_observations(self):
+    raise NotImplementedError
+
+  def get_privileged_observations(self):
+    raise NotImplementedError
+
+  def reset_idx(self, env_ids):
+    """Reset selected robots"""
+    raise NotImplementedError
+
+  def reset(self):
+    """Reset all robots"""
+    raise NotImplementedError
+
+  def step(self, actions, actions_mean=None):
+    raise NotImplementedError
+
+  @timer.section('render')
+  def render(self, sync_frame_time=True):
+    if self.viewer:
+      # check for window closed
+      if self.gym.query_viewer_has_closed(self.viewer):
+        sys.exit()
+
+      # check for keyboard events
+      prev_selected_environment = self.selected_environment
+      for evt in self.gym.query_viewer_action_events(self.viewer):
+        if evt.action == 'QUIT' and evt.value > 0:
+          sys.exit()
+        elif evt.action == 'toggle_viewer_sync' and evt.value > 0:
+          self.enable_viewer_sync = not self.enable_viewer_sync
+        elif evt.action == 'increase_selected' and evt.value > 0:
+          if self.selected_environment < 0:
+            self.selected_environment = 0
+          elif self.selected_environment == self.num_envs - 1:
+            self.selected_environment = 0
+          else:
+            self.selected_environment += 1
+        elif evt.action == 'decrease_selected' and evt.value > 0:
+          if self.selected_environment < 0:
+            self.selected_environment = self.num_envs - 1
+          elif self.selected_environment == 0:
+            self.selected_environment = self.num_envs - 1
+          else:
+            self.selected_environment -= 1
+        elif evt.action == 'select_all' and evt.value > 0:
+          self.selected_environment = -1
+      self.selected_environment_changed = (
+        prev_selected_environment != self.selected_environment
+      )
+
+      # fetch results
+      if self.device != 'cpu':
+        self.gym.fetch_results(self.sim, True)
+
+      # step graphics
+      if self.enable_viewer_sync:
+        self.gym.step_graphics(self.sim)
+        self.gym.draw_viewer(self.viewer, self.sim, True)
+        if sync_frame_time:
+          self.gym.sync_frame_time(self.sim)
+      else:
+        self.gym.poll_viewer_events(self.viewer)
