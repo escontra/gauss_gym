@@ -32,11 +32,26 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 4096
+        # num_envs = 4096
+        num_envs = 64
         num_actions = 12
+        num_observations = 48
+        env_spacing = 6.0
+        focal_length = 200
+        cam_height = 256
+        cam_width = 256
 
     class terrain( LeggedRobotCfg.terrain ):
-        mesh_type = 'trimesh'
+        mesh_type = 'custom'
+        # scene_root = "{LEGGED_GYM_ROOT_DIR}/scenes/bridge"
+        # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
+        # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
+        scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
+        # splat_root = "/home/root-desktop/splat"
+        splat_root = "/home/root-desktop/exports/cathedral"
+        height_offset = -0.9
+        curriculum = False
+        measure_heights = False
 
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.6] # x,y,z [m]

@@ -28,6 +28,8 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
+# from tkinter import Image
+from PIL import Image
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from time import time
 from warnings import WarningMessage
@@ -40,6 +42,7 @@ from isaacgym import gymtorch, gymapi, gymutil
 import torch
 from torch import Tensor
 from typing import Tuple, Dict
+import torch.nn.functional as F
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
@@ -47,6 +50,103 @@ from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+from.batch_gs_renderer import BatchPLYRenderer
+import pathlib
+
+import matplotlib.pyplot as plt
+plt.ion()
+
+
+def _sqrt_positive_part(x: torch.Tensor) -> torch.Tensor:
+    """
+    Returns torch.sqrt(torch.max(0, x))
+    but with a zero subgradient where x is 0.
+    """
+    ret = torch.zeros_like(x)
+    positive_mask = x > 0
+    if torch.is_grad_enabled():
+        ret[positive_mask] = torch.sqrt(x[positive_mask])
+    else:
+        ret = torch.where(positive_mask, torch.sqrt(x), ret)
+    return ret
+
+
+def standardize_quaternion(quaternions: torch.Tensor) -> torch.Tensor:
+    """
+    Convert a unit quaternion to a standard form: one in which the real
+    part is non negative.
+
+    Args:
+        quaternions: Quaternions with real part first,
+            as tensor of shape (..., 4).
+
+    Returns:
+        Standardized quaternions as tensor of shape (..., 4).
+    """
+    return torch.where(quaternions[..., 0:1] < 0, -quaternions, quaternions)
+
+
+def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Convert rotations given as rotation matrices to quaternions.
+
+    Args:
+        matrix: Rotation matrices as tensor of shape (..., 3, 3).
+
+    Returns:
+        quaternions with real part first, as tensor of shape (..., 4).
+    """
+    if matrix.size(-1) != 3 or matrix.size(-2) != 3:
+        raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
+
+    batch_dim = matrix.shape[:-2]
+    m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(
+        matrix.reshape(batch_dim + (9,)), dim=-1
+    )
+
+    q_abs = _sqrt_positive_part(
+        torch.stack(
+            [
+                1.0 + m00 + m11 + m22,
+                1.0 + m00 - m11 - m22,
+                1.0 - m00 + m11 - m22,
+                1.0 - m00 - m11 + m22,
+            ],
+            dim=-1,
+        )
+    )
+
+    # we produce the desired quaternion multiplied by each of r, i, j, k
+    quat_by_rijk = torch.stack(
+        [
+            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+            #  `int`.
+            torch.stack([q_abs[..., 0] ** 2, m21 - m12, m02 - m20, m10 - m01], dim=-1),
+            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+            #  `int`.
+            torch.stack([m21 - m12, q_abs[..., 1] ** 2, m10 + m01, m02 + m20], dim=-1),
+            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+            #  `int`.
+            torch.stack([m02 - m20, m10 + m01, q_abs[..., 2] ** 2, m12 + m21], dim=-1),
+            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+            #  `int`.
+            torch.stack([m10 - m01, m20 + m02, m21 + m12, q_abs[..., 3] ** 2], dim=-1),
+        ],
+        dim=-2,
+    )
+
+    # We floor here at 0.1 but the exact level is not important; if q_abs is small,
+    # the candidate won't be picked.
+    flr = torch.tensor(0.1).to(dtype=q_abs.dtype, device=q_abs.device)
+    quat_candidates = quat_by_rijk / (2.0 * q_abs[..., None].max(flr))
+
+    # if not for numerical problems, quat_candidates[i] should be same (up to a sign),
+    # forall i; we pick the best-conditioned one (with the largest denominator)
+    out = quat_candidates[
+        F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
+    ].reshape(batch_dim + (4,))
+    return standardize_quaternion(out)
+
 
 class LeggedRobot(BaseTask):
     def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
@@ -75,6 +175,41 @@ class LeggedRobot(BaseTask):
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
+        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.splat_root) / 'splat.ply', device=self.device)
+        print('LOADED GS RENDERER')
+        self.fig, self.ax = plt.subplots()
+        # self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height * 8, self.cfg.env.cam_width * 8, 3), dtype=np.uint8))
+        self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
+        plt.show(block=False)
+
+    def update_image(self, new_image):
+        # To visualize environment RGB.
+        # new_image.shape[0]
+        if len(new_image.shape) == 4:
+            rows = cols = int(np.sqrt(new_image.shape[0]))
+            def image_grid(imgs, rows, cols):
+                assert len(imgs) == rows*cols
+                imgs = (255 * imgs).astype(np.uint8)
+                img = Image.fromarray(imgs[0])
+
+                w, h = img.size
+                grid = Image.new('RGB', size=(cols*w, rows*h))
+                grid_w, grid_h = grid.size
+                
+                for i, img in enumerate(imgs):
+                    img = Image.fromarray(img)
+                    grid.paste(img, box=(i%cols*w, i//cols*h))
+                return grid
+            to_plot = image_grid(new_image, rows, cols)
+        else:
+            to_plot = new_image
+
+
+        self.im.set_data(np.array(to_plot))
+        # self.im.set_data(new_image)
+        self.fig.canvas.flush_events()
+        self.fig.canvas.draw()
+        plt.pause(0.001)
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -209,6 +344,57 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
+        import viser.transforms as vtf
+        cam_trans = self.root_states[:, :3].cpu().numpy()
+        cam_quat_xyzw = self.root_states[:, 3:7].cpu().numpy()
+        cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw)
+        print(cam_trans.shape)
+        print(self.cam_offsets.shape)
+
+
+        x_rot = -np.pi / 2
+        z_rot = np.pi
+        R_x = vtf.SO3.from_x_radians(x_rot)
+        R_z = vtf.SO3.from_z_radians(z_rot)
+
+        cam_trans -= self.env_origins.cpu().numpy()
+        cam_trans = np.dot(cam_trans, R_z.as_matrix())
+        cam_trans = np.dot(cam_trans, R_x.as_matrix())
+        cam_trans += self.cam_offsets
+
+        cam_rot = R_z.inverse() @ cam_rot
+        cam_rot  = R_x.inverse() @ cam_rot
+
+        # curr_camera_positions = np.dot(curr_camera_positions, np.array(R).T)
+        # curr_camera_orientations = np.array(R) @ curr_camera_orientations
+        # # curr_camera_orientations = curr_camera_orientations.multiply(vtf.SO3.from_matrix(np.array(R)))
+        # curr_camera_positions = np.dot(curr_camera_positions, np.array(R).T)
+        # # curr_camera_orientations = curr_camera_orientations.multiply(vtf.SO3.from_matrix(np.array(R)))
+        # curr_camera_orientations = np.array(R) @ curr_camera_orientations
+
+        # cam_rot = cam_rot @ vtf.SO3.from_y_radians(-np.pi / 2)
+        cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
+        cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
+        # cam_rot = vtf.SO3.from_y_radians(-np.pi / 2).multiply(cam_rot)
+
+        c2ws = to_torch(vtf.SE3.from_rotation_and_translation(
+            # vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw.cpu().numpy()),
+            cam_rot,
+            cam_trans).as_matrix(), device=self.device, requires_grad=False)
+        print(f'CAMERA MATRIX {c2ws.shape}')
+
+
+        # Query BatchedPLYRenderer with camera positions.
+        renders, _ = self._gs_renderer.batch_render(
+            c2ws,
+            focal=self.cfg.env.focal_length,
+            h=self.cfg.env.cam_height,
+            w=self.cfg.env.cam_width,
+            device=self.device
+        )
+        self.update_image(renders[0].cpu().numpy())
+        # self.update_image(renders.cpu().numpy())
+        print(renders.shape)
         self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
@@ -239,6 +425,8 @@ class LeggedRobot(BaseTask):
             self._create_heightfield()
         elif mesh_type=='trimesh':
             self._create_trimesh()
+        elif mesh_type=='custom':
+            self._create_custom_mesh()
         elif mesh_type is not None:
             raise ValueError("Terrain mesh type not recognised. Allowed types are [None, plane, heightfield, trimesh]")
         self._create_envs()
@@ -397,7 +585,13 @@ class LeggedRobot(BaseTask):
             env_ids (List[int]): Environemnt ids
         """
         # base position
-        if self.custom_origins:
+        if self.cfg.terrain.mesh_type == 'custom':
+            self.root_states[env_ids] = self.base_init_state
+            self.root_states[env_ids, :3] += self.env_origins[env_ids]
+            state_idx = np.random.randint(low=0, high=self.cam_trans.shape[1] - 1)
+            self.root_states[env_ids, :3] += self.cam_trans[env_ids, state_idx]
+            self.root_states[env_ids, 3:7] = self.cam_quat_xyzw[env_ids, state_idx]
+        elif self.custom_origins:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
             self.root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
@@ -610,6 +804,93 @@ class LeggedRobot(BaseTask):
         tm_params.restitution = self.cfg.terrain.restitution
         self.gym.add_triangle_mesh(self.sim, self.terrain.vertices.flatten(order='C'), self.terrain.triangles.flatten(order='C'), tm_params)   
         self.height_samples = torch.tensor(self.terrain.heightsamples).view(self.terrain.tot_rows, self.terrain.tot_cols).to(self.device)
+
+    def _create_custom_mesh(self):
+        tm_params = gymapi.TriangleMeshParams()
+        # tm_params.nb_vertices = self.terrain.vertices.shape[0]
+        # tm_params.nb_triangles = self.terrain.triangles.shape[0]
+        # Add a new mesh for each robot position. What are the robot start positions?
+        # Need to
+        # 1) figure out robot start positions
+        # 2) translate mesh to those origins
+        # 3) re-orient the mesh
+
+        # tm_params.transform.p.x = -self.terrain.cfg.border_size 
+        # tm_params.transform.p.y = -self.terrain.cfg.border_size
+        # tm_params.transform.p.z = 0.0
+        tm_params.static_friction = self.cfg.terrain.static_friction
+        tm_params.dynamic_friction = self.cfg.terrain.dynamic_friction
+        tm_params.restitution = self.cfg.terrain.restitution
+        print('GENERATING TERRAIN')
+        vertices = np.load('/home/root-desktop/ULI_DATA/cute_bridge/vertices.npy').astype(np.float32)
+        triangles = np.load('/home/root-desktop/ULI_DATA/cute_bridge/triangles.npy').astype(np.uint32)
+
+        files = os.listdir(self.cfg.terrain.scene_root)[1:]
+
+        cam_trans = []
+        cam_quat_wxyz = []
+        cam_offsets = []
+
+        self._get_env_origins()
+        env_origins = self.env_origins.cpu().numpy()
+
+        if self.cfg.sim.up_axis == 1:
+            height_offset = [0, 0, self.cfg.terrain.height_offset]
+        elif self.cfg.sim.up_axis == 0:
+            height_offset = [0, self.cfg.terrain.height_offset, 0]
+        else:
+            raise ValueError
+        height_offset = np.array(height_offset)[None]
+
+        max_num_poses = 0
+
+        for i in range(self.num_envs):
+            import random
+            mesh_files = random.choice(files)
+            import pickle
+            with open(os.path.join(self.cfg.terrain.scene_root, mesh_files), 'rb') as f:
+                mesh_dict = pickle.load(f)
+
+            vertices = np.array(mesh_dict['vertices']).astype(np.float32)
+            triangles = np.array(mesh_dict['triangles']).astype(np.uint32)
+            curr_cam_trans = np.array(mesh_dict['cam_trans']).astype(np.float32) + height_offset
+            cam_trans.append(curr_cam_trans)
+
+            # Compute orientations from translations.
+            delta_xy = curr_cam_trans[1:, :2] - curr_cam_trans[:-1, :2]
+            delta_xyz = np.concatenate([delta_xy, np.zeros_like(delta_xy[:, :-1])], axis=-1)
+            x_component = delta_xyz / np.linalg.norm(delta_xyz, axis=-1, keepdims=True)
+            z_component = np.zeros_like(x_component)
+            z_component[:, 2] = 1
+            y_component = np.cross(z_component, x_component)
+            y_component = y_component / np.linalg.norm(y_component, axis=-1, keepdims=True)
+            cam_R = np.stack([x_component, y_component, z_component], axis=2)
+            cam_quat_wxyz.append(matrix_to_quaternion(to_torch(cam_R, device=self.device, requires_grad=False)).cpu().numpy())
+            cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
+
+    
+            if curr_cam_trans.shape[0] > max_num_poses:
+                max_num_poses = curr_cam_trans.shape[0]
+
+            env_origin = env_origins[i][None]  # [1, 3]
+            new_vertices = env_origin + vertices
+            tm_params.nb_vertices = vertices.shape[0]
+            tm_params.nb_triangles = triangles.shape[0]
+            self.gym.add_triangle_mesh(
+                self.sim,
+                new_vertices.flatten(order='C'),
+                triangles.flatten(order='C'), tm_params)   
+
+        cam_trans = [
+            np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_trans
+        ]
+        cam_quat_wxyz = [
+            np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_quat_wxyz
+        ]
+
+        self.cam_trans = to_torch(np.array(cam_trans), device=self.device, requires_grad=False)
+        self.cam_quat_xyzw = to_torch(np.roll(np.array(cam_quat_wxyz), -1, axis=-1), device=self.device, requires_grad=False)
+        self.cam_offsets = np.array(cam_offsets)
 
     def _create_envs(self):
         """ Creates environments:
