@@ -8,6 +8,30 @@ It includes all components needed for sim-to-real transfer: actuator network, fr
 
 ---
 
+
+# Instructions to Run with GSPLAT
+
+Following regular install instructions below. Then:
+
+Install gsplat:
+
+`pip install git+https://github.com/nerfstudio-project/gsplat.git`
+
+Additional dependencies:
+
+`pip install plyfile jaxtyping tqdm`
+
+
+Download different scenes / meshes from [here](https://drive.google.com/drive/folders/17-XZtOKxA_73wjEBz4uiajPiKp7QEOW0?usp=sharing).
+
+Update `scene_root` in `anymal_c_rough_config.py` to point to the `meshes` folder, and `splat_root` to point to the `splat` folder.
+
+Run with:
+
+`python legged_gym/scripts/train.py --task=anymal_c_rough`
+
+
+
 ### :bell: Announcement (09.01.2024) ###
 
 With the shift from Isaac Gym to Isaac Sim at NVIDIA, we have migrated all the environments from this work to [Isaac Lab](https://github.com/isaac-sim/IsaacLab). Following this migration, this repository will receive limited updates and support. We encourage all users to migrate to the new framework for their applications.
