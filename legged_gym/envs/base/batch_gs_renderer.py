@@ -138,6 +138,7 @@ class BatchPLYRenderer:
                 K[None].repeat(len(batch_w2cs), 1, 1),
                 w,
                 h,
+                radius_clip=3.0,
                 sh_degree=self.sh_degree,
                 render_mode="RGB",
                 rasterize_mode='antialiased'

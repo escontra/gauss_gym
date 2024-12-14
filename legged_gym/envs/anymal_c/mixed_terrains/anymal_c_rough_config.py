@@ -33,23 +33,27 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         # num_envs = 4096
-        num_envs = 64
+        num_envs = 1024
         num_actions = 12
         num_observations = 48
-        env_spacing = 6.0
-        focal_length = 200
-        cam_height = 256
-        cam_width = 256
+        env_spacing = 12.0
+        focal_length = 100
+        cam_height = 96
+        cam_width = 96
+
+        max_traj_pos_distance = 0.5
+        max_traj_yaw_distance_rad = 0.78
 
     class terrain( LeggedRobotCfg.terrain ):
         mesh_type = 'custom'
         # scene_root = "{LEGGED_GYM_ROOT_DIR}/scenes/bridge"
         # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
-        # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
-        scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
+        scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
+        # scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
         # splat_root = "/home/root-desktop/splat"
-        splat_root = "/home/root-desktop/exports/cathedral"
-        height_offset = -0.9
+        # splat_root = "/home/root-desktop/exports/cathedral"
+        splat_root = "/home/root-desktop/exports/bridge"
+        height_offset = -1.2
         curriculum = False
         measure_heights = False
 
@@ -100,7 +104,16 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         max_contact_force = 500.
         only_positive_rewards = True
         class scales( LeggedRobotCfg.rewards.scales ):
+            base_height = -0.2
+            # ang_vel_xy = 0.0
+            # lin_vel_z = 0.0
+            orientation = 0.0
             pass
+
+    class commands( LeggedRobotCfg.commands ):
+        heading_command = True # if true: compute ang vel command from heading error
+        class ranges ( LeggedRobotCfg.commands.ranges ):
+            lin_vel = [0.0, 1.0] # min max [m/s]
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
     class runner( LeggedRobotCfgPPO.runner ):

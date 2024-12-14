@@ -35,6 +35,8 @@ from time import time
 from warnings import WarningMessage
 import numpy as np
 import os
+import pickle
+import viser.transforms as vtf
 
 from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
@@ -169,6 +171,9 @@ class LeggedRobot(BaseTask):
         self.init_done = False
         self._parse_cfg(self.cfg)
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
+        self.distance_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.yaw_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.command_scale = torch.zeros(self.num_envs, 1, device=self.device, dtype=torch.float32)
 
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
@@ -277,6 +282,23 @@ class LeggedRobot(BaseTask):
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
 
+        # Check if robot is too far from camera trajectory (Indicative of poor rendering).
+        curr_cam_pos, curr_cam_quat = self._get_cam_pos_quat()
+        nearest_traj_pos, nearest_traj_quat, nearest_idx = self._get_nearest_traj_pos_quat()
+        past_end = nearest_idx >= (self.cam_trans.shape[1] - 2)  # Past end of trajectory.
+        self.distance_exceeded_buf = self.yaw_exceeded_buf = past_end
+
+        pos_distance = torch.norm((curr_cam_pos - nearest_traj_pos)[:, :2], dim=-1)
+        self.distance_exceeded_buf |= pos_distance > self.cfg.env.max_traj_pos_distance
+
+        quat_difference = quat_mul(curr_cam_quat, quat_conjugate(nearest_traj_quat))
+        _, _, yaw = get_euler_xyz(quat_difference)
+        yaw_distance = torch.abs(wrap_to_pi(yaw))
+        self.yaw_exceeded_buf |= yaw_distance > self.cfg.env.max_traj_yaw_distance_rad
+
+        self.reset_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
+        self.time_out_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
+
     def reset_idx(self, env_ids):
         """ Reset some environments.
             Calls self._reset_dofs(env_ids), self._reset_root_states(env_ids), and self._resample_commands(env_ids)
@@ -300,7 +322,8 @@ class LeggedRobot(BaseTask):
         self._reset_dofs(env_ids)
         self._reset_root_states(env_ids)
 
-        self._resample_commands(env_ids)
+        # self._resample_commands(env_ids)
+        self._resample_commands_from_cam_traj(env_ids)
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -320,7 +343,7 @@ class LeggedRobot(BaseTask):
             self.extras["episode"]["max_command_x"] = self.command_ranges["lin_vel_x"][1]
         # send timeout info to the algorithm
         if self.cfg.env.send_timeouts:
-            self.extras["time_outs"] = self.time_out_buf
+            self.extras["time_outs"] = self.time_out_buf | self.distance_exceeded_buf | self.yaw_exceeded_buf
     
     def compute_reward(self):
         """ Compute rewards
@@ -344,13 +367,9 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
-        import viser.transforms as vtf
         cam_trans = self.root_states[:, :3].cpu().numpy()
         cam_quat_xyzw = self.root_states[:, 3:7].cpu().numpy()
         cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw)
-        print(cam_trans.shape)
-        print(self.cam_offsets.shape)
-
 
         x_rot = -np.pi / 2
         z_rot = np.pi
@@ -358,31 +377,18 @@ class LeggedRobot(BaseTask):
         R_z = vtf.SO3.from_z_radians(z_rot)
 
         cam_trans -= self.env_origins.cpu().numpy()
+        # cam_trans -= self.base_init_state.cpu().numpy()[:3][None]
         cam_trans = np.dot(cam_trans, R_z.as_matrix())
         cam_trans = np.dot(cam_trans, R_x.as_matrix())
         cam_trans += self.cam_offsets
 
+        # TODO: Simplify these transforms.
         cam_rot = R_z.inverse() @ cam_rot
         cam_rot  = R_x.inverse() @ cam_rot
-
-        # curr_camera_positions = np.dot(curr_camera_positions, np.array(R).T)
-        # curr_camera_orientations = np.array(R) @ curr_camera_orientations
-        # # curr_camera_orientations = curr_camera_orientations.multiply(vtf.SO3.from_matrix(np.array(R)))
-        # curr_camera_positions = np.dot(curr_camera_positions, np.array(R).T)
-        # # curr_camera_orientations = curr_camera_orientations.multiply(vtf.SO3.from_matrix(np.array(R)))
-        # curr_camera_orientations = np.array(R) @ curr_camera_orientations
-
-        # cam_rot = cam_rot @ vtf.SO3.from_y_radians(-np.pi / 2)
         cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
         cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
-        # cam_rot = vtf.SO3.from_y_radians(-np.pi / 2).multiply(cam_rot)
 
-        c2ws = to_torch(vtf.SE3.from_rotation_and_translation(
-            # vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw.cpu().numpy()),
-            cam_rot,
-            cam_trans).as_matrix(), device=self.device, requires_grad=False)
-        print(f'CAMERA MATRIX {c2ws.shape}')
-
+        c2ws = to_torch(vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix(), device=self.device, requires_grad=False)
 
         # Query BatchedPLYRenderer with camera positions.
         renders, _ = self._gs_renderer.batch_render(
@@ -390,11 +396,11 @@ class LeggedRobot(BaseTask):
             focal=self.cfg.env.focal_length,
             h=self.cfg.env.cam_height,
             w=self.cfg.env.cam_width,
+            minibatch=128,
             device=self.device
         )
         self.update_image(renders[0].cpu().numpy())
         # self.update_image(renders.cpu().numpy())
-        print(renders.shape)
         self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
@@ -426,6 +432,8 @@ class LeggedRobot(BaseTask):
         elif mesh_type=='trimesh':
             self._create_trimesh()
         elif mesh_type=='custom':
+            self.mesh_files = os.listdir(self.cfg.terrain.scene_root)
+            self.num_meshes = len(self.mesh_files)
             self._create_custom_mesh()
         elif mesh_type is not None:
             raise ValueError("Terrain mesh type not recognised. Allowed types are [None, plane, heightfield, trimesh]")
@@ -511,16 +519,87 @@ class LeggedRobot(BaseTask):
         """
         # 
         env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(env_ids)
+        # self._resample_commands(env_ids)
+        self._resample_commands_from_cam_traj(env_ids)
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
+        self.measured_heights_mesh = self._get_base_heights_mesh()
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
         if self.cfg.domain_rand.push_robots and  (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
             self._push_robots()
+
+    def _sample_cam_pos_quat(self, env_ids):
+        cam_trans_subs = self.cam_trans[env_ids]
+        cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
+        rand = torch.rand((len(env_ids),), device=self.device)
+        low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
+        high = torch.ones((len(env_ids),), device=self.device) * cam_trans_subs.shape[1] - 3
+        state_idx = (rand * (high - low) + low).to(torch.int64)
+
+        pos_idx = state_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, cam_trans_subs.shape[-1])
+        cam_trans = torch.gather(cam_trans_subs, dim=1, index=pos_idx).squeeze(1)
+
+        quat_idx = state_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, cam_quat_xyzw_subs.shape[-1])
+        cam_quat = torch.gather(cam_quat_xyzw_subs, dim=1, index=quat_idx).squeeze(1)
+
+        return cam_trans, cam_quat
+
+    def _get_nearest_traj_idx(self):
+        curr_cam_pos, _ = self._get_cam_pos_quat()
+        pos_difference = curr_cam_pos[:, None] - self.cam_trans
+        pos_distance = torch.norm(pos_difference, dim=-1)
+        min_distance_idx = torch.argmin(pos_distance, dim=1)
+        return min_distance_idx
+
+    def _get_nearest_traj_pos_quat(self):
+        nearest_traj_idx = self._get_nearest_traj_idx()
+        nearest_traj_pos_idx = nearest_traj_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_trans.shape[-1])
+        nearest_traj_pos = torch.gather(self.cam_trans, dim=1, index=nearest_traj_pos_idx).squeeze(1)
+        nearest_traj_quat_idx = nearest_traj_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_quat_xyzw.shape[-1])
+        nearest_traj_quat = torch.gather(self.cam_quat_xyzw, dim=1, index=nearest_traj_quat_idx).squeeze(1)
+        return nearest_traj_pos, nearest_traj_quat, nearest_traj_idx
+
+    def _get_cam_pos_quat(self):
+        curr_cam_pos = self.root_states[:, :3] - self.base_init_state[:3][None] - self.env_origins
+        curr_cam_quat = self.root_states[:, 3:7]
+        return curr_cam_pos, curr_cam_quat
+
+    def _resample_commands_from_cam_traj(self, env_ids):
+        """ Randommly select commands of some environments
+
+        Args:
+            env_ids (List[int]): Environments ids for which new commands are needed
+        """
+        _, nearest_quat, nearest_idx = self._get_nearest_traj_pos_quat()
+        _, _, yaw = get_euler_xyz(nearest_quat)
+        yaw = wrap_to_pi(yaw)  # Match the orientation of the nearest camera.
+
+        # Heading command.
+        if self.cfg.commands.heading_command:
+            self.commands[:, 3] = yaw
+        else:
+            raise NotImplementedError()
+
+        # Choose a target pose moderately far away. If nearest_idx + 1 is chosen, target 
+        # velocities fall to 0 as the robot approaches this target.
+        target_idx = torch.clamp(nearest_idx + 3, 0, self.cam_trans.shape[1] - 1)
+        target_traj_pos_idx = target_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_trans.shape[-1])
+        target_traj_pos = torch.gather(self.cam_trans, dim=1, index=target_traj_pos_idx).squeeze(1)
+        curr_cam_pos, _ = self._get_cam_pos_quat()
+        pos_delta = target_traj_pos - curr_cam_pos
+        pos_delta[:, 2] = 0  # Only use xy coordinates.
+
+        pos_delta_local = quat_rotate_inverse(self.base_quat, pos_delta)[:, :2]
+        pos_delta_norm = pos_delta_local / torch.norm(pos_delta_local, dim=-1, keepdim=True)
+        self.command_scale[env_ids] = torch_rand_float(self.command_ranges["lin_vel"][0], self.command_ranges["lin_vel"][1], (len(env_ids), 1), device=self.device)
+        pos_delta_norm *= self.command_scale
+        pos_delta_norm *= torch.norm(pos_delta_norm[:, :2], dim=1, keepdim=True) > 0.1  # Zero out small commands.
+        self.commands[:, :2] = pos_delta_norm
+
 
     def _resample_commands(self, env_ids):
         """ Randommly select commands of some environments
@@ -577,6 +656,7 @@ class LeggedRobot(BaseTask):
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self.dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+
     def _reset_root_states(self, env_ids):
         """ Resets ROOT states position and velocities of selected environmments
             Sets base position based on the curriculum
@@ -588,9 +668,10 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.mesh_type == 'custom':
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
-            state_idx = np.random.randint(low=0, high=self.cam_trans.shape[1] - 1)
-            self.root_states[env_ids, :3] += self.cam_trans[env_ids, state_idx]
-            self.root_states[env_ids, 3:7] = self.cam_quat_xyzw[env_ids, state_idx]
+            # Sample starting poses.
+            cam_trans, cam_quat = self._sample_cam_pos_quat(env_ids)
+            self.root_states[env_ids, :3] += cam_trans
+            self.root_states[env_ids, 3:7] = cam_quat
         elif self.custom_origins:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
@@ -715,6 +796,7 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.measure_heights:
             self.height_points = self._init_height_points()
         self.measured_heights = 0
+        self.measured_heights_mesh = 0
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
@@ -807,32 +889,23 @@ class LeggedRobot(BaseTask):
 
     def _create_custom_mesh(self):
         tm_params = gymapi.TriangleMeshParams()
-        # tm_params.nb_vertices = self.terrain.vertices.shape[0]
-        # tm_params.nb_triangles = self.terrain.triangles.shape[0]
-        # Add a new mesh for each robot position. What are the robot start positions?
-        # Need to
-        # 1) figure out robot start positions
-        # 2) translate mesh to those origins
-        # 3) re-orient the mesh
-
-        # tm_params.transform.p.x = -self.terrain.cfg.border_size 
-        # tm_params.transform.p.y = -self.terrain.cfg.border_size
-        # tm_params.transform.p.z = 0.0
         tm_params.static_friction = self.cfg.terrain.static_friction
         tm_params.dynamic_friction = self.cfg.terrain.dynamic_friction
         tm_params.restitution = self.cfg.terrain.restitution
-        print('GENERATING TERRAIN')
-        vertices = np.load('/home/root-desktop/ULI_DATA/cute_bridge/vertices.npy').astype(np.float32)
-        triangles = np.load('/home/root-desktop/ULI_DATA/cute_bridge/triangles.npy').astype(np.uint32)
 
-        files = os.listdir(self.cfg.terrain.scene_root)[1:]
+        num_rows = np.floor(np.sqrt(self.num_meshes))
 
         cam_trans = []
         cam_quat_wxyz = []
         cam_offsets = []
+        env_origins = []
+        valid_pose_start_idxs = []
+        all_vertices = []
+        curr_x_offset = 0.
+        curr_y_offset = 0.
+        max_num_poses = 0
+        max_num_vertices = 0
 
-        self._get_env_origins()
-        env_origins = self.env_origins.cpu().numpy()
 
         if self.cfg.sim.up_axis == 1:
             height_offset = [0, 0, self.cfg.terrain.height_offset]
@@ -842,19 +915,29 @@ class LeggedRobot(BaseTask):
             raise ValueError
         height_offset = np.array(height_offset)[None]
 
-        max_num_poses = 0
+        for i, filepath in enumerate(self.mesh_files):
+            if i > 0 and i % num_rows == 0:
+                curr_x_offset += self.cfg.env.env_spacing
+                curr_y_offset = 0.0
+            else:
+                curr_y_offset += self.cfg.env.env_spacing
 
-        for i in range(self.num_envs):
-            import random
-            mesh_files = random.choice(files)
-            import pickle
-            with open(os.path.join(self.cfg.terrain.scene_root, mesh_files), 'rb') as f:
+
+            env_origin = np.array([curr_x_offset, curr_y_offset, 0.0]).astype(np.float32)
+            env_origins.append(env_origin)
+
+
+            with open(os.path.join(self.cfg.terrain.scene_root, filepath), 'rb') as f:
                 mesh_dict = pickle.load(f)
 
+            cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
             vertices = np.array(mesh_dict['vertices']).astype(np.float32)
             triangles = np.array(mesh_dict['triangles']).astype(np.uint32)
             curr_cam_trans = np.array(mesh_dict['cam_trans']).astype(np.float32) + height_offset
             cam_trans.append(curr_cam_trans)
+
+            if len(vertices) > max_num_vertices:
+                max_num_vertices = len(vertices)
 
             # Compute orientations from translations.
             delta_xy = curr_cam_trans[1:, :2] - curr_cam_trans[:-1, :2]
@@ -866,21 +949,25 @@ class LeggedRobot(BaseTask):
             y_component = y_component / np.linalg.norm(y_component, axis=-1, keepdims=True)
             cam_R = np.stack([x_component, y_component, z_component], axis=2)
             cam_quat_wxyz.append(matrix_to_quaternion(to_torch(cam_R, device=self.device, requires_grad=False)).cpu().numpy())
-            cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
 
-    
             if curr_cam_trans.shape[0] > max_num_poses:
                 max_num_poses = curr_cam_trans.shape[0]
 
-            env_origin = env_origins[i][None]  # [1, 3]
-            new_vertices = env_origin + vertices
+            new_vertices = env_origin[None] + vertices
+            all_vertices.append(new_vertices)
             tm_params.nb_vertices = vertices.shape[0]
             tm_params.nb_triangles = triangles.shape[0]
             self.gym.add_triangle_mesh(
                 self.sim,
                 new_vertices.flatten(order='C'),
-                triangles.flatten(order='C'), tm_params)   
+                triangles.flatten(order='C'), tm_params)
 
+        all_vertices = [
+            np.pad(v, ((max_num_vertices - len(v), 0), (0, 0)), mode='constant', constant_values=np.inf) for v in all_vertices
+        ]
+        all_vertices = np.stack(all_vertices, axis=0)
+
+        valid_pose_start_idxs = [max_num_poses - t.shape[0] for t in cam_trans]
         cam_trans = [
             np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_trans
         ]
@@ -888,9 +975,23 @@ class LeggedRobot(BaseTask):
             np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_quat_wxyz
         ]
 
+        # Assign different env origins, cam_trans, quat, and offsets to each environment.
+        repeat_factor = int(np.ceil(self.num_envs / self.num_meshes))
+        repeat = lambda x: np.tile(np.array(x), (repeat_factor,) + (1,) * (len(np.array(x).shape) - 1))[:self.num_envs]
+    
+        cam_trans = repeat(cam_trans)
+        cam_quat_wxyz = repeat(cam_quat_wxyz)
+        cam_offsets = repeat(cam_offsets)
+        env_origins = repeat(env_origins)
+        valid_pose_start_idxs = repeat(valid_pose_start_idxs)
+        all_vertices = repeat(all_vertices)
+
         self.cam_trans = to_torch(np.array(cam_trans), device=self.device, requires_grad=False)
         self.cam_quat_xyzw = to_torch(np.roll(np.array(cam_quat_wxyz), -1, axis=-1), device=self.device, requires_grad=False)
         self.cam_offsets = np.array(cam_offsets)
+        self.custom_origins = to_torch(env_origins, device=self.device, requires_grad=False)
+        self.valid_pose_start_idxs = to_torch(valid_pose_start_idxs, device=self.device, requires_grad=False)
+        self.all_vertices = to_torch(all_vertices, device=self.device, requires_grad=False)
 
     def _create_envs(self):
         """ Creates environments:
@@ -994,6 +1095,8 @@ class LeggedRobot(BaseTask):
             self.max_terrain_level = self.cfg.terrain.num_rows
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
             self.env_origins[:] = self.terrain_origins[self.terrain_levels, self.terrain_types]
+        elif self.cfg.terrain.mesh_type == "custom":
+            self.env_origins = self.custom_origins
         else:
             self.custom_origins = False
             self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
@@ -1055,6 +1158,25 @@ class LeggedRobot(BaseTask):
         points[:, :, 1] = grid_y.flatten()
         return points
 
+    def _get_base_heights_mesh(self, env_ids=None):
+        self.all_vertices # [1024, 30000, 3]
+        curr_pos = self.root_states[:, :3]  # [1024, 3]
+
+        curr_pos_xy = curr_pos[:, :2][:, None]  # [1024, 1, 2]
+        curr_pos_z = curr_pos[:, 2:]  # [1024, 1]
+        vertices_xy = self.all_vertices[..., :2]  # [1024, 30000, 2]
+        vertices_z = self.all_vertices[..., 2:]  # [1024, 30000, 1]
+
+        distance_xy = vertices_xy - curr_pos_xy  # [1024, 30000, 2]
+        distance_xy = torch.norm(distance_xy, dim=-1)  # [1024, 30000]
+        closest_vertex = torch.argmin(distance_xy, axis=-1)  # [1024]
+
+        closest_vertex = closest_vertex.unsqueeze(1).unsqueeze(2).expand(-1, 1, vertices_z.shape[-1])
+        nearest_z = torch.gather(vertices_z, dim=1, index=closest_vertex).squeeze(1)
+        base_height = curr_pos_z - nearest_z
+        return base_height
+
+
     def _get_heights(self, env_ids=None):
         """ Samples heights of the terrain at required points around each robot.
             The points are offset by the base's position and rotated by the base's yaw
@@ -1108,7 +1230,7 @@ class LeggedRobot(BaseTask):
 
     def _reward_base_height(self):
         # Penalize base height away from target
-        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights_mesh, dim=1)
         return torch.square(base_height - self.cfg.rewards.base_height_target)
     
     def _reward_torques(self):
