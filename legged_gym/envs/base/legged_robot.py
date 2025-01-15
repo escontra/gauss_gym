@@ -52,8 +52,10 @@ from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+from legged_gym.teacher import RayCaster, ObsManager
 from.batch_gs_renderer import BatchPLYRenderer
 import pathlib
+import legged_gym.teacher.observations as O
 
 import matplotlib.pyplot as plt
 plt.ion()
@@ -187,6 +189,32 @@ class LeggedRobot(BaseTask):
         self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
         plt.show(block=False)
 
+
+        # Added observation manager to compute teacher observations more flexible
+        self.sensors = {"raycast_grid": RayCaster(self)}
+        obs_groups_cfg = {
+            "teacher_observations": {
+                # optional parameters: scale, clip([min, max]), noise
+                "add_noise": True,  # turns off the noise in all observations
+                "is_recurrent": True,
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
+                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
+                "velocity_commands": {"func": O.velocity_commands},
+                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
+                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
+                "actions": {"func": O.actions},
+                "ray_cast": {
+                    "func": O.ray_cast,
+                    "noise": 0.1,
+                    "sensor": "raycast_grid",
+                    "clip": (-1, 1.0)
+                }
+            }
+        }
+        self.obs_manager = ObsManager(self, obs_groups_cfg)
+
+
     def update_image(self, new_image):
         # To visualize environment RGB.
         # new_image.shape[0]
@@ -240,6 +268,8 @@ class LeggedRobot(BaseTask):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
+            
+        self.extras["teacher_observations"] = self.obs_groups["teacher_observations"]
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
@@ -256,7 +286,10 @@ class LeggedRobot(BaseTask):
         # prepare quantities
         self.base_quat[:] = self.root_states[:, 3:7]
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        
+
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         self._post_physics_step_callback()
@@ -274,6 +307,9 @@ class LeggedRobot(BaseTask):
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
+
+        self.obs_groups = self.obs_manager.compute_obs(self)        
+
 
     def check_termination(self):
         """ Check if environments need to be reset
@@ -413,6 +449,8 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.measure_heights:
             heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
             self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
+            
+            
         # add noise if needed
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec

@@ -29,6 +29,7 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
+from legged_gym import LEGGED_GYM_ROOT_DIR
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
@@ -48,11 +49,11 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         mesh_type = 'custom'
         # scene_root = "{LEGGED_GYM_ROOT_DIR}/scenes/bridge"
         # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
-        scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
+        scene_root = f"{LEGGED_GYM_ROOT_DIR}/assets/bridge/meshes"
         # scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
         # splat_root = "/home/root-desktop/splat"
         # splat_root = "/home/root-desktop/exports/cathedral"
-        splat_root = "/home/root-desktop/exports/bridge"
+        splat_root = f"{LEGGED_GYM_ROOT_DIR}/assets/bridge/splat"
         height_offset = -1.2
         curriculum = False
         measure_heights = False
