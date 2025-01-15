@@ -20,7 +20,7 @@ Install gsplat:
 Additional dependencies:
 
 `pip install plyfile jaxtyping tqdm`
-
+`pip install https://github.com/NVIDIA/warp/releases/download/v0.15.1/warp_lang-0.15.1-py3-none-manylinux2014_x86_64.whl`
 
 Download different scenes / meshes from [here](https://drive.google.com/drive/folders/17-XZtOKxA_73wjEBz4uiajPiKp7QEOW0?usp=sharing).
 
