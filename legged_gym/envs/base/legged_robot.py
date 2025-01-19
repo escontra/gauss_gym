@@ -169,7 +169,7 @@ class LeggedRobot(BaseTask):
         self.cfg = cfg
         self.sim_params = sim_params
         self.height_samples = None
-        self.debug_viz = False
+        self.debug_viz = True
         self.init_done = False
         self._parse_cfg(self.cfg)
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
@@ -307,7 +307,9 @@ class LeggedRobot(BaseTask):
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
-
+        
+        self.sensors["raycast_grid"].update(-1)
+        
         self.obs_groups = self.obs_manager.compute_obs(self)        
 
 
@@ -939,6 +941,7 @@ class LeggedRobot(BaseTask):
         env_origins = []
         valid_pose_start_idxs = []
         all_vertices = []
+        all_triangles = []
         curr_x_offset = 0.
         curr_y_offset = 0.
         max_num_poses = 0
@@ -991,15 +994,28 @@ class LeggedRobot(BaseTask):
             if curr_cam_trans.shape[0] > max_num_poses:
                 max_num_poses = curr_cam_trans.shape[0]
 
+
+
             new_vertices = env_origin[None] + vertices
+            vertices_offset = 0 if len(all_vertices) == 0 else np.concatenate( all_vertices ).shape[0]
+            all_triangles.append( triangles + vertices_offset)
+            
             all_vertices.append(new_vertices)
+            
             tm_params.nb_vertices = vertices.shape[0]
             tm_params.nb_triangles = triangles.shape[0]
+            
+            
+            
+            
             self.gym.add_triangle_mesh(
                 self.sim,
                 new_vertices.flatten(order='C'),
                 triangles.flatten(order='C'), tm_params)
-
+        
+        self.all_vertices_mesh = np.concatenate(all_vertices)
+        self.all_triangles_mesh = np.concatenate(all_triangles)
+        
         all_vertices = [
             np.pad(v, ((max_num_vertices - len(v), 0), (0, 0)), mode='constant', constant_values=np.inf) for v in all_vertices
         ]
@@ -1030,7 +1046,9 @@ class LeggedRobot(BaseTask):
         self.custom_origins = to_torch(env_origins, device=self.device, requires_grad=False)
         self.valid_pose_start_idxs = to_torch(valid_pose_start_idxs, device=self.device, requires_grad=False)
         self.all_vertices = to_torch(all_vertices, device=self.device, requires_grad=False)
-
+        
+        
+        
     def _create_envs(self):
         """ Creates environments:
              1. loads the robot URDF/MJCF asset,
@@ -1164,22 +1182,11 @@ class LeggedRobot(BaseTask):
             Default behaviour: draws height measurement points
         """
         # draw height lines
-        if not self.terrain.cfg.measure_heights:
-            return
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
-        for i in range(self.num_envs):
-            base_pos = (self.root_states[i, :3]).cpu().numpy()
-            heights = self.measured_heights[i].cpu().numpy()
-            height_points = quat_apply_yaw(self.base_quat[i].repeat(heights.shape[0]), self.height_points[i]).cpu().numpy()
-            for j in range(heights.shape[0]):
-                x = height_points[j, 0] + base_pos[0]
-                y = height_points[j, 1] + base_pos[1]
-                z = heights[j]
-                sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose) 
-
+        self.sensors["raycast_grid"].debug_vis(self)
+        
+        
     def _init_height_points(self):
         """ Returns points at which the height measurments are sampled (in base frame)
 
