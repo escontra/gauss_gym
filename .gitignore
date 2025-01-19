@@ -58,4 +58,3 @@ runs
 *.egg-info
 __pycache__
 assets/*
-!assets/policies/simple_gru_policy.pt
