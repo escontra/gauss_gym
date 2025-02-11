@@ -48,11 +48,11 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         mesh_type = 'custom'
         # scene_root = "{LEGGED_GYM_ROOT_DIR}/scenes/bridge"
         # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
-        scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
-        # scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
+        # scene_root = "/home/root-desktop/ULI_DATA/cute_bridge/slices"
+        scene_root = "/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/slices"
         # splat_root = "/home/root-desktop/splat"
-        # splat_root = "/home/root-desktop/exports/cathedral"
-        splat_root = "/home/root-desktop/exports/bridge"
+        splat_root = "/home/root-desktop/exports/cathedral"
+        # splat_root = "/home/root-desktop/exports/bridge"
         height_offset = -1.2
         curriculum = False
         measure_heights = False
