@@ -182,7 +182,7 @@ class LeggedRobot(BaseTask):
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
-        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.splat_root) / 'splat.ply', device=self.device)
+        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.scene_root, 'splat') / 'splat.ply', device=self.device)
         print('LOADED GS RENDERER')
         self.fig, self.ax = plt.subplots()
         # self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height * 8, self.cfg.env.cam_width * 8, 3), dtype=np.uint8))
@@ -472,7 +472,7 @@ class LeggedRobot(BaseTask):
         elif mesh_type=='trimesh':
             self._create_trimesh()
         elif mesh_type=='custom':
-            self.mesh_files = os.listdir(self.cfg.terrain.scene_root)
+            self.mesh_files = os.listdir(os.path.join(self.cfg.terrain.scene_root, 'meshes'))
             self.num_meshes = len(self.mesh_files)
             self._create_custom_mesh()
         elif mesh_type is not None:
@@ -968,7 +968,7 @@ class LeggedRobot(BaseTask):
             env_origins.append(env_origin)
 
 
-            with open(os.path.join(self.cfg.terrain.scene_root, filepath), 'rb') as f:
+            with open(os.path.join(self.cfg.terrain.scene_root, 'meshes', filepath), 'rb') as f:
                 mesh_dict = pickle.load(f)
 
             cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
