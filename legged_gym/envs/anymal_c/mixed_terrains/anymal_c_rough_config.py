@@ -41,6 +41,7 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         focal_length = 100
         cam_height = 96
         cam_width = 96
+        debug_viz_single_image = True
 
         max_traj_pos_distance = 0.5
         max_traj_yaw_distance_rad = 0.78

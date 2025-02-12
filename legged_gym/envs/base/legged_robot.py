@@ -29,7 +29,6 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 # from tkinter import Image
-from PIL import Image
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from time import time
 from warnings import WarningMessage
@@ -42,114 +41,21 @@ from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
-from torch import Tensor
-from typing import Tuple, Dict
-import torch.nn.functional as F
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.terrain import Terrain
-from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
+from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, matrix_to_quaternion
+from legged_gym.utils.rendering import update_image
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
-from legged_gym.teacher import RayCaster, ObsManager
+from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager
 from.batch_gs_renderer import BatchPLYRenderer
 import pathlib
 import legged_gym.teacher.observations as O
 
 import matplotlib.pyplot as plt
 plt.ion()
-
-
-def _sqrt_positive_part(x: torch.Tensor) -> torch.Tensor:
-    """
-    Returns torch.sqrt(torch.max(0, x))
-    but with a zero subgradient where x is 0.
-    """
-    ret = torch.zeros_like(x)
-    positive_mask = x > 0
-    if torch.is_grad_enabled():
-        ret[positive_mask] = torch.sqrt(x[positive_mask])
-    else:
-        ret = torch.where(positive_mask, torch.sqrt(x), ret)
-    return ret
-
-
-def standardize_quaternion(quaternions: torch.Tensor) -> torch.Tensor:
-    """
-    Convert a unit quaternion to a standard form: one in which the real
-    part is non negative.
-
-    Args:
-        quaternions: Quaternions with real part first,
-            as tensor of shape (..., 4).
-
-    Returns:
-        Standardized quaternions as tensor of shape (..., 4).
-    """
-    return torch.where(quaternions[..., 0:1] < 0, -quaternions, quaternions)
-
-
-def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Convert rotations given as rotation matrices to quaternions.
-
-    Args:
-        matrix: Rotation matrices as tensor of shape (..., 3, 3).
-
-    Returns:
-        quaternions with real part first, as tensor of shape (..., 4).
-    """
-    if matrix.size(-1) != 3 or matrix.size(-2) != 3:
-        raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
-
-    batch_dim = matrix.shape[:-2]
-    m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(
-        matrix.reshape(batch_dim + (9,)), dim=-1
-    )
-
-    q_abs = _sqrt_positive_part(
-        torch.stack(
-            [
-                1.0 + m00 + m11 + m22,
-                1.0 + m00 - m11 - m22,
-                1.0 - m00 + m11 - m22,
-                1.0 - m00 - m11 + m22,
-            ],
-            dim=-1,
-        )
-    )
-
-    # we produce the desired quaternion multiplied by each of r, i, j, k
-    quat_by_rijk = torch.stack(
-        [
-            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-            #  `int`.
-            torch.stack([q_abs[..., 0] ** 2, m21 - m12, m02 - m20, m10 - m01], dim=-1),
-            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-            #  `int`.
-            torch.stack([m21 - m12, q_abs[..., 1] ** 2, m10 + m01, m02 + m20], dim=-1),
-            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-            #  `int`.
-            torch.stack([m02 - m20, m10 + m01, q_abs[..., 2] ** 2, m12 + m21], dim=-1),
-            # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-            #  `int`.
-            torch.stack([m10 - m01, m20 + m02, m21 + m12, q_abs[..., 3] ** 2], dim=-1),
-        ],
-        dim=-2,
-    )
-
-    # We floor here at 0.1 but the exact level is not important; if q_abs is small,
-    # the candidate won't be picked.
-    flr = torch.tensor(0.1).to(dtype=q_abs.dtype, device=q_abs.device)
-    quat_candidates = quat_by_rijk / (2.0 * q_abs[..., None].max(flr))
-
-    # if not for numerical problems, quat_candidates[i] should be same (up to a sign),
-    # forall i; we pick the best-conditioned one (with the largest denominator)
-    out = quat_candidates[
-        F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
-    ].reshape(batch_dim + (4,))
-    return standardize_quaternion(out)
 
 
 class LeggedRobot(BaseTask):
@@ -182,12 +88,26 @@ class LeggedRobot(BaseTask):
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
+
+        # Load gaussian splatting renderer.
+        print('Loading Gaussian Splatting Renderer...')
         self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.scene_root, 'splat') / 'splat.ply', device=self.device)
-        print('LOADED GS RENDERER')
-        self.fig, self.ax = plt.subplots()
-        # self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height * 8, self.cfg.env.cam_width * 8, 3), dtype=np.uint8))
-        self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
-        plt.show(block=False)
+
+        # Visualize image for environment.
+        if self.debug_viz:
+            self.fig, ax = plt.subplots()
+            n = int(np.floor(np.sqrt(self.num_envs)))
+            if self.cfg.env.debug_viz_single_image:
+                self.process_image_fn = lambda tensor: tensor[0].cpu().numpy()
+                self.im = ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
+            else:
+                self.process_image_fn = lambda tensor: tensor.cpu().numpy()
+                self.im = ax.imshow(np.zeros((self.cfg.env.cam_height * n, self.cfg.env.cam_width * n, 3), dtype=np.uint8))
+            plt.show(block=False)
+        else:
+            self.fig, self.im, self.process_image_fn = None, None, None
+
+        self.base_height_raycaster = RayCasterBaseHeight(self)
 
 
         # Added observation manager to compute teacher observations more flexible
@@ -214,35 +134,6 @@ class LeggedRobot(BaseTask):
         }
         self.obs_manager = ObsManager(self, obs_groups_cfg)
 
-
-    def update_image(self, new_image):
-        # To visualize environment RGB.
-        # new_image.shape[0]
-        if len(new_image.shape) == 4:
-            rows = cols = int(np.sqrt(new_image.shape[0]))
-            def image_grid(imgs, rows, cols):
-                assert len(imgs) == rows*cols
-                imgs = (255 * imgs).astype(np.uint8)
-                img = Image.fromarray(imgs[0])
-
-                w, h = img.size
-                grid = Image.new('RGB', size=(cols*w, rows*h))
-                grid_w, grid_h = grid.size
-                
-                for i, img in enumerate(imgs):
-                    img = Image.fromarray(img)
-                    grid.paste(img, box=(i%cols*w, i//cols*h))
-                return grid
-            to_plot = image_grid(new_image, rows, cols)
-        else:
-            to_plot = new_image
-
-
-        self.im.set_data(np.array(to_plot))
-        # self.im.set_data(new_image)
-        self.fig.canvas.flush_events()
-        self.fig.canvas.draw()
-        plt.pause(0.001)
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -286,10 +177,7 @@ class LeggedRobot(BaseTask):
         # prepare quantities
         self.base_quat[:] = self.root_states[:, 3:7]
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        
-
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         self._post_physics_step_callback()
@@ -312,10 +200,8 @@ class LeggedRobot(BaseTask):
         
         self.obs_groups = self.obs_manager.compute_obs(self)        
 
-
     def check_termination(self):
-        """ Check if environments need to be reset
-        """
+        """ Check if environments need to be reset."""
         self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
@@ -360,8 +246,9 @@ class LeggedRobot(BaseTask):
         self._reset_dofs(env_ids)
         self._reset_root_states(env_ids)
 
-        # self._resample_commands(env_ids)
+        # Sample commands to track camera trajectory.
         self._resample_commands_from_cam_traj(env_ids)
+        # self._resample_commands(env_ids)
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -405,6 +292,8 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
+
+        # Render images with Gaussian splatting.
         cam_trans = self.root_states[:, :3].cpu().numpy()
         cam_quat_xyzw = self.root_states[:, 3:7].cpu().numpy()
         cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw)
@@ -427,8 +316,6 @@ class LeggedRobot(BaseTask):
         cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
 
         c2ws = to_torch(vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix(), device=self.device, requires_grad=False)
-
-        # Query BatchedPLYRenderer with camera positions.
         renders, _ = self._gs_renderer.batch_render(
             c2ws,
             focal=self.cfg.env.focal_length,
@@ -437,8 +324,9 @@ class LeggedRobot(BaseTask):
             minibatch=128,
             device=self.device
         )
-        self.update_image(renders[0].cpu().numpy())
-        # self.update_image(renders.cpu().numpy())
+        if self.debug_viz:
+            update_image(self.process_image_fn(renders), self.fig, self.im)
+
         self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
@@ -566,13 +454,18 @@ class LeggedRobot(BaseTask):
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
-        self.measured_heights_mesh = self._get_base_heights_mesh()
+        self.base_height_raycaster.update(-1)
+        base_heights = self.base_height_raycaster.get_data()
+        self.measured_heights_mesh = self.root_states[:, 2].unsqueeze(1) - base_heights[..., 2]
+        # self.measured_heights_mesh = self._get_base_heights_mesh()
+
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
         if self.cfg.domain_rand.push_robots and  (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
             self._push_robots()
 
     def _sample_cam_pos_quat(self, env_ids):
+        # Sample a random camera position and orientation from the camera trajectories.
         cam_trans_subs = self.cam_trans[env_ids]
         cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
         rand = torch.rand((len(env_ids),), device=self.device)
@@ -994,8 +887,6 @@ class LeggedRobot(BaseTask):
             if curr_cam_trans.shape[0] > max_num_poses:
                 max_num_poses = curr_cam_trans.shape[0]
 
-
-
             new_vertices = env_origin[None] + vertices
             vertices_offset = 0 if len(all_vertices) == 0 else np.concatenate( all_vertices ).shape[0]
             all_triangles.append( triangles + vertices_offset)
@@ -1004,9 +895,6 @@ class LeggedRobot(BaseTask):
             
             tm_params.nb_vertices = vertices.shape[0]
             tm_params.nb_triangles = triangles.shape[0]
-            
-            
-            
             
             self.gym.add_triangle_mesh(
                 self.sim,
@@ -1046,9 +934,7 @@ class LeggedRobot(BaseTask):
         self.custom_origins = to_torch(env_origins, device=self.device, requires_grad=False)
         self.valid_pose_start_idxs = to_torch(valid_pose_start_idxs, device=self.device, requires_grad=False)
         self.all_vertices = to_torch(all_vertices, device=self.device, requires_grad=False)
-        
-        
-        
+
     def _create_envs(self):
         """ Creates environments:
              1. loads the robot URDF/MJCF asset,
@@ -1203,23 +1089,23 @@ class LeggedRobot(BaseTask):
         points[:, :, 1] = grid_y.flatten()
         return points
 
-    def _get_base_heights_mesh(self, env_ids=None):
-        self.all_vertices # [1024, 30000, 3]
-        curr_pos = self.root_states[:, :3]  # [1024, 3]
+    # def _get_base_heights_mesh(self, env_ids=None):
+    #     self.all_vertices # [1024, 30000, 3]
+    #     curr_pos = self.root_states[:, :3]  # [1024, 3]
 
-        curr_pos_xy = curr_pos[:, :2][:, None]  # [1024, 1, 2]
-        curr_pos_z = curr_pos[:, 2:]  # [1024, 1]
-        vertices_xy = self.all_vertices[..., :2]  # [1024, 30000, 2]
-        vertices_z = self.all_vertices[..., 2:]  # [1024, 30000, 1]
+    #     curr_pos_xy = curr_pos[:, :2][:, None]  # [1024, 1, 2]
+    #     curr_pos_z = curr_pos[:, 2:]  # [1024, 1]
+    #     vertices_xy = self.all_vertices[..., :2]  # [1024, 30000, 2]
+    #     vertices_z = self.all_vertices[..., 2:]  # [1024, 30000, 1]
 
-        distance_xy = vertices_xy - curr_pos_xy  # [1024, 30000, 2]
-        distance_xy = torch.norm(distance_xy, dim=-1)  # [1024, 30000]
-        closest_vertex = torch.argmin(distance_xy, axis=-1)  # [1024]
+    #     distance_xy = vertices_xy - curr_pos_xy  # [1024, 30000, 2]
+    #     distance_xy = torch.norm(distance_xy, dim=-1)  # [1024, 30000]
+    #     closest_vertex = torch.argmin(distance_xy, axis=-1)  # [1024]
 
-        closest_vertex = closest_vertex.unsqueeze(1).unsqueeze(2).expand(-1, 1, vertices_z.shape[-1])
-        nearest_z = torch.gather(vertices_z, dim=1, index=closest_vertex).squeeze(1)
-        base_height = curr_pos_z - nearest_z
-        return base_height
+    #     closest_vertex = closest_vertex.unsqueeze(1).unsqueeze(2).expand(-1, 1, vertices_z.shape[-1])
+    #     nearest_z = torch.gather(vertices_z, dim=1, index=closest_vertex).squeeze(1)
+    #     base_height = curr_pos_z - nearest_z
+    #     return base_height
 
 
     def _get_heights(self, env_ids=None):

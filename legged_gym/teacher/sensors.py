@@ -201,7 +201,31 @@ class GridPatternLocomotionCfg:
     max_xy_drift: float = 0.05
     direction: Tuple = (0.0, 0.0, -1.0)
     pattern_func: Callable = grid_pattern
-    
+
+def base_height(pattern_cfg: "BaseHeightLocomotionCfg", device: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """A regular grid pattern for ray casting.
+
+    Args:
+        pattern_cfg (GridPatternCfg): The config for the pattern.
+        device (str): The device
+    Returns:
+        ray_starts (torch.Tensor): The starting positions of the rays
+        ray_directions (torch.Tensor): The ray directions
+
+    """
+    ray_starts = torch.zeros(1, 3, device=device)
+
+    ray_directions = torch.zeros_like(ray_starts)
+    ray_directions[..., :] = torch.tensor(list(pattern_cfg.direction), device=device)
+    return ray_starts, ray_directions
+
+
+@dataclass
+class BaseHeightLocomotionCfg:
+    direction: Tuple = (0.0, 0.0, -1.0)
+    pattern_func: Callable = base_height
+
+
 class RayCaster():
     def __init__(self, env):        
         self.attachement_pos =(0.0, 0.0, 20.0)
@@ -259,3 +283,31 @@ class RayCaster():
                 self.num_envs * self.num_rays, 0.02, 4, 4, None, color=(0, 1, 0)
             )
         self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])
+
+
+class RayCasterBaseHeight(RayCaster):
+    def __init__(self, env):        
+        self.attachement_pos =(0.0, 0.0, 20.0)
+        self.attachement_quat = (0.0, 0.0, 0.0, 1.0)
+        self.attach_yaw_only = True
+        self.pattern_cfg = BaseHeightLocomotionCfg()
+        self.body_attachement_name = "base"
+        self.default_hit_value = 10
+        self.terrain_mesh = convert_to_wp_mesh(env.all_vertices_mesh, env.all_triangles_mesh, env.device)
+        self.num_envs = env.num_envs
+        self.device = env.device
+
+        self.ray_starts, self.ray_directions = self.pattern_cfg.pattern_func(self.pattern_cfg, self.device)
+        self.num_rays = len(self.ray_directions)
+
+        offset_pos = torch.tensor(list(self.attachement_pos), device=self.device)
+        offset_quat = torch.tensor(list(self.attachement_quat), device=env.device)
+        self.ray_directions = quat_apply(offset_quat.repeat(len(self.ray_directions), 1), self.ray_directions)
+        self.ray_starts += offset_pos
+
+        self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
+        self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
+
+        self.ray_hits_world = torch.zeros(self.num_envs, self.num_rays, 3, device=self.device)
+        self.env = env
+        self.sphere_geom = None
