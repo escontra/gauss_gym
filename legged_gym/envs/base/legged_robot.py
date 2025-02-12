@@ -52,8 +52,10 @@ from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+from legged_gym.teacher import RayCaster, ObsManager
 from.batch_gs_renderer import BatchPLYRenderer
 import pathlib
+import legged_gym.teacher.observations as O
 
 import matplotlib.pyplot as plt
 plt.ion()
@@ -167,7 +169,7 @@ class LeggedRobot(BaseTask):
         self.cfg = cfg
         self.sim_params = sim_params
         self.height_samples = None
-        self.debug_viz = False
+        self.debug_viz = True
         self.init_done = False
         self._parse_cfg(self.cfg)
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
@@ -180,12 +182,38 @@ class LeggedRobot(BaseTask):
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
-        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.splat_root) / 'splat.ply', device=self.device)
+        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.scene_root, 'splat') / 'splat.ply', device=self.device)
         print('LOADED GS RENDERER')
         self.fig, self.ax = plt.subplots()
         # self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height * 8, self.cfg.env.cam_width * 8, 3), dtype=np.uint8))
         self.im = self.ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
         plt.show(block=False)
+
+
+        # Added observation manager to compute teacher observations more flexible
+        self.sensors = {"raycast_grid": RayCaster(self)}
+        obs_groups_cfg = {
+            "teacher_observations": {
+                # optional parameters: scale, clip([min, max]), noise
+                "add_noise": True,  # turns off the noise in all observations
+                "is_recurrent": True,
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
+                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
+                "velocity_commands": {"func": O.velocity_commands},
+                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
+                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
+                "actions": {"func": O.actions},
+                "ray_cast": {
+                    "func": O.ray_cast,
+                    "noise": 0.1,
+                    "sensor": "raycast_grid",
+                    "clip": (-1, 1.0)
+                }
+            }
+        }
+        self.obs_manager = ObsManager(self, obs_groups_cfg)
+
 
     def update_image(self, new_image):
         # To visualize environment RGB.
@@ -240,6 +268,8 @@ class LeggedRobot(BaseTask):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
+            
+        self.extras["teacher_observations"] = self.obs_groups["teacher_observations"]
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
@@ -256,7 +286,10 @@ class LeggedRobot(BaseTask):
         # prepare quantities
         self.base_quat[:] = self.root_states[:, 3:7]
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        
+
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         self._post_physics_step_callback()
@@ -274,6 +307,11 @@ class LeggedRobot(BaseTask):
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
+        
+        self.sensors["raycast_grid"].update(-1)
+        
+        self.obs_groups = self.obs_manager.compute_obs(self)        
+
 
     def check_termination(self):
         """ Check if environments need to be reset
@@ -413,6 +451,8 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.measure_heights:
             heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
             self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
+            
+            
         # add noise if needed
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
@@ -432,7 +472,7 @@ class LeggedRobot(BaseTask):
         elif mesh_type=='trimesh':
             self._create_trimesh()
         elif mesh_type=='custom':
-            self.mesh_files = os.listdir(self.cfg.terrain.scene_root)
+            self.mesh_files = os.listdir(os.path.join(self.cfg.terrain.scene_root, 'meshes'))
             self.num_meshes = len(self.mesh_files)
             self._create_custom_mesh()
         elif mesh_type is not None:
@@ -901,6 +941,7 @@ class LeggedRobot(BaseTask):
         env_origins = []
         valid_pose_start_idxs = []
         all_vertices = []
+        all_triangles = []
         curr_x_offset = 0.
         curr_y_offset = 0.
         max_num_poses = 0
@@ -927,7 +968,7 @@ class LeggedRobot(BaseTask):
             env_origins.append(env_origin)
 
 
-            with open(os.path.join(self.cfg.terrain.scene_root, filepath), 'rb') as f:
+            with open(os.path.join(self.cfg.terrain.scene_root, 'meshes', filepath), 'rb') as f:
                 mesh_dict = pickle.load(f)
 
             cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
@@ -953,15 +994,28 @@ class LeggedRobot(BaseTask):
             if curr_cam_trans.shape[0] > max_num_poses:
                 max_num_poses = curr_cam_trans.shape[0]
 
+
+
             new_vertices = env_origin[None] + vertices
+            vertices_offset = 0 if len(all_vertices) == 0 else np.concatenate( all_vertices ).shape[0]
+            all_triangles.append( triangles + vertices_offset)
+            
             all_vertices.append(new_vertices)
+            
             tm_params.nb_vertices = vertices.shape[0]
             tm_params.nb_triangles = triangles.shape[0]
+            
+            
+            
+            
             self.gym.add_triangle_mesh(
                 self.sim,
                 new_vertices.flatten(order='C'),
                 triangles.flatten(order='C'), tm_params)
-
+        
+        self.all_vertices_mesh = np.concatenate(all_vertices)
+        self.all_triangles_mesh = np.concatenate(all_triangles)
+        
         all_vertices = [
             np.pad(v, ((max_num_vertices - len(v), 0), (0, 0)), mode='constant', constant_values=np.inf) for v in all_vertices
         ]
@@ -992,7 +1046,9 @@ class LeggedRobot(BaseTask):
         self.custom_origins = to_torch(env_origins, device=self.device, requires_grad=False)
         self.valid_pose_start_idxs = to_torch(valid_pose_start_idxs, device=self.device, requires_grad=False)
         self.all_vertices = to_torch(all_vertices, device=self.device, requires_grad=False)
-
+        
+        
+        
     def _create_envs(self):
         """ Creates environments:
              1. loads the robot URDF/MJCF asset,
@@ -1126,22 +1182,11 @@ class LeggedRobot(BaseTask):
             Default behaviour: draws height measurement points
         """
         # draw height lines
-        if not self.terrain.cfg.measure_heights:
-            return
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
-        for i in range(self.num_envs):
-            base_pos = (self.root_states[i, :3]).cpu().numpy()
-            heights = self.measured_heights[i].cpu().numpy()
-            height_points = quat_apply_yaw(self.base_quat[i].repeat(heights.shape[0]), self.height_points[i]).cpu().numpy()
-            for j in range(heights.shape[0]):
-                x = height_points[j, 0] + base_pos[0]
-                y = height_points[j, 1] + base_pos[1]
-                z = heights[j]
-                sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose) 
-
+        self.sensors["raycast_grid"].debug_vis(self)
+        
+        
     def _init_height_points(self):
         """ Returns points at which the height measurments are sampled (in base frame)
 

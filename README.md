@@ -1,65 +1,36 @@
-# Isaac Gym Environments for Legged Robots #
-This repository provides the environment used to train ANYmal (and other robots) to walk on rough terrain using NVIDIA's Isaac Gym.
-It includes all components needed for sim-to-real transfer: actuator network, friction & mass randomization, noisy observations and random pushes during training.  
-
-**Maintainer**: Nikita Rudin  
-**Affiliation**: Robotic Systems Lab, ETH Zurich  
-**Contact**: rudinn@ethz.ch  
+# Walking from Pixels
 
 ---
 
+# Installation
 
-# Instructions to Run with GSPLAT
-
-Following regular install instructions below. Then:
-
-Install gsplat:
-
-`pip install git+https://github.com/nerfstudio-project/gsplat.git`
-
-Additional dependencies:
-
-`pip install plyfile jaxtyping tqdm`
-
-
-Download different scenes / meshes from [here](https://drive.google.com/drive/folders/17-XZtOKxA_73wjEBz4uiajPiKp7QEOW0?usp=sharing).
-
-Update `scene_root` in `anymal_c_rough_config.py` to point to the `meshes` folder, and `splat_root` to point to the `splat` folder.
-
-Run with:
-
-`python legged_gym/scripts/train.py --task=anymal_c_rough`
-
-
-
-### :bell: Announcement (09.01.2024) ###
-
-With the shift from Isaac Gym to Isaac Sim at NVIDIA, we have migrated all the environments from this work to [Isaac Lab](https://github.com/isaac-sim/IsaacLab). Following this migration, this repository will receive limited updates and support. We encourage all users to migrate to the new framework for their applications.
-
-Information about this work's locomotion-related tasks in Isaac Lab is available [here](https://isaac-sim.github.io/IsaacLab/source/features/environments.html#locomotion).
-
----
-
-### Useful Links ###
-
-Project website: https://leggedrobotics.github.io/legged_gym/   
-Paper: https://arxiv.org/abs/2109.11978
-
-### Installation ###
 1. Create a new python virtual env with python 3.6, 3.7 or 3.8 (3.8 recommended)
 2. Install pytorch 1.10 with cuda-11.3:
     - `pip3 install torch==1.10.0+cu113 torchvision==0.11.1+cu113 torchaudio==0.10.0+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html`
 3. Install Isaac Gym
-   - Download and install Isaac Gym Preview 3 (Preview 2 will not work!) from https://developer.nvidia.com/isaac-gym
-   - `cd isaacgym/python && pip install -e .`
-   - Try running an example `cd examples && python 1080_balls_of_solitude.py`
-   - For troubleshooting check docs `isaacgym/docs/index.html`)
+    - Download and install Isaac Gym Preview 3 (Preview 2 will not work!) from https://developer.nvidia.com/isaac-gym
+    - `cd isaacgym/python && pip install -e .`
+    - Try running an example `cd examples && python 1080_balls_of_solitude.py`
+    - For troubleshooting check docs `isaacgym/docs/index.html`)
 4. Install rsl_rl (PPO implementation)
-   - Clone https://github.com/leggedrobotics/rsl_rl
-   -  `cd rsl_rl && git checkout v1.0.2 && pip install -e .` 
+    - `git clone git@github.com:JonasFrey96/rsl_rl_from_pixels.git`
+    - `cd rsl_rl && git checkout dev/teacher_policy && pip install -e .` 
 5. Install legged_gym
-    - Clone this repository
-   - `cd legged_gym && pip install -e .`
+- Clone this repository
+    - `cd legged_gym && pip install -e .`
+6. Install gsplat:
+    - `pip install git+https://github.com/nerfstudio-project/gsplat.git`
+7. Additional dependencies:
+    - `pip install plyfile jaxtyping tqdm`
+    - `pip install https://github.com/NVIDIA/warp/releases/download/v0.15.1/warp_lang-0.15.1-py3-none-manylinux2014_x86_64.whl`
+8. Download different scenes from [here](https://drive.google.com/drive/folders/18DkqVDCjXky5xcWuvo8z3WeyOq6vn_hi?usp=sharing) and copy them to the base dir:
+    - assets
+    - scenes
+    - legged_gym
+9. Update `scene_root` in `anymal_c_rough_config.py` to read from different scenes e.g. `apartment_to_grace` or `bridge`.
+10. Train policies with: `python legged_gym/scripts/train.py --task=anymal_c_rough`
+
+---
 
 ### CODE STRUCTURE ###
 1. Each environment is defined by an env file (`legged_robot.py`) and a config file (`legged_robot_config.py`). The config file contains two classes: one containing  all the environment parameters (`LeggedRobotCfg`) and one for the training parameters (`LeggedRobotCfgPPo`).  
