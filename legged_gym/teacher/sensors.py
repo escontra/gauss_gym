@@ -311,3 +311,10 @@ class RayCasterBaseHeight(RayCaster):
         self.ray_hits_world = torch.zeros(self.num_envs, self.num_rays, 3, device=self.device)
         self.env = env
         self.sphere_geom = None
+
+    def debug_vis(self, env):
+        if self.sphere_geom is None:
+            self.sphere_geom = BatchWireframeSphereGeometry(
+                self.num_envs * self.num_rays, 0.06, 8, 8, None, color=(1, 0, 0)
+            )
+        self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])

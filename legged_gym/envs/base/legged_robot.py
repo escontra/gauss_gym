@@ -1071,6 +1071,7 @@ class LeggedRobot(BaseTask):
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
         self.sensors["raycast_grid"].debug_vis(self)
+        self.base_height_raycaster.debug_vis(self)
         
         
     def _init_height_points(self):
