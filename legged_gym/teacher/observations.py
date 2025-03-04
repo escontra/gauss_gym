@@ -32,3 +32,7 @@ def ray_cast(env: "ANY_ENV", params):
     sensor = env.sensors[params["sensor"]]
     heights = env.root_states[:, 2].unsqueeze(1) - 0.5 - sensor.get_data()[..., 2]
     return heights
+
+def gs_render(env: "ANY_ENV", params):
+    sensor = env.sensors[params["sensor"]]
+    return sensor.get_data()

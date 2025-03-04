@@ -46,16 +46,12 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, matrix_to_quaternion
-from legged_gym.utils.rendering import update_image
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
-from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager
+from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager, GaussianSplattingRenderer
 from.batch_gs_renderer import BatchPLYRenderer
 import pathlib
 import legged_gym.teacher.observations as O
-
-import matplotlib.pyplot as plt
-plt.ion()
 
 
 class LeggedRobot(BaseTask):
@@ -89,29 +85,11 @@ class LeggedRobot(BaseTask):
         self._prepare_reward_function()
         self.init_done = True
 
-        # Load gaussian splatting renderer.
-        print('Loading Gaussian Splatting Renderer...')
-        self._gs_renderer = BatchPLYRenderer(pathlib.Path(self.cfg.terrain.scene_root, 'splat') / 'splat.ply', device=self.device)
-
-        # Visualize image for environment.
-        if self.debug_viz:
-            self.fig, ax = plt.subplots()
-            n = int(np.floor(np.sqrt(self.num_envs)))
-            if self.cfg.env.debug_viz_single_image:
-                self.process_image_fn = lambda tensor: tensor[0].cpu().numpy()
-                self.im = ax.imshow(np.zeros((self.cfg.env.cam_height, self.cfg.env.cam_width, 3), dtype=np.uint8))
-            else:
-                self.process_image_fn = lambda tensor: tensor.cpu().numpy()
-                self.im = ax.imshow(np.zeros((self.cfg.env.cam_height * n, self.cfg.env.cam_width * n, 3), dtype=np.uint8))
-            plt.show(block=False)
-        else:
-            self.fig, self.im, self.process_image_fn = None, None, None
-
-        self.base_height_raycaster = RayCasterBaseHeight(self)
-
-
         # Added observation manager to compute teacher observations more flexible
-        self.sensors = {"raycast_grid": RayCaster(self)}
+        self.sensors = {
+            "raycast_grid": RayCaster(self),
+            "gs_renderer": GaussianSplattingRenderer(self),
+            "base_height_raycaster": RayCasterBaseHeight(self)}
         obs_groups_cfg = {
             "teacher_observations": {
                 # optional parameters: scale, clip([min, max]), noise
@@ -130,6 +108,23 @@ class LeggedRobot(BaseTask):
                     "sensor": "raycast_grid",
                     "clip": (-1, 1.0)
                 }
+            },
+            "student_observations": {
+                # optional parameters: scale, clip([min, max]), noise
+                "add_noise": True,  # turns off the noise in all observations
+                "is_recurrent": True,
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
+                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
+                "velocity_commands": {"func": O.velocity_commands},
+                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
+                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
+                "actions": {"func": O.actions},
+            },
+            "image_renders": {
+                "add_noise": False,
+                "is_recurrent": True,
+                "gs_render": {"func": O.gs_render, "sensor": "gs_renderer"}
             }
         }
         self.obs_manager = ObsManager(self, obs_groups_cfg)
@@ -161,6 +156,8 @@ class LeggedRobot(BaseTask):
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
             
         self.extras["teacher_observations"] = self.obs_groups["teacher_observations"]
+        self.extras["student_observations"] = self.obs_groups["student_observations"]
+        self.extras["renders"] = self.obs_groups["image_renders"]
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
@@ -196,7 +193,10 @@ class LeggedRobot(BaseTask):
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
         
-        self.sensors["raycast_grid"].update(-1)
+        for sensor in self.sensors.values():
+            sensor.update(-1)
+        # self.sensors["raycast_grid"].update(-1)
+        # self.sensors["gs_renderer"].update(-1)
         
         self.obs_groups = self.obs_manager.compute_obs(self)        
 
@@ -209,7 +209,7 @@ class LeggedRobot(BaseTask):
         # Check if robot is too far from camera trajectory (Indicative of poor rendering).
         curr_cam_pos, curr_cam_quat = self._get_cam_pos_quat()
         nearest_traj_pos, nearest_traj_quat, nearest_idx = self._get_nearest_traj_pos_quat()
-        past_end = nearest_idx >= (self.cam_trans.shape[1] - 2)  # Past end of trajectory.
+        past_end = nearest_idx >= (self.cam_trans.shape[1] - 1)  # Past end of trajectory.
         self.distance_exceeded_buf = self.yaw_exceeded_buf = past_end
 
         pos_distance = torch.norm((curr_cam_pos - nearest_traj_pos)[:, :2], dim=-1)
@@ -293,40 +293,6 @@ class LeggedRobot(BaseTask):
         """ Computes observations
         """
 
-        # Render images with Gaussian splatting.
-        cam_trans = self.root_states[:, :3].cpu().numpy()
-        cam_quat_xyzw = self.root_states[:, 3:7].cpu().numpy()
-        cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat_xyzw)
-
-        x_rot = -np.pi / 2
-        z_rot = np.pi
-        R_x = vtf.SO3.from_x_radians(x_rot)
-        R_z = vtf.SO3.from_z_radians(z_rot)
-
-        cam_trans -= self.env_origins.cpu().numpy()
-        # cam_trans -= self.base_init_state.cpu().numpy()[:3][None]
-        cam_trans = np.dot(cam_trans, R_z.as_matrix())
-        cam_trans = np.dot(cam_trans, R_x.as_matrix())
-        cam_trans += self.cam_offsets
-
-        # TODO: Simplify these transforms.
-        cam_rot = R_z.inverse() @ cam_rot
-        cam_rot  = R_x.inverse() @ cam_rot
-        cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
-        cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
-
-        c2ws = to_torch(vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix(), device=self.device, requires_grad=False)
-        renders, _ = self._gs_renderer.batch_render(
-            c2ws,
-            focal=self.cfg.env.focal_length,
-            h=self.cfg.env.cam_height,
-            w=self.cfg.env.cam_width,
-            minibatch=128,
-            device=self.device
-        )
-        if self.debug_viz:
-            update_image(self.process_image_fn(renders), self.fig, self.im)
-
         self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
@@ -339,7 +305,6 @@ class LeggedRobot(BaseTask):
         if self.cfg.terrain.measure_heights:
             heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
             self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
-            
             
         # add noise if needed
         if self.add_noise:
@@ -454,10 +419,7 @@ class LeggedRobot(BaseTask):
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
-        self.base_height_raycaster.update(-1)
-        base_heights = self.base_height_raycaster.get_data()
-        self.measured_heights_mesh = self.root_states[:, 2].unsqueeze(1) - base_heights[..., 2]
-        # self.measured_heights_mesh = self._get_base_heights_mesh()
+        self.measured_heights_mesh = self.root_states[:, 2].unsqueeze(1) - self.sensors["base_height_raycaster"].get_data()[..., 2]
 
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
@@ -1070,9 +1032,8 @@ class LeggedRobot(BaseTask):
         # draw height lines
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        self.sensors["raycast_grid"].debug_vis(self)
-        self.base_height_raycaster.debug_vis(self)
-        
+        for sensor in self.sensors.values():
+          sensor.debug_vis(self)
         
     def _init_height_points(self):
         """ Returns points at which the height measurments are sampled (in base frame)

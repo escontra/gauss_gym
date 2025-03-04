@@ -30,6 +30,7 @@
 
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 from legged_gym import LEGGED_GYM_ROOT_DIR
+import math
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
@@ -38,16 +39,23 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         num_actions = 12
         num_observations = 48
         env_spacing = 12.0
+
+        # Camera parameters.
         focal_length = 100
-        cam_height = 96
-        cam_width = 96
+        cam_height = 156
+        cam_width = 156
+        cam_xyz_offset = [0.5, 0.0, 0.1]  # Local frame: [x, y, z] meters.
+        cam_rpy_offset = [0.0, math.pi / 4, 0.0]  # Local frame[roll, pitch, yaw] radians.
         debug_viz_single_image = True
 
-        max_traj_pos_distance = 0.5
-        max_traj_yaw_distance_rad = 0.78
+        # Distance / angle from camera trajectory based termination conditions.
+        max_traj_pos_distance = 1.0
+        max_traj_yaw_distance_rad = 1.0
 
     class terrain( LeggedRobotCfg.terrain ):
         mesh_type = 'custom'
+
+        # Terrain parameters.
         scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes/apartment_to_grace"
         height_offset = -1.2
         curriculum = False
@@ -113,6 +121,16 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
     class runner( LeggedRobotCfgPPO.runner ):
+        algorithm_class_name = 'BehaviorCloning'
+        teacher_iterations = 250
+        student_teacher_mix_iterations = 750
         run_name = ''
         experiment_name = 'rough_anymal_c'
         load_run = -1
+
+    class algorithm:
+        # training params
+        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+        learning_rate = 1.e-3 #5.e-4
+        max_grad_norm = 1.
+
