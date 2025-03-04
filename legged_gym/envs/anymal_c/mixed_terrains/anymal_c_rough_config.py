@@ -120,8 +120,13 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
             lin_vel = [0.0, 1.0] # min max [m/s]
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
+    # runner_class_name = 'StudentTeacherRunner'
+    runner_class_name = 'OnPolicyRunner'
     class runner( LeggedRobotCfgPPO.runner ):
-        algorithm_class_name = 'BehaviorCloning'
+        # policy_class_name = 'ActorCriticRecurrentWithImages'
+        policy_class_name = 'ActorCriticRecurrent'
+        # algorithm_class_name = 'BehaviorCloning'
+        algorithm_class_name = 'PPO'
         teacher_iterations = 250
         student_teacher_mix_iterations = 750
         run_name = ''

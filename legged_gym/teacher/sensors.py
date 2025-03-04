@@ -587,8 +587,6 @@ class GaussianSplattingRenderer():
             minibatch=128,
             device=self.device
         )
-        print("RENDERS")
-        print(renders.shape)
         self.renders[env_ids] = (255 * renders[env_ids]).to(torch.uint8)
 
     def get_data(self):

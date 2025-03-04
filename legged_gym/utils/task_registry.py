@@ -145,9 +145,11 @@ class TaskRegistry():
         
         train_cfg_dict = class_to_dict(train_cfg)
         
+        print('train_cfg_dict', train_cfg_dict)
         
+        runner = eval(train_cfg.runner_class_name)(env, train_cfg_dict, log_dir, device=args.rl_device)
         # TODO make this configurable to switch to PPO
-        runner = StudentTeacherRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
+        # runner = StudentTeacherRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
         # runner = OnPolicyRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
         
         
