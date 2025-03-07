@@ -270,7 +270,8 @@ class GaussianSceneManager:
     cam_quat_wxyz_orig = np.array(
       list(self._terrain.get_value("cam_quat_wxyz").values())
     )
-    cam_trans_orig = cam_trans_orig + self.env_origins[:, None, :]
+    env_origins_z0 = np.pad(self.env_origins[:, :2], ((0, 0), (0, 1)), mode="constant", constant_values=0.0)
+    cam_trans_orig = cam_trans_orig + env_origins_z0[:, None, :]
 
     self.cam_trans_viz = to_torch(
       cam_trans_orig, device=self._env.device, requires_grad=False

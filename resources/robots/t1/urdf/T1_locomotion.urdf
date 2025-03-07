@@ -76,7 +76,7 @@
   </link>
   <joint
     name="AAHead_yaw"
-    type="fixed">
+    type="revolute">
     <origin
       xyz="0.0625 0 0.243"
       rpy="0 0 0" />
@@ -125,7 +125,7 @@
   </link>
   <joint
     name="Head_pitch"
-    type="fixed">
+    type="revolute">
     <origin
       xyz="0 0 0.06185"
       rpy="0 0 0" />

@@ -92,6 +92,7 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
     class asset( LeggedRobotCfg.asset ):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/anymal_c/urdf/anymal_c.urdf"
         name = "anymal_c"
+        camera_link_name = "base"
         foot_name = "FOOT"
         penalize_contacts_on = ["SHANK", "THIGH"]
         terminate_after_contacts_on = ["base"]
@@ -114,15 +115,22 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
             lin_vel = [0.0, 1.0] # min max [m/s]
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
-    # runner_class_name = 'StudentTeacherRunner'
-    runner_class_name = 'OnPolicyRunner'
+    runner_class_name = 'StudentTeacherRunner'
+    # runner_class_name = 'OnPolicyRunner'
     class runner( LeggedRobotCfgPPO.runner ):
-        # policy_class_name = 'ActorCriticRecurrentWithImages'
-        policy_class_name = 'ActorCriticRecurrent'
-        # algorithm_class_name = 'BehaviorCloning'
-        algorithm_class_name = 'PPO'
+        policy_class_name = 'ActorCriticRecurrentWithImages'
+        # policy_class_name = 'ActorCriticRecurrent'
+        algorithm_class_name = 'BehaviorCloning'
+        # algorithm_class_name = 'PPO'
         teacher_iterations = 250
         student_teacher_mix_iterations = 750
         run_name = ''
         experiment_name = 'rough_anymal_c'
         load_run = -1
+
+    class algorithm:
+        # training params
+        num_learning_epochs = 5
+        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+        learning_rate = 1.e-3 #5.e-4
+        max_grad_norm = 1.

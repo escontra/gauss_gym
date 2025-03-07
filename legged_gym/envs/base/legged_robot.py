@@ -86,23 +86,41 @@ class LeggedRobot(BaseTask):
             "gs_renderer": self.scene_manager.renderer,
             "base_height_raycaster": RayCasterBaseHeight(self)}
         obs_groups_cfg = {
+            # "teacher_observations": {
+            #     # optional parameters: scale, clip([min, max]), noise
+            #     "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
+            #     "is_recurrent": True,
+            #     "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
+            #     "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
+            #     "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
+            #     "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
+            #     "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
+            #     "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
+            #     "actions": {"func": O.actions},
+            #     "ray_cast": {
+            #         "func": O.ray_cast,
+            #         "noise": self.cfg.noise.noise_scales.height_measurements,
+            #         "sensor": "raycast_grid",
+            #         "clip": (-1.0, 1.0),
+            #         "scale": self.obs_scales.height_measurements
+            #     }
+            # },
             "teacher_observations": {
                 # optional parameters: scale, clip([min, max]), noise
-                "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
+                "add_noise": True,  # turns off the noise in all observations
                 "is_recurrent": True,
-                "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
-                "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
-                "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
-                "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
-                "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
-                "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
+                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
+                "velocity_commands": {"func": O.velocity_commands},
+                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
+                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
                 "actions": {"func": O.actions},
                 "ray_cast": {
                     "func": O.ray_cast,
-                    "noise": self.cfg.noise.noise_scales.height_measurements,
+                    "noise": 0.1,
                     "sensor": "raycast_grid",
-                    "clip": (-1.0, 1.0),
-                    "scale": self.obs_scales.height_measurements
+                    "clip": (-1, 1.0)
                 }
             },
             "student_observations": {
@@ -514,6 +532,12 @@ class LeggedRobot(BaseTask):
             self.command_ranges["lin_vel_x"][0] = np.clip(self.command_ranges["lin_vel_x"][0] - 0.5, -self.cfg.commands.max_curriculum, 0.)
             self.command_ranges["lin_vel_x"][1] = np.clip(self.command_ranges["lin_vel_x"][1] + 0.5, 0., self.cfg.commands.max_curriculum)
 
+    def get_camera_link_state(self):
+      """Get the position of the camera link."""
+      camera_link_pos = self.rigid_body_state[:, self.camera_link_indices]
+      camera_link_pos = camera_link_pos.squeeze(1)
+      return camera_link_pos
+
     #----------------------------------------
     def _init_buffers(self):
         """ Initialize torch tensors which will contain simulation states and processed quantities
@@ -522,6 +546,7 @@ class LeggedRobot(BaseTask):
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
+        rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
@@ -534,6 +559,7 @@ class LeggedRobot(BaseTask):
         self.base_quat = self.root_states[:, 3:7]
 
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        self.rigid_body_state = gymtorch.wrap_tensor(rigid_body_state).view(self.num_envs, -1, 13) # shape: num_envs, num_bodies, xyz axis
 
         # initialize some data used later on
         self.common_step_counter = 0
@@ -688,6 +714,7 @@ class LeggedRobot(BaseTask):
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
         feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        camera_link_names = [s for s in body_names if self.cfg.asset.camera_link_name in s]
         penalized_contact_names = []
         for name in self.cfg.asset.penalize_contacts_on:
             penalized_contact_names.extend([s for s in body_names if name in s])
@@ -726,6 +753,10 @@ class LeggedRobot(BaseTask):
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
             self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], feet_names[i])
+
+        self.camera_link_indices = torch.zeros(len(camera_link_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(camera_link_names)):
+            self.camera_link_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], camera_link_names[i])
 
         self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(penalized_contact_names)):

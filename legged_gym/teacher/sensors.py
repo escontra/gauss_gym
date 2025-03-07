@@ -600,14 +600,13 @@ class GaussianSplattingRenderer():
             env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
         """
 
-
         # Apply height offset in the local robot frame.
-        cam_offset_world = quat_apply(self.env.root_states[:, 3:7], self.local_offset)
-        self.camera_positions = self.env.root_states[:, :3] + cam_offset_world
+        cam_offset_world = quat_apply(self.env.get_camera_link_state()[:, 3:7], self.local_offset)
+        self.camera_positions = self.env.get_camera_link_state()[:, :3] + cam_offset_world
         cam_trans = self.camera_positions.cpu().numpy()
 
         # Apply RPY rotations.
-        cam_rot = vtf.SO3.from_quaternion_xyzw(self.env.root_states[:, 3:7].cpu().numpy())
+        cam_rot = vtf.SO3.from_quaternion_xyzw(self.env.get_camera_link_state()[:, 3:7].cpu().numpy())
         cam_rot = cam_rot @ vtf.SO3.from_x_radians(self.env.cfg.env.cam_rpy_offset[0])
         cam_rot = cam_rot @ vtf.SO3.from_y_radians(self.env.cfg.env.cam_rpy_offset[1])
         cam_rot = cam_rot @ vtf.SO3.from_z_radians(self.env.cfg.env.cam_rpy_offset[2])

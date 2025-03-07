@@ -4,35 +4,37 @@ import math
 
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
-        num_envs = 64
-        num_actions = 12
+        num_envs = 1024
+        num_actions = 14
         num_observations = 48
-        env_spacing = 12.0
+        env_spacing = 8.0
 
         # Camera parameters.
         focal_length = 100
         cam_height = 156
         cam_width = 156
-        cam_xyz_offset = [0.1, 0.0, 0.1]  # Local frame: [x, y, z] meters.
-        cam_rpy_offset = [0.0, math.pi / 4, 0.0]  # Local frame[roll, pitch, yaw] radians.
+        cam_xyz_offset = [0.0, 0.0, 0.0]  # Local frame: [x, y, z] meters.
+        cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi]  # Local frame[roll, pitch, yaw] radians.
         debug_viz_single_image = True
 
         # Distance / angle from camera trajectory based termination conditions.
-        max_traj_pos_distance = 1.0
-        max_traj_yaw_distance_rad = 1.0
+        max_traj_pos_distance = 0.5
+        max_traj_yaw_distance_rad = 0.75
 
     class terrain( LeggedRobotCfg.terrain ):
-        mesh_type = 'custom'
+        mesh_type = 'gaussian'
 
         # Terrain parameters.
-        scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes/bridge"
-        height_offset = -1.7
+        scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
+        height_offset = -1.2
         curriculum = False
         measure_heights = False
 
     class init_state( LeggedRobotCfg.init_state ):
-        pos = [0.0, 0.0, 1.] # x,y,z [m]
+        pos = [0.0, 0.0, 0.6] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
+            'AAHead_yaw': 0.,
+            'Head_pitch': 0.,
             'Left_Hip_Pitch': -0.2,
             'Left_Hip_Roll': 0.,
             'Left_Hip_Yaw': 0.,
@@ -50,10 +52,11 @@ class T1RoughCfg( LeggedRobotCfg ):
 
     class control( LeggedRobotCfg.control ):
         # PD Drive parameters:
-        stiffness = {   'Hip': 200.0, 
+        stiffness = {   'Head': 50.0,
+                        'Hip': 200.0, 
                         'Knee': 200.0,
                         'Ankle': 50.0}  # [N*m/rad]
-        damping = { 'Hip': 5.0, 'Knee': 5.0,
+        damping = { 'Head': 1.0, 'Hip': 5.0, 'Knee': 5.0,
                     'Ankle': 1.0}  # [N*m*s/rad]     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
         action_scale = 1.0
@@ -63,6 +66,7 @@ class T1RoughCfg( LeggedRobotCfg ):
     class asset( LeggedRobotCfg.asset ):
         file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf'
         name = "t1"
+        camera_link_name = "H2"
         foot_name = 'foot'
         penalize_contacts_on = ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
         terminate_after_contacts_on = ['Waist']
@@ -129,13 +133,3 @@ class T1RoughCfgPPO( LeggedRobotCfgPPO ):
         run_name = ''
         experiment_name = 'rough_t1'
         load_run = -1
-
-    class algorithm:
-        # training params
-        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.e-3 #5.e-4
-        max_grad_norm = 1.
-
-
-
-  
