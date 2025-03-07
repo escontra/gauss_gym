@@ -34,10 +34,8 @@ from time import time
 from warnings import WarningMessage
 import numpy as np
 import os
-import pickle
-import viser.transforms as vtf
 
-from isaacgym.torch_utils import *
+from isaacgym import torch_utils as tu
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
@@ -45,12 +43,11 @@ import torch
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.terrain import Terrain
-from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi, matrix_to_quaternion
+from legged_gym.utils.gaussian_terrain import GaussianSceneManager
+from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
-from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager, GaussianSplattingRenderer
-from.batch_gs_renderer import BatchPLYRenderer
-import pathlib
+from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager
 import legged_gym.teacher.observations as O
 
 
@@ -77,10 +74,8 @@ class LeggedRobot(BaseTask):
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
         self.distance_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self.yaw_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
-        self.command_scale = torch.zeros(self.num_envs, 1, device=self.device, dtype=torch.float32)
 
-        if not self.headless:
-            self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
+        self.initial_camera_set = False
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
@@ -88,38 +83,46 @@ class LeggedRobot(BaseTask):
         # Added observation manager to compute teacher observations more flexible
         self.sensors = {
             "raycast_grid": RayCaster(self),
-            "gs_renderer": GaussianSplattingRenderer(self),
+            "gs_renderer": self.scene_manager.renderer,
             "base_height_raycaster": RayCasterBaseHeight(self)}
         obs_groups_cfg = {
             "teacher_observations": {
                 # optional parameters: scale, clip([min, max]), noise
-                "add_noise": True,  # turns off the noise in all observations
+                "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
                 "is_recurrent": True,
-                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
-                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
-                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
-                "velocity_commands": {"func": O.velocity_commands},
-                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
-                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
+                "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
+                "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
+                "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
+                "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
                 "actions": {"func": O.actions},
                 "ray_cast": {
                     "func": O.ray_cast,
-                    "noise": 0.1,
+                    "noise": self.cfg.noise.noise_scales.height_measurements,
                     "sensor": "raycast_grid",
-                    "clip": (-1, 1.0)
+                    "clip": (-1.0, 1.0),
+                    "scale": self.obs_scales.height_measurements
                 }
             },
             "student_observations": {
                 # optional parameters: scale, clip([min, max]), noise
-                "add_noise": True,  # turns off the noise in all observations
+                "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
                 "is_recurrent": True,
-                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
-                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
-                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
-                "velocity_commands": {"func": O.velocity_commands},
-                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
-                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
+                "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
+                "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
+                "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
+                "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
+                "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
+                "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
                 "actions": {"func": O.actions},
+                "ray_cast": {
+                    "func": O.ray_cast,
+                    "noise": self.cfg.noise.noise_scales.height_measurements,
+                    "sensor": "raycast_grid",
+                    "clip": (-1.0, 1.0),
+                    "scale": self.obs_scales.height_measurements
+                }
             },
             "image_renders": {
                 "add_noise": False,
@@ -129,6 +132,8 @@ class LeggedRobot(BaseTask):
         }
         self.obs_manager = ObsManager(self, obs_groups_cfg)
 
+    def obs_group_size(self, group_name):
+        return self.obs_manager.obs_dims_per_group[group_name]
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -149,16 +154,10 @@ class LeggedRobot(BaseTask):
             self.gym.refresh_dof_state_tensor(self.sim)
         self.post_physics_step()
 
-        # return clipped obs, clipped states (None), rewards, dones and infos
-        clip_obs = self.cfg.normalization.clip_observations
-        self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
-        if self.privileged_obs_buf is not None:
-            self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
-            
         self.extras["teacher_observations"] = self.obs_groups["teacher_observations"]
         self.extras["student_observations"] = self.obs_groups["student_observations"]
-        self.extras["renders"] = self.obs_groups["image_renders"]
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+        self.extras["image_renders"] = self.obs_groups["image_renders"]
+        return self.obs_groups["student_observations"], self.obs_groups["teacher_observations"], self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
@@ -173,9 +172,9 @@ class LeggedRobot(BaseTask):
 
         # prepare quantities
         self.base_quat[:] = self.root_states[:, 3:7]
-        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        self.base_lin_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_ang_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.projected_gravity[:] = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         self._post_physics_step_callback()
 
@@ -184,7 +183,6 @@ class LeggedRobot(BaseTask):
         self.compute_reward()
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
-        self.compute_observations() # in some cases a simulation step might be required to refresh some obs (for example body positions)
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -195,9 +193,7 @@ class LeggedRobot(BaseTask):
         
         for sensor in self.sensors.values():
             sensor.update(-1)
-        # self.sensors["raycast_grid"].update(-1)
-        # self.sensors["gs_renderer"].update(-1)
-        
+
         self.obs_groups = self.obs_manager.compute_obs(self)        
 
     def check_termination(self):
@@ -206,19 +202,9 @@ class LeggedRobot(BaseTask):
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
 
-        # Check if robot is too far from camera trajectory (Indicative of poor rendering).
-        curr_cam_pos, curr_cam_quat = self._get_cam_pos_quat()
-        nearest_traj_pos, nearest_traj_quat, nearest_idx = self._get_nearest_traj_pos_quat()
-        past_end = nearest_idx >= (self.cam_trans.shape[1] - 1)  # Past end of trajectory.
-        self.distance_exceeded_buf = self.yaw_exceeded_buf = past_end
-
-        pos_distance = torch.norm((curr_cam_pos - nearest_traj_pos)[:, :2], dim=-1)
-        self.distance_exceeded_buf |= pos_distance > self.cfg.env.max_traj_pos_distance
-
-        quat_difference = quat_mul(curr_cam_quat, quat_conjugate(nearest_traj_quat))
-        _, _, yaw = get_euler_xyz(quat_difference)
-        yaw_distance = torch.abs(wrap_to_pi(yaw))
-        self.yaw_exceeded_buf |= yaw_distance > self.cfg.env.max_traj_yaw_distance_rad
+        distance_exceeded, yaw_exceeded = self.scene_manager.check_termination()
+        self.distance_exceeded_buf = distance_exceeded
+        self.yaw_exceeded_buf = yaw_exceeded
 
         self.reset_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
         self.time_out_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
@@ -247,8 +233,7 @@ class LeggedRobot(BaseTask):
         self._reset_root_states(env_ids)
 
         # Sample commands to track camera trajectory.
-        self._resample_commands_from_cam_traj(env_ids)
-        # self._resample_commands(env_ids)
+        self._resample_commands(env_ids)
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -289,27 +274,6 @@ class LeggedRobot(BaseTask):
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
     
-    def compute_observations(self):
-        """ Computes observations
-        """
-
-        self.obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
-                                    self.base_ang_vel  * self.obs_scales.ang_vel,
-                                    self.projected_gravity,
-                                    self.commands[:, :3] * self.commands_scale,
-                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
-                                    self.dof_vel * self.obs_scales.dof_vel,
-                                    self.actions
-                                    ),dim=-1)
-        # add perceptive inputs if not blind
-        if self.cfg.terrain.measure_heights:
-            heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
-            self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
-            
-        # add noise if needed
-        if self.add_noise:
-            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
-
     def create_sim(self):
         """ Creates simulation, terrain and evironments
         """
@@ -318,16 +282,16 @@ class LeggedRobot(BaseTask):
         mesh_type = self.cfg.terrain.mesh_type
         if mesh_type in ['heightfield', 'trimesh']:
             self.terrain = Terrain(self.cfg.terrain, self.num_envs)
+        elif mesh_type == 'gaussian':
+            self.scene_manager = GaussianSceneManager(self)
         if mesh_type=='plane':
             self._create_ground_plane()
         elif mesh_type=='heightfield':
             self._create_heightfield()
         elif mesh_type=='trimesh':
             self._create_trimesh()
-        elif mesh_type=='custom':
-            self.mesh_files = os.listdir(os.path.join(self.cfg.terrain.scene_root, 'meshes'))
-            self.num_meshes = len(self.mesh_files)
-            self._create_custom_mesh()
+        elif mesh_type=='gaussian':
+            self.scene_manager.spawn_meshes()
         elif mesh_type is not None:
             raise ValueError("Terrain mesh type not recognised. Allowed types are [None, plane, heightfield, trimesh]")
         self._create_envs()
@@ -358,7 +322,7 @@ class LeggedRobot(BaseTask):
                 friction_range = self.cfg.domain_rand.friction_range
                 num_buckets = 64
                 bucket_ids = torch.randint(0, num_buckets, (self.num_envs, 1))
-                friction_buckets = torch_rand_float(friction_range[0], friction_range[1], (num_buckets,1), device='cpu')
+                friction_buckets = tu.torch_rand_float(friction_range[0], friction_range[1], (num_buckets,1), device='cpu')
                 self.friction_coeffs = friction_buckets[bucket_ids]
 
             for s in range(len(props)):
@@ -412,10 +376,12 @@ class LeggedRobot(BaseTask):
         """
         # 
         env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
-        # self._resample_commands(env_ids)
-        self._resample_commands_from_cam_traj(env_ids)
+
+        # Resample command scales. Commands are updated every timestep to guide
+        # the robot along the camera trajectory.
+        self._resample_commands(env_ids)
         if self.cfg.commands.heading_command:
-            forward = quat_apply(self.base_quat, self.forward_vec)
+            forward = tu.quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
@@ -426,91 +392,18 @@ class LeggedRobot(BaseTask):
         if self.cfg.domain_rand.push_robots and  (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
             self._push_robots()
 
-    def _sample_cam_pos_quat(self, env_ids):
-        # Sample a random camera position and orientation from the camera trajectories.
-        cam_trans_subs = self.cam_trans[env_ids]
-        cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
-        rand = torch.rand((len(env_ids),), device=self.device)
-        low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
-        high = torch.ones((len(env_ids),), device=self.device) * cam_trans_subs.shape[1] - 3
-        state_idx = (rand * (high - low) + low).to(torch.int64)
-
-        pos_idx = state_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, cam_trans_subs.shape[-1])
-        cam_trans = torch.gather(cam_trans_subs, dim=1, index=pos_idx).squeeze(1)
-
-        quat_idx = state_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, cam_quat_xyzw_subs.shape[-1])
-        cam_quat = torch.gather(cam_quat_xyzw_subs, dim=1, index=quat_idx).squeeze(1)
-
-        return cam_trans, cam_quat
-
-    def _get_nearest_traj_idx(self):
-        curr_cam_pos, _ = self._get_cam_pos_quat()
-        pos_difference = curr_cam_pos[:, None] - self.cam_trans
-        pos_distance = torch.norm(pos_difference, dim=-1)
-        min_distance_idx = torch.argmin(pos_distance, dim=1)
-        return min_distance_idx
-
-    def _get_nearest_traj_pos_quat(self):
-        nearest_traj_idx = self._get_nearest_traj_idx()
-        nearest_traj_pos_idx = nearest_traj_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_trans.shape[-1])
-        nearest_traj_pos = torch.gather(self.cam_trans, dim=1, index=nearest_traj_pos_idx).squeeze(1)
-        nearest_traj_quat_idx = nearest_traj_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_quat_xyzw.shape[-1])
-        nearest_traj_quat = torch.gather(self.cam_quat_xyzw, dim=1, index=nearest_traj_quat_idx).squeeze(1)
-        return nearest_traj_pos, nearest_traj_quat, nearest_traj_idx
-
-    def _get_cam_pos_quat(self):
-        curr_cam_pos = self.root_states[:, :3] - self.base_init_state[:3][None] - self.env_origins
-        curr_cam_quat = self.root_states[:, 3:7]
-        return curr_cam_pos, curr_cam_quat
-
-    def _resample_commands_from_cam_traj(self, env_ids):
-        """ Randommly select commands of some environments
-
-        Args:
-            env_ids (List[int]): Environments ids for which new commands are needed
-        """
-        _, nearest_quat, nearest_idx = self._get_nearest_traj_pos_quat()
-        _, _, yaw = get_euler_xyz(nearest_quat)
-        yaw = wrap_to_pi(yaw)  # Match the orientation of the nearest camera.
-
-        # Heading command.
-        if self.cfg.commands.heading_command:
-            self.commands[:, 3] = yaw
-        else:
-            raise NotImplementedError()
-
-        # Choose a target pose moderately far away. If nearest_idx + 1 is chosen, target 
-        # velocities fall to 0 as the robot approaches this target.
-        target_idx = torch.clamp(nearest_idx + 3, 0, self.cam_trans.shape[1] - 1)
-        target_traj_pos_idx = target_idx.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.cam_trans.shape[-1])
-        target_traj_pos = torch.gather(self.cam_trans, dim=1, index=target_traj_pos_idx).squeeze(1)
-        curr_cam_pos, _ = self._get_cam_pos_quat()
-        pos_delta = target_traj_pos - curr_cam_pos
-        pos_delta[:, 2] = 0  # Only use xy coordinates.
-
-        pos_delta_local = quat_rotate_inverse(self.base_quat, pos_delta)[:, :2]
-        pos_delta_norm = pos_delta_local / torch.norm(pos_delta_local, dim=-1, keepdim=True)
-        self.command_scale[env_ids] = torch_rand_float(self.command_ranges["lin_vel"][0], self.command_ranges["lin_vel"][1], (len(env_ids), 1), device=self.device)
-        pos_delta_norm *= self.command_scale
-        pos_delta_norm *= torch.norm(pos_delta_norm[:, :2], dim=1, keepdim=True) > 0.1  # Zero out small commands.
-        self.commands[:, :2] = pos_delta_norm
-
-
     def _resample_commands(self, env_ids):
         """ Randommly select commands of some environments
 
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
         """
-        self.commands[env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        heading_command, velocity_command = self.scene_manager.sample_commands(env_ids)
         if self.cfg.commands.heading_command:
-            self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+            self.commands[:, 3] = heading_command
         else:
-            self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-
-        # set small commands to zero
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+            raise NotImplementedError()
+        self.commands[:, :2] = velocity_command
 
     def _compute_torques(self, actions):
         """ Compute torques from actions.
@@ -544,7 +437,7 @@ class LeggedRobot(BaseTask):
         Args:
             env_ids (List[int]): Environemnt ids
         """
-        self.dof_pos[env_ids] = self.default_dof_pos * torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=self.device)
+        self.dof_pos[env_ids] = self.default_dof_pos * tu.torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=self.device)
         self.dof_vel[env_ids] = 0.
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -560,22 +453,22 @@ class LeggedRobot(BaseTask):
             env_ids (List[int]): Environemnt ids
         """
         # base position
-        if self.cfg.terrain.mesh_type == 'custom':
+        if self.cfg.terrain.mesh_type == 'gaussian':
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
             # Sample starting poses.
-            cam_trans, cam_quat = self._sample_cam_pos_quat(env_ids)
+            cam_trans, cam_quat = self.scene_manager.sample_cam_pos_quat(env_ids)
             self.root_states[env_ids, :3] += cam_trans
             self.root_states[env_ids, 3:7] = cam_quat
         elif self.custom_origins:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
-            self.root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
+            self.root_states[env_ids, :2] += tu.torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
         else:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
         # base velocities
-        self.root_states[env_ids, 7:13] = torch_rand_float(-0.5, 0.5, (len(env_ids), 6), device=self.device) # [7:10]: lin vel, [10:13]: ang vel
+        self.root_states[env_ids, 7:13] = tu.torch_rand_float(-0.5, 0.5, (len(env_ids), 6), device=self.device) # [7:10]: lin vel, [10:13]: ang vel
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.root_states),
@@ -585,7 +478,7 @@ class LeggedRobot(BaseTask):
         """ Random pushes the robots. Emulates an impulse by setting a randomized base velocity. 
         """
         max_vel = self.cfg.domain_rand.max_push_vel_xy
-        self.root_states[:, 7:9] = torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
+        self.root_states[:, 7:9] = tu.torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def _update_terrain_curriculum(self, env_ids):
@@ -621,32 +514,6 @@ class LeggedRobot(BaseTask):
             self.command_ranges["lin_vel_x"][0] = np.clip(self.command_ranges["lin_vel_x"][0] - 0.5, -self.cfg.commands.max_curriculum, 0.)
             self.command_ranges["lin_vel_x"][1] = np.clip(self.command_ranges["lin_vel_x"][1] + 0.5, 0., self.cfg.commands.max_curriculum)
 
-
-    def _get_noise_scale_vec(self, cfg):
-        """ Sets a vector used to scale the noise added to the observations.
-            [NOTE]: Must be adapted when changing the observations structure
-
-        Args:
-            cfg (Dict): Environment config file
-
-        Returns:
-            [torch.Tensor]: Vector of scales used to multiply a uniform distribution in [-1, 1]
-        """
-        noise_vec = torch.zeros_like(self.obs_buf[0])
-        self.add_noise = self.cfg.noise.add_noise
-        noise_scales = self.cfg.noise.noise_scales
-        noise_level = self.cfg.noise.noise_level
-        noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
-        noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
-        noise_vec[6:9] = noise_scales.gravity * noise_level
-        noise_vec[9:12] = 0. # commands
-        noise_vec[12:24] = noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
-        noise_vec[24:36] = noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
-        noise_vec[36:48] = 0. # previous actions
-        if self.cfg.terrain.measure_heights:
-            noise_vec[48:235] = noise_scales.height_measurements* noise_level * self.obs_scales.height_measurements
-        return noise_vec
-
     #----------------------------------------
     def _init_buffers(self):
         """ Initialize torch tensors which will contain simulation states and processed quantities
@@ -671,9 +538,8 @@ class LeggedRobot(BaseTask):
         # initialize some data used later on
         self.common_step_counter = 0
         self.extras = {}
-        self.noise_scale_vec = self._get_noise_scale_vec(self.cfg)
-        self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
-        self.forward_vec = to_torch([1., 0., 0.], device=self.device).repeat((self.num_envs, 1))
+        self.gravity_vec = tu.to_torch(tu.get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
+        self.forward_vec = tu.to_torch([1., 0., 0.], device=self.device).repeat((self.num_envs, 1))
         self.torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.p_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.d_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
@@ -685,9 +551,9 @@ class LeggedRobot(BaseTask):
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
-        self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        self.base_lin_vel = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_ang_vel = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.projected_gravity = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
         if self.cfg.terrain.measure_heights:
             self.height_points = self._init_height_points()
         self.measured_heights = 0
@@ -782,121 +648,6 @@ class LeggedRobot(BaseTask):
         self.gym.add_triangle_mesh(self.sim, self.terrain.vertices.flatten(order='C'), self.terrain.triangles.flatten(order='C'), tm_params)   
         self.height_samples = torch.tensor(self.terrain.heightsamples).view(self.terrain.tot_rows, self.terrain.tot_cols).to(self.device)
 
-    def _create_custom_mesh(self):
-        tm_params = gymapi.TriangleMeshParams()
-        tm_params.static_friction = self.cfg.terrain.static_friction
-        tm_params.dynamic_friction = self.cfg.terrain.dynamic_friction
-        tm_params.restitution = self.cfg.terrain.restitution
-
-        num_rows = np.floor(np.sqrt(self.num_meshes))
-
-        cam_trans = []
-        cam_quat_wxyz = []
-        cam_offsets = []
-        env_origins = []
-        valid_pose_start_idxs = []
-        all_vertices = []
-        all_triangles = []
-        curr_x_offset = 0.
-        curr_y_offset = 0.
-        max_num_poses = 0
-        max_num_vertices = 0
-
-
-        if self.cfg.sim.up_axis == 1:
-            height_offset = [0, 0, self.cfg.terrain.height_offset]
-        elif self.cfg.sim.up_axis == 0:
-            height_offset = [0, self.cfg.terrain.height_offset, 0]
-        else:
-            raise ValueError
-        height_offset = np.array(height_offset)[None]
-
-        for i, filepath in enumerate(self.mesh_files):
-            if i > 0 and i % num_rows == 0:
-                curr_x_offset += self.cfg.env.env_spacing
-                curr_y_offset = 0.0
-            else:
-                curr_y_offset += self.cfg.env.env_spacing
-
-
-            env_origin = np.array([curr_x_offset, curr_y_offset, 0.0]).astype(np.float32)
-            env_origins.append(env_origin)
-
-
-            with open(os.path.join(self.cfg.terrain.scene_root, 'meshes', filepath), 'rb') as f:
-                mesh_dict = pickle.load(f)
-
-            cam_offsets.append(np.array(mesh_dict['offset'])[0].astype(np.float32))
-            vertices = np.array(mesh_dict['vertices']).astype(np.float32)
-            triangles = np.array(mesh_dict['triangles']).astype(np.uint32)
-            curr_cam_trans = np.array(mesh_dict['cam_trans']).astype(np.float32) + height_offset
-            cam_trans.append(curr_cam_trans)
-
-            if len(vertices) > max_num_vertices:
-                max_num_vertices = len(vertices)
-
-            # Compute orientations from translations.
-            delta_xy = curr_cam_trans[1:, :2] - curr_cam_trans[:-1, :2]
-            delta_xyz = np.concatenate([delta_xy, np.zeros_like(delta_xy[:, :-1])], axis=-1)
-            x_component = delta_xyz / np.linalg.norm(delta_xyz, axis=-1, keepdims=True)
-            z_component = np.zeros_like(x_component)
-            z_component[:, 2] = 1
-            y_component = np.cross(z_component, x_component)
-            y_component = y_component / np.linalg.norm(y_component, axis=-1, keepdims=True)
-            cam_R = np.stack([x_component, y_component, z_component], axis=2)
-            cam_quat_wxyz.append(matrix_to_quaternion(to_torch(cam_R, device=self.device, requires_grad=False)).cpu().numpy())
-
-            if curr_cam_trans.shape[0] > max_num_poses:
-                max_num_poses = curr_cam_trans.shape[0]
-
-            new_vertices = env_origin[None] + vertices
-            vertices_offset = 0 if len(all_vertices) == 0 else np.concatenate( all_vertices ).shape[0]
-            all_triangles.append( triangles + vertices_offset)
-            
-            all_vertices.append(new_vertices)
-            
-            tm_params.nb_vertices = vertices.shape[0]
-            tm_params.nb_triangles = triangles.shape[0]
-            
-            self.gym.add_triangle_mesh(
-                self.sim,
-                new_vertices.flatten(order='C'),
-                triangles.flatten(order='C'), tm_params)
-        
-        self.all_vertices_mesh = np.concatenate(all_vertices)
-        self.all_triangles_mesh = np.concatenate(all_triangles)
-        
-        all_vertices = [
-            np.pad(v, ((max_num_vertices - len(v), 0), (0, 0)), mode='constant', constant_values=np.inf) for v in all_vertices
-        ]
-        all_vertices = np.stack(all_vertices, axis=0)
-
-        valid_pose_start_idxs = [max_num_poses - t.shape[0] for t in cam_trans]
-        cam_trans = [
-            np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_trans
-        ]
-        cam_quat_wxyz = [
-            np.pad(t, ((max_num_poses - t.shape[0], 0), (0, 0)), mode='edge') for t in cam_quat_wxyz
-        ]
-
-        # Assign different env origins, cam_trans, quat, and offsets to each environment.
-        repeat_factor = int(np.ceil(self.num_envs / self.num_meshes))
-        repeat = lambda x: np.tile(np.array(x), (repeat_factor,) + (1,) * (len(np.array(x).shape) - 1))[:self.num_envs]
-    
-        cam_trans = repeat(cam_trans)
-        cam_quat_wxyz = repeat(cam_quat_wxyz)
-        cam_offsets = repeat(cam_offsets)
-        env_origins = repeat(env_origins)
-        valid_pose_start_idxs = repeat(valid_pose_start_idxs)
-        all_vertices = repeat(all_vertices)
-
-        self.cam_trans = to_torch(np.array(cam_trans), device=self.device, requires_grad=False)
-        self.cam_quat_xyzw = to_torch(np.roll(np.array(cam_quat_wxyz), -1, axis=-1), device=self.device, requires_grad=False)
-        self.cam_offsets = np.array(cam_offsets)
-        self.custom_origins = to_torch(env_origins, device=self.device, requires_grad=False)
-        self.valid_pose_start_idxs = to_torch(valid_pose_start_idxs, device=self.device, requires_grad=False)
-        self.all_vertices = to_torch(all_vertices, device=self.device, requires_grad=False)
-
     def _create_envs(self):
         """ Creates environments:
              1. loads the robot URDF/MJCF asset,
@@ -945,7 +696,7 @@ class LeggedRobot(BaseTask):
             termination_contact_names.extend([s for s in body_names if name in s])
 
         base_init_state_list = self.cfg.init_state.pos + self.cfg.init_state.rot + self.cfg.init_state.lin_vel + self.cfg.init_state.ang_vel
-        self.base_init_state = to_torch(base_init_state_list, device=self.device, requires_grad=False)
+        self.base_init_state = tu.to_torch(base_init_state_list, device=self.device, requires_grad=False)
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
 
@@ -958,7 +709,7 @@ class LeggedRobot(BaseTask):
             # create env instance
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
             pos = self.env_origins[i].clone()
-            pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
+            pos[:2] += tu.torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
             start_pose.p = gymapi.Vec3(*pos)
                 
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
@@ -999,8 +750,10 @@ class LeggedRobot(BaseTask):
             self.max_terrain_level = self.cfg.terrain.num_rows
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
             self.env_origins[:] = self.terrain_origins[self.terrain_levels, self.terrain_types]
-        elif self.cfg.terrain.mesh_type == "custom":
-            self.env_origins = self.custom_origins
+        # elif self.cfg.terrain.mesh_type == "custom":
+            # self.env_origins = self.custom_origins
+        elif self.cfg.terrain.mesh_type == "gaussian":
+            self.env_origins = self.scene_manager.env_origins
         else:
             self.custom_origins = False
             self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
@@ -1034,7 +787,17 @@ class LeggedRobot(BaseTask):
         self.gym.refresh_rigid_body_state_tensor(self.sim)
         for sensor in self.sensors.values():
           sensor.debug_vis(self)
-        
+        self.scene_manager.debug_vis(self)
+        if not self.headless:
+            if self.selected_environment >= 0 and (self.selected_environment_changed or not self.initial_camera_set):
+                # Point at the middle of the camera trajectory.
+                mesh_id = self.scene_manager.mesh_id_for_env_id(self.selected_environment)
+                cam_trans = self.scene_manager.cam_trans_viz[mesh_id]
+                lookat = cam_trans[cam_trans.shape[0] // 2].cpu().numpy()
+                pos = (np.array(self.cfg.viewer.pos) - (self.cfg.viewer.lookat) + lookat).tolist()
+                self.set_camera(pos, lookat.tolist())
+                self.initial_camera_set = True
+
     def _init_height_points(self):
         """ Returns points at which the height measurments are sampled (in base frame)
 
@@ -1050,25 +813,6 @@ class LeggedRobot(BaseTask):
         points[:, :, 0] = grid_x.flatten()
         points[:, :, 1] = grid_y.flatten()
         return points
-
-    # def _get_base_heights_mesh(self, env_ids=None):
-    #     self.all_vertices # [1024, 30000, 3]
-    #     curr_pos = self.root_states[:, :3]  # [1024, 3]
-
-    #     curr_pos_xy = curr_pos[:, :2][:, None]  # [1024, 1, 2]
-    #     curr_pos_z = curr_pos[:, 2:]  # [1024, 1]
-    #     vertices_xy = self.all_vertices[..., :2]  # [1024, 30000, 2]
-    #     vertices_z = self.all_vertices[..., 2:]  # [1024, 30000, 1]
-
-    #     distance_xy = vertices_xy - curr_pos_xy  # [1024, 30000, 2]
-    #     distance_xy = torch.norm(distance_xy, dim=-1)  # [1024, 30000]
-    #     closest_vertex = torch.argmin(distance_xy, axis=-1)  # [1024]
-
-    #     closest_vertex = closest_vertex.unsqueeze(1).unsqueeze(2).expand(-1, 1, vertices_z.shape[-1])
-    #     nearest_z = torch.gather(vertices_z, dim=1, index=closest_vertex).squeeze(1)
-    #     base_height = curr_pos_z - nearest_z
-    #     return base_height
-
 
     def _get_heights(self, env_ids=None):
         """ Samples heights of the terrain at required points around each robot.

@@ -34,29 +34,27 @@ import math
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        # num_envs = 4096
         num_envs = 64
         num_actions = 12
-        num_observations = 48
-        env_spacing = 12.0
+        env_spacing = 8.0
 
         # Camera parameters.
         focal_length = 100
         cam_height = 156
         cam_width = 156
-        cam_xyz_offset = [0.5, 0.0, 0.1]  # Local frame: [x, y, z] meters.
-        cam_rpy_offset = [0.0, math.pi / 4, 0.0]  # Local frame[roll, pitch, yaw] radians.
+        cam_xyz_offset = [0.44665475921048414, 0.009719827812061002, 0.17764090819492523] # Local frame: [x, y, z] meters.
+        cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi] # Local frame[roll, pitch, yaw] radians.
         debug_viz_single_image = True
 
         # Distance / angle from camera trajectory based termination conditions.
-        max_traj_pos_distance = 1.0
-        max_traj_yaw_distance_rad = 1.0
+        max_traj_pos_distance = 0.5
+        max_traj_yaw_distance_rad = 0.75
 
     class terrain( LeggedRobotCfg.terrain ):
-        mesh_type = 'custom'
+        mesh_type = 'gaussian'
 
         # Terrain parameters.
-        scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes/apartment_to_grace"
+        scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
         height_offset = -1.2
         curriculum = False
         measure_heights = False
@@ -106,12 +104,8 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
     class rewards( LeggedRobotCfg.rewards ):
         base_height_target = 0.5
         max_contact_force = 500.
-        only_positive_rewards = True
+        only_positive_rewards = False
         class scales( LeggedRobotCfg.rewards.scales ):
-            base_height = -0.2
-            # ang_vel_xy = 0.0
-            # lin_vel_z = 0.0
-            orientation = 0.0
             pass
 
     class commands( LeggedRobotCfg.commands ):
@@ -132,10 +126,3 @@ class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
         run_name = ''
         experiment_name = 'rough_anymal_c'
         load_run = -1
-
-    class algorithm:
-        # training params
-        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.e-3 #5.e-4
-        max_grad_norm = 1.
-

@@ -88,6 +88,9 @@ class BaseTask():
         self.enable_viewer_sync = True
         self.viewer = None
 
+        self.selected_environment_changed = True
+        self.selected_environment = 0
+
         # if running with a viewer, set up keyboard shortcuts and camera
         if self.headless == False:
             # subscribe to keyboard shortcuts
@@ -97,6 +100,12 @@ class BaseTask():
                 self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_M, "increase_selected")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_N, "decrease_selected")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_L, "select_all")
 
     def get_observations(self):
         return self.obs_buf
@@ -124,11 +133,29 @@ class BaseTask():
                 sys.exit()
 
             # check for keyboard events
+            prev_selected_environment = self.selected_environment
             for evt in self.gym.query_viewer_action_events(self.viewer):
                 if evt.action == "QUIT" and evt.value > 0:
                     sys.exit()
                 elif evt.action == "toggle_viewer_sync" and evt.value > 0:
                     self.enable_viewer_sync = not self.enable_viewer_sync
+                elif evt.action == "increase_selected" and evt.value > 0:
+                    if self.selected_environment < 0:
+                        self.selected_environment = 0
+                    elif self.selected_environment == self.num_envs - 1:
+                        self.selected_environment = 0
+                    else:
+                        self.selected_environment += 1
+                elif evt.action == "decrease_selected" and evt.value > 0:
+                    if self.selected_environment < 0:
+                        self.selected_environment = self.num_envs - 1
+                    elif self.selected_environment == 0:
+                        self.selected_environment = self.num_envs - 1
+                    else:
+                        self.selected_environment -= 1
+                elif evt.action == "select_all" and evt.value > 0:
+                    self.selected_environment = -1
+            self.selected_environment_changed = prev_selected_environment != self.selected_environment
 
             # fetch results
             if self.device != 'cpu':

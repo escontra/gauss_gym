@@ -204,7 +204,7 @@ class LeggedRobotCfg(BaseConfig):
 
 class LeggedRobotCfgPPO(BaseConfig):
     seed = 1
-    runner_class_name = 'StudentTeacherRunner'
+    runner_class_name = 'OnPolicyRunner'
     class policy:
         init_noise_std = 1.0
         actor_hidden_dims = [512, 256, 128]
@@ -231,7 +231,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         max_grad_norm = 1.
 
     class runner:
-        policy_class_name = 'ActorCriticRecurrent'
+        policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration
         max_iterations = 1500 # number of policy updates

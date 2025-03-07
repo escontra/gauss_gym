@@ -1,19 +1,22 @@
 import torch
+import torch.nn.functional as F
+import os
+from collections import defaultdict
 
 from isaacgym.torch_utils import quat_apply
 from legged_gym.utils.math import quat_apply_yaw
 from typing import Tuple, Callable
 from dataclasses import dataclass
 import numpy as np
-import torch
 import warp as wp
 from isaacgym import gymapi, gymutil
 import math
-from legged_gym.envs.base.batch_gs_renderer import BatchPLYRenderer
+from legged_gym.envs.base.batch_gs_renderer import MultiSceneRenderer
 import viser.transforms as vtf
-import pathlib
 import matplotlib.pyplot as plt
 from PIL import Image
+from isaacgym.torch_utils import to_torch
+
 
 class BatchWireframeSphereGeometry(gymutil.LineGeometry):
     """Draw multiple spheres without a for loop"""
@@ -67,12 +70,12 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
             u += ustep
 
         if pose is None:
-            self.verts = np.repeat(verts, num_spheres, axis=0)
+            self.verts = np.tile(verts, (num_spheres, 1))
         else:
             self.verts = pose.transform_points(verts)
 
         self.verts_tmp = np.copy(self.verts)
-        self._colors = np.repeat(colors, num_spheres, axis=0)
+        self._colors = np.tile(colors, (num_spheres, 1))
 
     def vertices(self):
         return self.verts
@@ -80,26 +83,41 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
     def colors(self):
         return self._colors
 
-    def draw(self, positions, gym, viewer, env):
-        if len(positions.shape) == 2:
-            positions = positions.unsqueeze(0)
-        flat_pos = positions.unsqueeze(0).repeat(self.num_lines, 1, 1, 1).view(-1, 3).cpu().numpy()
+    def draw(self, positions, gym, viewer, env, only_render_selected=-1):
+        flat_pos = positions.repeat_interleave(self.num_lines, dim=0).view(-1, 3).cpu().numpy()
+
         self.verts_tmp["x"][:, 0] = self.verts["x"][:, 0] + flat_pos[:, 0]
         self.verts_tmp["x"][:, 1] = self.verts["x"][:, 1] + flat_pos[:, 0]
         self.verts_tmp["y"][:, 0] = self.verts["y"][:, 0] + flat_pos[:, 1]
         self.verts_tmp["y"][:, 1] = self.verts["y"][:, 1] + flat_pos[:, 1]
         self.verts_tmp["z"][:, 0] = self.verts["z"][:, 0] + flat_pos[:, 2]
         self.verts_tmp["z"][:, 1] = self.verts["z"][:, 1] + flat_pos[:, 2]
-        gym.add_lines(viewer, env, self.num_spheres * self.num_lines, self.verts_tmp, self.colors())
+
+        if isinstance(only_render_selected, int):
+          if only_render_selected < 0:
+              start_frustrum = 0
+              end_frustrum = self.num_spheres
+          else:
+              start_frustrum = only_render_selected
+              end_frustrum = only_render_selected + 1
+        else:
+            start_frustrum = only_render_selected[0]
+            end_frustrum = only_render_selected[1]
+
+        verts_tmp = self.verts_tmp[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
+        colors_tmp = self._colors[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
+        total_lines = (end_frustrum - start_frustrum) * self.num_lines
+        gym.add_lines(viewer, env, total_lines, verts_tmp, colors_tmp)
 
 
 class BatchWireframeAxisGeometry(gymutil.LineGeometry):
     """Draw multiple spheres without a for loop"""
 
-    def __init__(self, num_frustrums, length, thickness, lines_per_axis=64):
+    def __init__(self, num_frustrums, length, thickness, lines_per_axis=64, color_x=(1, 0, 0), color_y=(0, 1, 0), color_z=(0, 0, 1)):
 
         self.num_lines = 3 * lines_per_axis
         self.num_frustrums = num_frustrums
+        self.lines_per_axis = lines_per_axis
 
         verts = np.empty((self.num_lines, 2), gymapi.Vec3.dtype)
         colors = np.empty(self.num_lines, gymapi.Vec3.dtype)
@@ -110,20 +128,19 @@ class BatchWireframeAxisGeometry(gymutil.LineGeometry):
 
             verts[i][0] = (0, c1, c2)
             verts[i][1] = (length, c1, c2)
-            colors[i] = (1, 0, 0)
+            colors[i] = color_x
 
             verts[i + lines_per_axis][0] = (c1, 0, c2)
             verts[i + lines_per_axis][1] = (c1, length, c2)
-            colors[i + lines_per_axis] = (0, 1, 0)
+            colors[i + lines_per_axis] = color_y
 
             verts[i + 2 * lines_per_axis][0] = (c1, c2, 0)
             verts[i + 2 * lines_per_axis][1] = (c1, c2, length)
-            colors[i + 2 * lines_per_axis] = (0, 0, 1)
+            colors[i + 2 * lines_per_axis] = color_z
 
-        self.verts = np.repeat(verts, num_frustrums, axis=0)
-
+        self.verts = np.tile(verts, (num_frustrums, 1))
         self.verts_tmp = np.copy(self.verts)
-        self._colors = np.repeat(colors, num_frustrums, axis=0)
+        self._colors = np.tile(colors, (num_frustrums, 1))
 
     def vertices(self):
         return self.verts
@@ -131,19 +148,24 @@ class BatchWireframeAxisGeometry(gymutil.LineGeometry):
     def colors(self):
         return self._colors
 
-    def draw(self, positions, rotations, gym, viewer, env):
-        if len(positions.shape) == 2:
-            positions = positions.unsqueeze(0)
-        if len(rotations.shape) == 2:
-            rotations = rotations.unsqueeze(0)
-        flat_pos = positions.unsqueeze(0).repeat(self.num_lines, 1, 1, 1).view(-1, 3).cpu().numpy()
-        flat_quat = rotations.unsqueeze(0).repeat(self.num_lines, 1, 1, 1).view(-1, 4).cpu().numpy()
+    def draw(self, positions, rotations, gym, viewer, env, axis_scales=None, only_render_selected=-1):
+        flat_pos = positions.repeat_interleave(self.num_lines, dim=0).cpu().numpy()
+        flat_quat = rotations.repeat_interleave(self.num_lines, dim=0) # (N, 4)
 
+        if axis_scales is not None:
+            # Repeat axis scales for each line.
+            axis_scales_x = F.pad(axis_scales[..., :1], (0, 2), mode='constant', value=1)
+            axis_scales_y = F.pad(axis_scales[..., 1:2], (1, 1), mode='constant', value=1)
+            axis_scales_z = F.pad(axis_scales[..., 2:3], (2, 0), mode='constant', value=1)
+            axis_scales = torch.stack((axis_scales_x, axis_scales_y, axis_scales_z), dim=1).reshape(-1, 3)
+            axis_scales = axis_scales.repeat_interleave(self.lines_per_axis, dim=0)
         verts_stacked = np.stack((
             self.verts["x"], self.verts["y"], self.verts["z"]
         ), axis=-1)
+        if axis_scales is not None:
+            verts_stacked[:, 1, :] *= axis_scales.cpu().numpy()
         rotated_verts = quat_apply(
-          torch.tensor(flat_quat[:, None].repeat(2, 1), device=positions.device),
+          flat_quat[:, None].repeat(1, 2, 1),
           torch.tensor(verts_stacked, device=positions.device)
         ).cpu().numpy()
 
@@ -154,7 +176,21 @@ class BatchWireframeAxisGeometry(gymutil.LineGeometry):
         self.verts_tmp["z"][:, 0] = rotated_verts[:, 0, 2] + flat_pos[:, 2]
         self.verts_tmp["z"][:, 1] = rotated_verts[:, 1, 2] + flat_pos[:, 2]
 
-        gym.add_lines(viewer, env, self.num_frustrums * self.num_lines, self.verts_tmp, self.colors())
+        if isinstance(only_render_selected, int):
+          if only_render_selected < 0:
+              start_frustrum = 0
+              end_frustrum = self.num_frustrums
+          else:
+              start_frustrum = only_render_selected
+              end_frustrum = only_render_selected + 1
+        else:
+            start_frustrum = only_render_selected[0]
+            end_frustrum = only_render_selected[1]
+
+        verts_tmp = self.verts_tmp[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
+        colors_tmp = self._colors[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
+        total_lines = (end_frustrum - start_frustrum) * self.num_lines
+        gym.add_lines(viewer, env, total_lines, verts_tmp, colors_tmp)
 
 
 class BatchWireframeFrustumGeometry(gymutil.LineGeometry):
@@ -257,9 +293,9 @@ class BatchWireframeFrustumGeometry(gymutil.LineGeometry):
                 verts[line_idx][1] = tuple(np.array(end) + offset)
                 colors[line_idx] = color
 
-        self.verts = np.repeat(verts, num_frustums, axis=0)
+        self.verts = np.tile(verts, (num_frustums, 1))
         self.verts_tmp = np.copy(self.verts)
-        self._colors = np.repeat(colors, num_frustums, axis=0)
+        self._colors = np.tile(colors, (num_frustums, 1))
 
     def vertices(self):
         return self.verts
@@ -267,15 +303,9 @@ class BatchWireframeFrustumGeometry(gymutil.LineGeometry):
     def colors(self):
         return self._colors
 
-    def draw(self, positions, rotations, gym, viewer, env):
-        # Ensure positions and rotations have a batch dimension
-        if len(positions.shape) == 2:
-            positions = positions.unsqueeze(0)
-        if len(rotations.shape) == 2:
-            rotations = rotations.unsqueeze(0)
-        # Repeat vertex positions and orientations for all lines
-        flat_pos = positions.unsqueeze(0).repeat(self.num_lines, 1, 1, 1).view(-1, 3).cpu().numpy()
-        flat_quat = rotations.unsqueeze(0).repeat(self.num_lines, 1, 1, 1).view(-1, 4).cpu().numpy()
+    def draw(self, positions, rotations, gym, viewer, env, only_render_selected=-1):
+        flat_pos = positions.repeat_interleave(self.num_lines, dim=0).cpu().numpy()
+        flat_quat = rotations.repeat_interleave(self.num_lines, dim=0).cpu().numpy() # (N, 4)
 
         # Stack the vertex components for rotation
         verts_stacked = np.stack((
@@ -296,8 +326,16 @@ class BatchWireframeFrustumGeometry(gymutil.LineGeometry):
         self.verts_tmp["z"][:, 0] = rotated_verts[:, 0, 2] + flat_pos[:, 2]
         self.verts_tmp["z"][:, 1] = rotated_verts[:, 1, 2] + flat_pos[:, 2]
 
-        # Finally, add the lines to the viewer
-        gym.add_lines(viewer, env, self.num_frustums * self.num_lines, self.verts_tmp, self.colors())
+        if only_render_selected >= 0:
+            verts_tmp = self.verts_tmp[only_render_selected * self.num_lines:(only_render_selected + 1) * self.num_lines]
+            colors_tmp = self._colors[only_render_selected * self.num_lines:(only_render_selected + 1) * self.num_lines]
+            total_lines = self.num_lines
+        else:
+            verts_tmp = self.verts_tmp
+            colors_tmp = self._colors
+            total_lines = self.num_frustums * self.num_lines
+
+        gym.add_lines(viewer, env, total_lines, verts_tmp, colors_tmp)
 
 
 wp.init()
@@ -445,7 +483,7 @@ class RayCaster():
         self.pattern_cfg = GridPatternLocomotionCfg()
         self.body_attachement_name = "base"
         self.default_hit_value = 10
-        self.terrain_mesh = convert_to_wp_mesh(env.all_vertices_mesh, env.all_triangles_mesh, env.device)
+        self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
         self.num_envs = env.num_envs
         self.device = env.device
 
@@ -493,7 +531,11 @@ class RayCaster():
             self.sphere_geom = BatchWireframeSphereGeometry(
                 self.num_envs * self.num_rays, 0.02, 4, 4, None, color=(0, 1, 0)
             )
-        self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])
+        if self.env.selected_environment >= 0:
+          only_render_selected_range = [self.env.selected_environment * self.num_rays, (self.env.selected_environment + 1) * self.num_rays]
+          self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0], only_render_selected=only_render_selected_range)
+        else:
+          self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])
 
 def update_image(new_image, fig, im):
     # To visualize environment RGB.
@@ -523,13 +565,21 @@ def update_image(new_image, fig, im):
 
 
 class GaussianSplattingRenderer():
-    def __init__(self, env):        
+    def __init__(self, env, scene_manager):        
         self.num_envs = env.num_envs
         self.device = env.device
+        self.scene_manager = scene_manager
+        self.terrain = scene_manager._terrain
 
-        # Load gaussian splatting renderer.
         print('Loading Gaussian Splatting Renderer...')
-        self._gs_renderer = BatchPLYRenderer(pathlib.Path(env.cfg.terrain.scene_root, 'splat') / 'splat.ply', device=self.device)
+        self.scene_path_map = {s: os.path.join(os.path.dirname(os.path.dirname(self.terrain.get_mesh(s, f).filepath)), 'splat', 'splat.ply') for s, f in self.terrain.mesh_keys}
+        self.path_scene_map = {v: k for k, v in self.scene_path_map.items()}
+        self._gs_renderer = MultiSceneRenderer(
+            list(self.scene_path_map.values()),
+            renderer_gpus=[self.device],
+            output_gpu=self.device
+
+        )
 
         self.fig, self.process_image_fn, self.im = None, None, None
         self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
@@ -562,10 +612,6 @@ class GaussianSplattingRenderer():
         cam_rot = cam_rot @ vtf.SO3.from_y_radians(self.env.cfg.env.cam_rpy_offset[1])
         cam_rot = cam_rot @ vtf.SO3.from_z_radians(self.env.cfg.env.cam_rpy_offset[2])
 
-        # Go to OpenGL camera convention.
-        cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
-        cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
-
         self.camera_quats_xyzw = torch.tensor(cam_rot.as_quaternion_xyzw(), device=self.device, dtype=torch.float, requires_grad=False)
 
         # Go from IG frame to GS frame.
@@ -574,19 +620,26 @@ class GaussianSplattingRenderer():
         cam_trans -= self.env.env_origins.cpu().numpy()
         cam_trans = np.dot(cam_trans, R_z.as_matrix())
         cam_trans = np.dot(cam_trans, R_x.as_matrix())
-        cam_trans += self.env.cam_offsets
+        cam_trans += self.scene_manager.cam_offset.cpu().numpy()
         cam_rot = R_z.inverse() @ cam_rot
         cam_rot  = R_x.inverse() @ cam_rot
 
-        c2ws = torch.tensor(vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix(), device=self.device, dtype=torch.float)
-        renders, _ = self._gs_renderer.batch_render(
-            c2ws,
+        # Batch render multiple scenes.
+        c2ws = vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix()
+        scene_poses = defaultdict(list)
+        for k, v in zip(self.scene_manager.scenes, c2ws):
+            scene_poses[self.scene_path_map[k]].append(v)
+        scene_poses = {k: to_torch(np.array(v), device=self.device, requires_grad=False) for k, v in scene_poses.items()}
+        renders = self._gs_renderer.batch_render(
+            scene_poses,
             focal=self.env.cfg.env.focal_length,
             h=self.env.cfg.env.cam_height,
             w=self.env.cfg.env.cam_width,
             minibatch=128,
-            device=self.device
         )
+        renders = {k: v[0] for k, v in renders.items()}
+        renders = torch.cat(list(renders.values()), dim=0)
+
         self.renders[env_ids] = (255 * renders[env_ids]).to(torch.uint8)
 
     def get_data(self):
@@ -609,17 +662,22 @@ class GaussianSplattingRenderer():
             plt.ion()
             self.fig, ax = plt.subplots()
             n = int(np.floor(np.sqrt(self.num_envs)))
-            if self.env.cfg.env.debug_viz_single_image:
-                self.process_image_fn = lambda tensor: tensor[0].cpu().numpy()
+            def process_image_fn(tensor, selected_env):
+              if selected_env >= 0:
+                return tensor[selected_env].cpu().numpy()
+              else:
+                return tensor.cpu().numpy()
+            self.process_image_fn = process_image_fn
+
+            if self.env.selected_environment >= 0:
                 self.im = ax.imshow(np.zeros((self.env.cfg.env.cam_height, self.env.cfg.env.cam_width, 3), dtype=np.uint8))
             else:
-                self.process_image_fn = lambda tensor: tensor.cpu().numpy()
                 self.im = ax.imshow(np.zeros((self.env.cfg.env.cam_height * n, self.env.cfg.env.cam_width * n, 3), dtype=np.uint8))
             plt.show(block=False)
 
-        self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0])
-        self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0])
-        update_image(self.process_image_fn(self.renders), self.fig, self.im)
+        self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
+        self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
+        update_image(self.process_image_fn(self.renders, self.env.selected_environment), self.fig, self.im)
 
 
 class RayCasterBaseHeight(RayCaster):
@@ -630,7 +688,7 @@ class RayCasterBaseHeight(RayCaster):
         self.pattern_cfg = BaseHeightLocomotionCfg()
         self.body_attachement_name = "base"
         self.default_hit_value = 10
-        self.terrain_mesh = convert_to_wp_mesh(env.all_vertices_mesh, env.all_triangles_mesh, env.device)
+        self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
         self.num_envs = env.num_envs
         self.device = env.device
 
@@ -654,4 +712,5 @@ class RayCasterBaseHeight(RayCaster):
             self.sphere_geom = BatchWireframeSphereGeometry(
                 self.num_envs * self.num_rays, 0.06, 8, 8, None, color=(1, 0, 0)
             )
-        self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])
+        self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
+        

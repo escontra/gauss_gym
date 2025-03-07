@@ -1,5 +1,5 @@
 import torch
-from typing import Tuple
+from typing import Tuple, List, Union, Dict
 from pathlib import Path
 import numpy as np
 from plyfile import PlyData
@@ -105,7 +105,7 @@ class BatchPLYRenderer:
         device = torch.device(device) if device else self.device
         
         # Apply dataset transform and scale
-        # first rotate it back to nerfstudio camera convention
+        # c2ws is a Bx4x4 matrix of camera-to-world matrices
         c2ws = torch.bmm(self.dataparser_transform.repeat(c2ws.shape[0], 1, 1), c2ws)
         c2ws[:, :3, 3] *= self.dataparser_scale
         # Invert camera-to-world matrices
@@ -138,15 +138,14 @@ class BatchPLYRenderer:
                 K[None].repeat(len(batch_w2cs), 1, 1),
                 w,
                 h,
-                radius_clip=3.0,
                 sh_degree=self.sh_degree,
                 render_mode="RGB",
                 rasterize_mode='antialiased'
             )
             colors.clamp_(0, 1)  # Clamp colors to [0, 1]
             
-            imgs_out[i:i + minibatch] = colors[..., :3].to(device)
-            depth_out[i:i + minibatch] = (depths / self.dataparser_scale).to(device)
+            imgs_out[i:i + minibatch] = colors[..., :3].to(device, non_blocking=True)
+            depth_out[i:i + minibatch] = (depths / self.dataparser_scale).to(device, non_blocking=True)
         
         return imgs_out, depth_out
 
@@ -184,6 +183,64 @@ def create_spiral_poses(radius: float, num_frames: int) -> torch.Tensor:
         poses.append(c2w)
     
     return torch.from_numpy(np.stack(poses, axis=0)).float()
+
+class MultiSceneRenderer:
+    def __init__(self, ply_paths: List[Union[str, Path]], renderer_gpus: List[int], output_gpu: Union[int, str]):
+        """
+        Initialize multi-scene renderer that distributes rendering across multiple GPUs
+        
+        Args:
+            ply_paths: List of paths to PLY files to be rendered
+            renderer_gpus: List of GPU device IDs to distribute renderers across
+            output_gpu: GPU device ID where output tensors will be placed
+        """
+        self.renderer_gpus = renderer_gpus
+        self.output_gpu = f"cuda:{output_gpu}" if isinstance(output_gpu, int) else output_gpu
+        self.renderers = {}
+        
+        # Instantiate renderers for each PLY file, distributing across GPUs
+        for i, ply_path in enumerate(ply_paths):
+            gpu_device = self.renderer_gpus[i % len(self.renderer_gpus)]
+            print(f"Initializing renderer for {ply_path} on {gpu_device}")
+            self.renderers[ply_path] = BatchPLYRenderer(Path(ply_path), device=gpu_device)
+    
+    @torch.no_grad()
+    def batch_render(
+        self,
+        scene_poses: Dict[str, Float[Tensor, "num_cameras 4 4"]],
+        focal: float,
+        h: int,
+        w: int,
+        minibatch: int = 15
+    ) -> Dict[str, Tuple[Float[Tensor, "num_cameras h w 3"], Float[Tensor, "num_cameras h w 1"]]]:
+        """
+        Render multiple scenes across different GPUs
+        
+        Args:
+            scene_poses: Dictionary mapping PLY paths to camera poses (c2ws)
+            focal: Focal length for all cameras
+            h: Image height
+            w: Image width
+            minibatch: Number of images to render in each batch
+        
+        Returns:
+            Dictionary mapping PLY paths to (images, depth) tuples on output_gpu
+        """
+        results = {}
+        
+        # Render each scene on its assigned GPU
+        for ply_path, c2ws in scene_poses.items():
+            if ply_path not in self.renderers:
+                raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
+            
+            # Render on the assigned GPU and move results to output GPU
+            renderer = self.renderers[ply_path]
+            imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, device=self.output_gpu)
+            
+            # Store results
+            results[ply_path] = (imgs, depths)
+            
+        return results
 
 def main():
     parser = argparse.ArgumentParser()
@@ -244,6 +301,3 @@ def main():
                         logger=None)       # Prevents printing progress bar
 
     print(f"Video saved to {args.output}")
-
-if __name__ == "__main__":
-    main()

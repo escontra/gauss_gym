@@ -48,7 +48,9 @@ class ObsManager:
                     obs = self._add_uniform_noise(obs, noise)
                 if clip:
                     obs = obs.clip(min=clip[0], max=clip[1])
-                if scale:
+                if scale is not None:
+                    if hasattr(scale, 'shape'):
+                      scale = scale[None]
                     obs = scale * obs
                 obs_list.append(obs)
             self.obs[group] = torch.cat(obs_list, dim=1)
