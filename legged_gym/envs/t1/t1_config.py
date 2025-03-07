@@ -4,7 +4,7 @@ import math
 
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
-        num_envs = 1024
+        num_envs = 64
         num_actions = 14
         num_observations = 48
         env_spacing = 8.0
@@ -15,7 +15,6 @@ class T1RoughCfg( LeggedRobotCfg ):
         cam_width = 156
         cam_xyz_offset = [0.0, 0.0, 0.0]  # Local frame: [x, y, z] meters.
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi]  # Local frame[roll, pitch, yaw] radians.
-        debug_viz_single_image = True
 
         # Distance / angle from camera trajectory based termination conditions.
         max_traj_pos_distance = 0.5

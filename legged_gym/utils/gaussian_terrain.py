@@ -1,4 +1,5 @@
 import numpy as np
+import viser.transforms as vtf
 import os
 import pickle
 from typing import List, Union
@@ -37,7 +38,7 @@ class RawMesh:
   vertices: np.ndarray
   triangles: np.ndarray
 
-  # Camera parameters.
+  # Camera parameters. Camera translations are defined in the world frame.
   cam_trans: np.ndarray
   cam_offset: np.ndarray
 
@@ -45,16 +46,19 @@ class RawMesh:
 @dataclasses.dataclass
 class Mesh(RawMesh):
   # Camera parameters.
-  cam_quat_wxyz: np.ndarray
+  # Camera orientations are defined in the OpenCV camera convention,
+  # which is what IsaacGym uses.
+  #  +Z (fwd)
+  #   \
+  #    \------ +X (right)
+  #     |
+  #     |
+  #     +Y (down)
+  cam_quat_xyzw: np.ndarray
 
-  # Valid poses to sample along camera trajectory.
+  # Pose trajectories are front padded so each mesh has an equal number of camera poses.
+  # This tensor indicates the first index of each mesh's unpadded poses.
   valid_pose_start_idxs: np.ndarray
-
-
-@dataclasses.dataclass
-class Scene:
-  name: str
-  meshes: List[Union[RawMesh, Mesh]]
 
 
 class GaussianTerrain:
@@ -154,12 +158,11 @@ class GaussianTerrain:
       y_component = y_component / np.linalg.norm(
         y_component, axis=-1, keepdims=True
       )
-      cam_R = np.stack([x_component, y_component, z_component], axis=2)
-      cam_quat_wxyz = (
-        matrix_to_quaternion(to_torch(cam_R, device="cpu", requires_grad=False))
-        .cpu()
-        .numpy()
-      )
+      cam_rot = vtf.SO3.from_matrix(np.stack([x_component, y_component, z_component], axis=2))
+      # Switch to OpenGL camera convention.
+      cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
+      cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
+      cam_quat_xyzw = cam_rot.as_quaternion_xyzw()
 
       # Compute valid poses to sample along camera trajectory.
       valid_pose_start_idxs = max_length - raw_mesh.cam_trans.shape[0]
@@ -168,14 +171,14 @@ class GaussianTerrain:
         ((max_length - raw_mesh.cam_trans.shape[0], 0), (0, 0)),
         mode="edge",
       )
-      cam_quat_wxyz = np.pad(
-        cam_quat_wxyz,
-        ((max_length - cam_quat_wxyz.shape[0], 0), (0, 0)),
+      cam_quat_xyzw = np.pad(
+        cam_quat_xyzw,
+        ((max_length - cam_quat_xyzw.shape[0], 0), (0, 0)),
         mode="edge",
       )
       self._mesh_dict[filepath] = Mesh(
         **raw_mesh.__dict__,
-        cam_quat_wxyz=cam_quat_wxyz,
+        cam_quat_xyzw=cam_quat_xyzw,
         valid_pose_start_idxs=valid_pose_start_idxs,
       )
 
@@ -207,6 +210,11 @@ class GaussianSceneManager:
     self.axis_geom = None
     self.velocity_geom = None
     self.heading_geom = None
+
+    self.local_offset = torch.tensor(
+        np.array(self._env.cfg.env.cam_xyz_offset)[None].repeat(self._env.num_envs, 0),
+        dtype=torch.float, device=self._env.device, requires_grad=False
+    )
 
   def spawn_meshes(self):
     # Add meshes to the environment.
@@ -267,8 +275,8 @@ class GaussianSceneManager:
     cam_trans_orig = np.array(
       list(self._terrain.get_value("cam_trans").values())
     )
-    cam_quat_wxyz_orig = np.array(
-      list(self._terrain.get_value("cam_quat_wxyz").values())
+    cam_quat_xyzw_orig = np.array(
+      list(self._terrain.get_value("cam_quat_xyzw").values())
     )
     env_origins_z0 = np.pad(self.env_origins[:, :2], ((0, 0), (0, 1)), mode="constant", constant_values=0.0)
     cam_trans_orig = cam_trans_orig + env_origins_z0[:, None, :]
@@ -277,9 +285,7 @@ class GaussianSceneManager:
       cam_trans_orig, device=self._env.device, requires_grad=False
     )
     self.cam_quat_xyzw_viz = to_torch(
-      np.roll(cam_quat_wxyz_orig, -1, axis=-1),
-      device=self._env.device,
-      requires_grad=False,
+      cam_quat_xyzw_orig, device=self._env.device, requires_grad=False
     )
 
     # self.cam_trans_viz = to_torch(cam_trans_orig.reshape(-1, 3), device=self._env.device, requires_grad=False)
@@ -292,11 +298,7 @@ class GaussianSceneManager:
       requires_grad=False,
     )
     self.cam_quat_xyzw = to_torch(
-      np.roll(
-        repeat(list(self._terrain.get_value("cam_quat_wxyz").values())),
-        -1,
-        axis=-1,
-      ),
+      repeat(list(self._terrain.get_value("cam_quat_xyzw").values())),
       device=self._env.device,
       requires_grad=False,
     )
@@ -316,14 +318,28 @@ class GaussianSceneManager:
       requires_grad=False,
     )
 
-  def _get_cam_pos_quat(self):
-    curr_cam_pos = (
-      self._env.root_states[:, :3]
-      - self._env.base_init_state[:3][None]
-      - self.env_origins
-    )
-    curr_cam_quat = self._env.root_states[:, 3:7]
-    return curr_cam_pos, curr_cam_quat
+  def get_cam_link_pose_world_frame(self):
+    # In the frame of the world.
+    # Apply xyz offset in the local robot frame.
+    cam_offset_world = quat_apply(self._env.get_camera_link_state()[:, 3:7], self.local_offset)
+    cam_trans = self._env.get_camera_link_state()[:, :3] + cam_offset_world
+    cam_quat = self._env.get_camera_link_state()[:, 3:7]
+    return cam_trans, cam_quat
+
+  def get_cam_pose_world_frame(self):
+    cam_trans, cam_quat = self.get_cam_link_pose_world_frame()
+    cam_so3 = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
+    cam_so3 = cam_so3 @ vtf.SO3.from_x_radians(self._env.cfg.env.cam_rpy_offset[0])
+    cam_so3 = cam_so3 @ vtf.SO3.from_y_radians(self._env.cfg.env.cam_rpy_offset[1])
+    cam_so3 = cam_so3 @ vtf.SO3.from_z_radians(self._env.cfg.env.cam_rpy_offset[2])
+    cam_quat = torch.tensor(cam_so3.as_quaternion_xyzw(), device=cam_quat.device, dtype=torch.float, requires_grad=False)
+    return cam_trans, cam_quat
+
+  def get_cam_link_pose_local_frame(self):
+    # The frame local to each environment.
+    cam_trans, cam_quat = self.get_cam_link_pose_world_frame()
+    cam_trans = cam_trans - self.env_origins
+    return cam_trans, cam_quat
 
   def mesh_id_for_env_id(self, env_id):
     robots_per_mesh = int(
@@ -332,13 +348,13 @@ class GaussianSceneManager:
     return int(np.floor(env_id / robots_per_mesh))
 
   def _get_nearest_traj_idx(self):
-    curr_cam_pos, _ = self._get_cam_pos_quat()
-    pos_difference = curr_cam_pos[:, None] - self.cam_trans
-    pos_distance = torch.norm(pos_difference, dim=-1)
-    min_distance_idx = torch.argmin(pos_distance, dim=1)
+    curr_cam_trans, _ = self.get_cam_link_pose_local_frame()
+    trans_difference = curr_cam_trans[:, None] - self.cam_trans
+    distance = torch.norm(trans_difference, dim=-1)
+    min_distance_idx = torch.argmin(distance, dim=1)
     return min_distance_idx
 
-  def _get_nearest_traj_pos_quat(self):
+  def _get_nearest_traj_pose(self):
     nearest_traj_idx = self._get_nearest_traj_idx()
     nearest_traj_pos_idx = (
       nearest_traj_idx.unsqueeze(1)
@@ -358,7 +374,24 @@ class GaussianSceneManager:
     ).squeeze(1)
     return nearest_traj_pos, nearest_traj_quat, nearest_traj_idx
 
-  def sample_cam_pos_quat(self, env_ids):
+  def to_robot_frame(self, cam_quat):
+    # Camera poses are in OpenCV convention, whereas robot poses are defined 
+    #  +Z (up)
+    #   |
+    #   |
+    #   |
+    #   +------ +Y (right)
+    #    \
+    #     \
+    #      \
+    #       +X (forward)
+    cam_quat = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
+    robot_quat = cam_quat @ vtf.SO3.from_z_radians(np.pi / 2)
+    robot_quat = robot_quat @ vtf.SO3.from_y_radians(-np.pi / 2)
+    robot_quat = to_torch(robot_quat.as_quaternion_xyzw(), device=self._env.device, requires_grad=False)
+    return robot_quat
+
+  def sample_cam_pose(self, env_ids):
     # Sample a random camera position and orientation from the camera trajectories.
     cam_trans_subs = self.cam_trans[env_ids]
     cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
@@ -371,12 +404,12 @@ class GaussianSceneManager:
     )
     state_idx = (rand * (high - low) + low).to(torch.int64)
 
-    pos_idx = (
+    trans_idx = (
       state_idx.unsqueeze(1)
       .unsqueeze(2)
       .expand(-1, 1, cam_trans_subs.shape[-1])
     )
-    cam_trans = torch.gather(cam_trans_subs, dim=1, index=pos_idx).squeeze(1)
+    cam_trans = torch.gather(cam_trans_subs, dim=1, index=trans_idx).squeeze(1)
 
     quat_idx = (
       state_idx.unsqueeze(1)
@@ -387,23 +420,26 @@ class GaussianSceneManager:
       1
     )
 
-    return cam_trans, cam_quat
+    # Convert to robot frame.
+    robot_quat = self.to_robot_frame(cam_quat)
+    return cam_trans, robot_quat
 
   def check_termination(self):
     # Check if robot is too far from camera trajectory (Indicative of poor rendering).
-    curr_cam_pos, curr_cam_quat = self._get_cam_pos_quat()
-    nearest_traj_pos, nearest_traj_quat, nearest_idx = (
-      self._get_nearest_traj_pos_quat()
+    curr_cam_link_trans, curr_cam_link_quat = self.get_cam_link_pose_local_frame()
+    nearest_cam_trans, nearest_cam_quat, nearest_idx = (
+      self._get_nearest_traj_pose()
     )
+    nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
     past_end = nearest_idx >= (
       self.cam_trans.shape[1] - 2
     )  # Past end of trajectory.
     distance_exceeded = yaw_exceeded = past_end
 
-    pos_distance = torch.norm((curr_cam_pos - nearest_traj_pos)[:, :2], dim=-1)
-    distance_exceeded |= pos_distance > self._env.cfg.env.max_traj_pos_distance
+    distance = torch.norm((curr_cam_link_trans - nearest_cam_trans)[:, :2], dim=-1)
+    distance_exceeded |= distance > self._env.cfg.env.max_traj_pos_distance
 
-    quat_difference = quat_mul(curr_cam_quat, quat_conjugate(nearest_traj_quat))
+    quat_difference = quat_mul(curr_cam_link_quat, quat_conjugate(nearest_robot_quat))
     _, _, yaw = get_euler_xyz(quat_difference)
     yaw_distance = torch.abs(wrap_to_pi(yaw))
     yaw_exceeded |= yaw_distance > self._env.cfg.env.max_traj_yaw_distance_rad
@@ -415,8 +451,9 @@ class GaussianSceneManager:
     Args:
         env_ids (List[int]): Environments ids for which new commands are needed
     """
-    _, nearest_quat, nearest_idx = self._get_nearest_traj_pos_quat()
-    _, _, yaw = get_euler_xyz(nearest_quat)
+    _, nearest_cam_quat, nearest_idx = self._get_nearest_traj_pose()
+    nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
+    _, _, yaw = get_euler_xyz(nearest_robot_quat)
     self.heading_command = wrap_to_pi(
       yaw
     )  # Match the orientation of the nearest camera.
@@ -429,11 +466,11 @@ class GaussianSceneManager:
       .unsqueeze(2)
       .expand(-1, 1, self.cam_trans.shape[-1])
     )
-    target_traj_pos = torch.gather(
+    target_traj_trans = torch.gather(
       self.cam_trans, dim=1, index=target_traj_pos_idx
     ).squeeze(1)
-    curr_cam_pos, _ = self._get_cam_pos_quat()
-    pos_delta = target_traj_pos - curr_cam_pos
+    curr_cam_link_trans, _ = self.get_cam_link_pose_local_frame()
+    pos_delta = target_traj_trans - curr_cam_link_trans
 
     pos_delta_local = quat_rotate_inverse(
       self._env.root_states[:, 3:7], pos_delta
@@ -500,9 +537,8 @@ class GaussianSceneManager:
       )
 
     # Draw velocity command.
-    velocity_pos = self._env.root_states[:, :3]
     velocity_quat = self._env.root_states[:, 3:7]
-    velocity_pos = self._env.root_states[:, :3] + quat_apply(
+    velocity_trans = self._env.root_states[:, :3] + quat_apply(
       velocity_quat,
       torch.tensor([0, 0, 0.25], device=self._env.device)[None].repeat(
         self._env.num_envs, 1
@@ -519,7 +555,7 @@ class GaussianSceneManager:
       axis_scales, device=self._env.device, requires_grad=False
     )
     self.velocity_geom.draw(
-      velocity_pos,
+      velocity_trans,
       velocity_quat,
       self._env.gym,
       self._env.viewer,
@@ -529,7 +565,7 @@ class GaussianSceneManager:
     )
 
     # Draw heading command.
-    heading_pos = self._env.root_states[:, :3] + quat_apply(
+    heading_trans = self._env.root_states[:, :3] + quat_apply(
       self._env.root_states[:, 3:7],
       torch.tensor([0, 0, 0.2], device=self._env.device)[None].repeat(
         self._env.num_envs, 1
@@ -546,7 +582,7 @@ class GaussianSceneManager:
       requires_grad=False,
     )
     self.heading_geom.draw(
-      heading_pos,
+      heading_trans,
       heading_quat,
       self._env.gym,
       self._env.viewer,

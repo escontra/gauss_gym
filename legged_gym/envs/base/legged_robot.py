@@ -475,7 +475,7 @@ class LeggedRobot(BaseTask):
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
             # Sample starting poses.
-            cam_trans, cam_quat = self.scene_manager.sample_cam_pos_quat(env_ids)
+            cam_trans, cam_quat = self.scene_manager.sample_cam_pose(env_ids)
             self.root_states[env_ids, :3] += cam_trans
             self.root_states[env_ids, 3:7] = cam_quat
         elif self.custom_origins:

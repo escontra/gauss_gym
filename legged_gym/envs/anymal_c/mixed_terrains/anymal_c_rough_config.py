@@ -44,7 +44,6 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         cam_width = 156
         cam_xyz_offset = [0.44665475921048414, 0.009719827812061002, 0.17764090819492523] # Local frame: [x, y, z] meters.
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi] # Local frame[roll, pitch, yaw] radians.
-        debug_viz_single_image = True
 
         # Distance / angle from camera trajectory based termination conditions.
         max_traj_pos_distance = 0.5

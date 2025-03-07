@@ -599,21 +599,14 @@ class GaussianSplattingRenderer():
         Args:
             env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
         """
+        cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
+        self.camera_positions = cam_trans
+        cam_trans = cam_trans.cpu().numpy()
 
-        # Apply height offset in the local robot frame.
-        cam_offset_world = quat_apply(self.env.get_camera_link_state()[:, 3:7], self.local_offset)
-        self.camera_positions = self.env.get_camera_link_state()[:, :3] + cam_offset_world
-        cam_trans = self.camera_positions.cpu().numpy()
+        self.camera_quats_xyzw = cam_quat
+        cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
 
-        # Apply RPY rotations.
-        cam_rot = vtf.SO3.from_quaternion_xyzw(self.env.get_camera_link_state()[:, 3:7].cpu().numpy())
-        cam_rot = cam_rot @ vtf.SO3.from_x_radians(self.env.cfg.env.cam_rpy_offset[0])
-        cam_rot = cam_rot @ vtf.SO3.from_y_radians(self.env.cfg.env.cam_rpy_offset[1])
-        cam_rot = cam_rot @ vtf.SO3.from_z_radians(self.env.cfg.env.cam_rpy_offset[2])
-
-        self.camera_quats_xyzw = torch.tensor(cam_rot.as_quaternion_xyzw(), device=self.device, dtype=torch.float, requires_grad=False)
-
-        # Go from IG frame to GS frame.
+        # From OpenCV to OpenGL camera convention for GS renderer.
         R_x = vtf.SO3.from_x_radians(-np.pi / 2)
         R_z = vtf.SO3.from_z_radians(np.pi)
         cam_trans -= self.env.env_origins.cpu().numpy()
