@@ -32,57 +32,63 @@ from time import time
 import numpy as np
 import os
 
-from isaacgym.torch_utils import *
+from isaacgym import torch_utils as tu
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
 from typing import Tuple, Dict
 from legged_gym.envs import LeggedRobot
+from legged_gym.teacher import ObsManager
+import legged_gym.teacher.observations as O
 
 class T1(LeggedRobot):
 
+    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
+      super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
+      obs_groups_cfg = {
+          "teacher_observations": {
+              # optional parameters: scale, clip([min, max]), noise
+              "add_noise": True,  # turns off the noise in all observations
+              "is_recurrent": True,
+              "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
+              "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
+              "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
+              "gait_progress": {"func": O.gait_progress},
+              "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
+              "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
+              "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
+              "actions": {"func": O.actions},
+          },
+          "student_observations": {
+              # optional parameters: scale, clip([min, max]), noise
+              "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
+              "is_recurrent": True,
+              "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
+              "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
+              "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
+              "gait_progress": {"func": O.gait_progress},
+              "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
+              "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
+              "actions": {"func": O.actions},
+          },
+          # "image_renders": {
+          #     "add_noise": False,
+          #     "is_recurrent": True,
+          #     "gs_render": {"func": O.gs_render, "sensor": "gs_renderer"}
+          # }
+      }
+      self.obs_manager = ObsManager(self, obs_groups_cfg)
+
+
     def _init_buffers(self):
         super()._init_buffers()
-        body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
-        self.gym.refresh_rigid_body_state_tensor(self.sim)
-        self.body_states = gymtorch.wrap_tensor(body_state).view(self.num_envs, self.num_bodies, 13)
-        # Additionally initialize feet position and orientation buffers
-        self.feet_pos = self.body_states[:, self.feet_indices, 0:3]
-        self.feet_quat = self.body_states[:, self.feet_indices, 3:7]
-        
         self.gait_frequency = torch.ones(self.num_envs, dtype=torch.float, device=self.device)*self.cfg.commands.gait_frequency
         self.gait_process = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-        self.feet_roll = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device)
-        self.feet_yaw = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device)
-        self.last_feet_pos = torch.zeros_like(self.feet_pos)
-        self.feet_contact = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device)
 
-    def _refresh_feet_state(self):
-        self.feet_pos[:] = self.body_states[:, self.feet_indices, 0:3]
-        self.feet_quat[:] = self.body_states[:, self.feet_indices, 3:7]
-        roll, _, yaw = get_euler_xyz(self.feet_quat.reshape(-1, 4))
-        self.feet_roll[:] = (roll.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
-        self.feet_yaw[:] = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
-        
-        # TODO: Note that this breaks feet airtime reward
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
-        contact_filt = torch.logical_or(contact, self.last_contacts) 
-        self.last_contacts = contact
-        
-        self.feet_contact[:] = contact_filt
-
-        # self.feet_contact[:] = torch.any(
-        #     (feet_edge_pos[:, 2] - self.terrain.terrain_heights(feet_edge_pos) < 0.01).reshape(
-        #         self.num_envs, len(self.feet_indices), feet_edge_relative_pos.shape[2]
-        #     ),
-        #     dim=2,
-        # )
 
     def step(self, actions):
         self.gait_process[:] = torch.fmod(self.gait_process + self.dt * self.gait_frequency, 1.0)
         obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras = super().step(actions)
-        self._refresh_feet_state()
-        self.last_feet_pos[:] = self.feet_pos
         return obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras
 
     def _reward_survival(self):
@@ -97,45 +103,9 @@ class T1(LeggedRobot):
         # Tracking of linear velocity commands (y axes)
         return torch.exp(-torch.square(self.commands[:, 1] - self.base_lin_vel[:, 1]) / self.cfg.rewards.tracking_sigma)
 
-    def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw)
-        return torch.exp(-torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2]) / self.cfg.rewards.tracking_sigma)
-
-    def _reward_collision(self):
-        # Penalize collisions on selected bodies
-        return torch.sum(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 1.0, dim=-1)
-
-    def _reward_lin_vel_z(self):
-        # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])
-
-    def _reward_ang_vel_xy(self):
-        # Penalize xy axes base angular velocity
-        return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=-1)
-
-    def _reward_orientation(self):
-        # Penalize non flat base orientation
-        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=-1)
-
-    def _reward_torques(self):
-        # Penalize torques
-        return torch.sum(torch.square(self.torques), dim=-1)
-
-    def _reward_dof_vel(self):
-        # Penalize dof velocities
-        return torch.sum(torch.square(self.dof_vel), dim=-1)
-
-    def _reward_dof_acc(self):
-        # Penalize dof accelerations
-        return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=-1)
-
     def _reward_root_acc(self):
         # Penalize root accelerations
         return torch.sum(torch.square((self.last_root_vel - self.root_states[:, 7:13]) / self.dt), dim=-1)
-
-    def _reward_action_rate(self):
-        # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=-1)
 
     def _reward_dof_pos_limits(self):
         # Penalize dof positions too close to the limit
@@ -146,21 +116,6 @@ class T1(LeggedRobot):
             self.dof_pos_limits[:, 1] - self.dof_pos_limits[:, 0]
         )
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
-
-    def _reward_dof_vel_limits(self):
-        # Penalize dof velocities too close to the limit
-        # clip to max error = 1 rad/s per joint to avoid huge penalties
-        return torch.sum(
-            (torch.abs(self.dof_vel) - self.dof_vel_limits * self.cfg.rewards.soft_dof_vel_limit).clip(min=0.0, max=1.0),
-            dim=-1,
-        )
-
-    def _reward_torque_limits(self):
-        # Penalize torques too close to the limit
-        return torch.sum(
-            (torch.abs(self.torques) - self.torque_limits * self.cfg.rewards.soft_torque_limit).clip(min=0.0),
-            dim=-1,
-        )
 
     def _reward_torque_tiredness(self):
         # Penalize torque tiredness
@@ -174,30 +129,36 @@ class T1(LeggedRobot):
         # Penalize feet velocities when contact
         return (
             torch.sum(
-                torch.square((self.last_feet_pos - self.feet_pos) / self.dt).sum(dim=-1) * self.feet_contact.float(),
+                torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt).sum(dim=-1) * self.feet_contact.float(),
                 dim=-1,
             )
             * (self.episode_length_buf > 1).float()
         )
 
     def _reward_feet_vel_z(self):
-        return torch.sum(torch.square((self.last_feet_pos - self.feet_pos) / self.dt)[:, :, 2], dim=-1)
+        return torch.sum(torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt)[:, :, 2], dim=-1)
 
     def _reward_feet_roll(self):
-        return torch.sum(torch.square(self.feet_roll), dim=-1)
+        roll, _, _ = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        roll = (roll.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
+        return torch.sum(torch.square(roll), dim=-1)
 
     def _reward_feet_yaw_diff(self):
-        return torch.square((self.feet_yaw[:, 1] - self.feet_yaw[:, 0] + torch.pi) % (2 * torch.pi) - torch.pi)
+        _, _, yaw = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        yaw = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
+        return torch.square((yaw[:, 1] - yaw[:, 0] + torch.pi) % (2 * torch.pi) - torch.pi)
 
     def _reward_feet_yaw_mean(self):
-        feet_yaw_mean = self.feet_yaw.mean(dim=-1) + torch.pi * (torch.abs(self.feet_yaw[:, 1] - self.feet_yaw[:, 0]) > torch.pi)
-        return torch.square((get_euler_xyz(self.base_quat)[2] - feet_yaw_mean + torch.pi) % (2 * torch.pi) - torch.pi)
+        _, _, yaw = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        yaw = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
+        feet_yaw_mean = yaw.mean(dim=-1) + torch.pi * (torch.abs(yaw[:, 1] - yaw[:, 0]) > torch.pi)
+        return torch.square((tu.get_euler_xyz(self.base_quat)[2] - feet_yaw_mean + torch.pi) % (2 * torch.pi) - torch.pi)
 
     def _reward_feet_distance(self):
-        _, _, base_yaw = get_euler_xyz(self.base_quat)
+        _, _, base_yaw = tu.get_euler_xyz(self.base_quat)
         feet_distance = torch.abs(
-            torch.cos(base_yaw) * (self.feet_pos[:, 1, 1] - self.feet_pos[:, 0, 1])
-            - torch.sin(base_yaw) * (self.feet_pos[:, 1, 0] - self.feet_pos[:, 0, 0])
+            torch.cos(base_yaw) * (self.get_feet_pos_quat()[0][:, 1, 1] - self.get_feet_pos_quat()[0][:, 0, 1])
+            - torch.sin(base_yaw) * (self.get_feet_pos_quat()[0][:, 1, 0] - self.get_feet_pos_quat()[0][:, 0, 0])
         )
         return torch.clip(self.cfg.rewards.feet_distance_ref - feet_distance, min=0.0, max=0.1)
 

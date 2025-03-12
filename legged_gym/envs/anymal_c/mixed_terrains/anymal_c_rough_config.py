@@ -34,7 +34,7 @@ import math
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 64
+        num_envs = 32
         num_actions = 12
         env_spacing = 8.0
 
@@ -54,7 +54,6 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
 
         # Terrain parameters.
         scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
-        height_offset = -1.2
         curriculum = False
         measure_heights = False
 
@@ -96,6 +95,9 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         penalize_contacts_on = ["SHANK", "THIGH"]
         terminate_after_contacts_on = ["base"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
+        # feet_edge_pos = [[0., 0., -0.0225]] # x,y,z [m]
+        feet_edge_pos = [[0., 0., 0.0225]] # x,y,z [m]
+        feet_contact_radius = 0.03 + 1e-3
 
     class domain_rand( LeggedRobotCfg.domain_rand):
         randomize_base_mass = True
@@ -114,22 +116,33 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
             lin_vel = [0.0, 1.0] # min max [m/s]
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
-    runner_class_name = 'StudentTeacherRunner'
+
+    runner_class_name = 'Runner'
+    # runner_class_name = 'StudentTeacherRunner'
     # runner_class_name = 'OnPolicyRunner'
     class runner( LeggedRobotCfgPPO.runner ):
-        policy_class_name = 'ActorCriticRecurrentWithImages'
+        policy_class_name = 'ActorCritic'
+        # policy_class_name = 'ActorCriticRecurrentWithImages'
         # policy_class_name = 'ActorCriticRecurrent'
-        algorithm_class_name = 'BehaviorCloning'
+        algorithm_class_name = 'PPO'
+        # algorithm_class_name = 'BehaviorCloning'
         # algorithm_class_name = 'PPO'
         teacher_iterations = 250
         student_teacher_mix_iterations = 750
         run_name = ''
-        experiment_name = 'rough_anymal_c'
+        experiment_name = ''
         load_run = -1
+    # class algorithm:
+    #     # training params
+    #     num_learning_epochs = 5
+    #     num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+    #     learning_rate = 1.e-3 #5.e-4
+    #     max_grad_norm = 1.
 
-    class algorithm:
-        # training params
-        num_learning_epochs = 5
-        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.e-3 #5.e-4
-        max_grad_norm = 1.
+    class algorithm( LeggedRobotCfgPPO.algorithm ):
+        learning_rate = 1.e-5
+        gamma = 0.995
+        lam = 0.95
+        entropy_coef = -0.01
+        symmetric_coef = 10.
+        num_learning_epochs = 20

@@ -66,7 +66,6 @@ class LeggedRobotCfg(BaseConfig):
         terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
         # trimesh only:
         slope_treshold = 0.75 # slopes above this threshold will be corrected to vertical surfaces
-        height_offset = 0.0
 
     class commands:
         curriculum = False
@@ -156,6 +155,7 @@ class LeggedRobotCfg(BaseConfig):
         soft_torque_limit = 1.
         base_height_target = 1.
         max_contact_force = 100. # forces above this value are penalized
+        terminate_height = 0.0
 
     class normalization:
         class obs_scales:
@@ -229,9 +229,11 @@ class LeggedRobotCfgPPO(BaseConfig):
         gamma = 0.99
         lam = 0.95
         desired_kl = 0.01
+        bound_coef = 1.0
         max_grad_norm = 1.
 
     class runner:
+        use_wandb = False
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
         num_steps_per_env = 24 # per iteration

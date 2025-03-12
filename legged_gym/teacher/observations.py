@@ -9,6 +9,11 @@ if TYPE_CHECKING:
 def projected_gravity(env: "LeggedEnv", params):
     return env.projected_gravity
 
+def gait_progress(env: "LeggedEnv", params):
+    return torch.cat((
+      (torch.cos(2 * torch.pi * env.gait_process) * (env.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
+      (torch.sin(2 * torch.pi * env.gait_process) * (env.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
+    ), dim = -1)
 
 def base_lin_vel(env: "LeggedEnv", params):
     return env.base_lin_vel

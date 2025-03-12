@@ -15,7 +15,7 @@ from legged_gym.envs.base.batch_gs_renderer import MultiSceneRenderer
 import viser.transforms as vtf
 import matplotlib.pyplot as plt
 from PIL import Image
-from isaacgym.torch_utils import to_torch
+from isaacgym.torch_utils import to_torch, quat_rotate
 
 
 class BatchWireframeSphereGeometry(gymutil.LineGeometry):
@@ -75,7 +75,7 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
             self.verts = pose.transform_points(verts)
 
         self.verts_tmp = np.copy(self.verts)
-        self._colors = np.tile(colors, (num_spheres, 1))
+        self._colors = np.tile(colors, (num_spheres,))
 
     def vertices(self):
         return self.verts
@@ -83,8 +83,17 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
     def colors(self):
         return self._colors
 
-    def draw(self, positions, gym, viewer, env, only_render_selected=-1):
+    def draw(self, positions, gym, viewer, env, only_render_selected=-1, custom_colors=None):
         flat_pos = positions.repeat_interleave(self.num_lines, dim=0).view(-1, 3).cpu().numpy()
+        if custom_colors is not None:
+            colors_tmp = np.empty(self.colors().shape[0], gymapi.Vec3.dtype)
+            custom_colors = custom_colors.repeat_interleave(self.num_lines, dim=0).view(-1, 3).cpu().numpy()
+            colors_tmp['x'][:] = custom_colors[:, 0]
+            colors_tmp['y'][:] = custom_colors[:, 1]
+            colors_tmp['z'][:] = custom_colors[:, 2]
+        else:
+            colors_tmp = self.colors()
+            
 
         self.verts_tmp["x"][:, 0] = self.verts["x"][:, 0] + flat_pos[:, 0]
         self.verts_tmp["x"][:, 1] = self.verts["x"][:, 1] + flat_pos[:, 0]
@@ -105,7 +114,7 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
             end_frustrum = only_render_selected[1]
 
         verts_tmp = self.verts_tmp[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
-        colors_tmp = self._colors[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
+        colors_tmp = colors_tmp[start_frustrum * self.num_lines:end_frustrum * self.num_lines]
         total_lines = (end_frustrum - start_frustrum) * self.num_lines
         gym.add_lines(viewer, env, total_lines, verts_tmp, colors_tmp)
 
@@ -407,6 +416,64 @@ def ray_cast(ray_starts_world, ray_directions_world, wp_mesh):
     return ray_hits_world.view(shape)
 
 
+@wp.kernel
+def nearest_point_kernel(
+    mesh: wp.uint64,
+    points: wp.array(dtype=wp.vec3),
+    mesh_points: wp.array(dtype=wp.vec3),
+):
+
+    tid = wp.tid()
+
+    max_dist = float(1e6)  # max raycast disance
+    query = wp.mesh_query_point(mesh, points[tid], max_dist=max_dist)
+    if not query.result:
+        return
+
+    # Evaluate the position of the nearest location found.
+    mesh_points[tid] = wp.mesh_eval_position(
+        mesh,
+        query.face,
+        query.u,
+        query.v,
+    )
+
+
+def nearest_point(points, wp_mesh):
+    """Performs ray casting on the terrain mesh.
+
+    Args:
+        point (Torch.tensor): The near point.
+
+    Returns:
+        [Torch.tensor]: The ray hit position. Returns float('inf') for missed hits.
+    """
+    shape = points.shape
+    points = points.view(-1, 3)
+    num_points = len(points)
+    points_wp = wp.types.array(
+        ptr=points.data_ptr(),
+        dtype=wp.vec3,
+        shape=(num_points,),
+        copy=False,
+        owner=False,
+        device=wp_mesh.device,
+    )
+    mesh_points = torch.zeros((num_points, 3), device=points.device)
+    mesh_points[:] = float("inf")
+    mesh_points_wp = wp.types.array(
+        ptr=mesh_points.data_ptr(), dtype=wp.vec3, shape=(num_points,), copy=False, owner=False, device=wp_mesh.device
+    )
+    wp.launch(
+        kernel=nearest_point_kernel,
+        dim=num_points,
+        inputs=[wp_mesh.id, points_wp, mesh_points_wp],
+        device=wp_mesh.device,
+    )
+    wp.synchronize()
+    return mesh_points.view(shape)
+
+
 def convert_to_wp_mesh(vertices, triangles, device):
     return wp.Mesh(
         points=wp.array(vertices.astype(np.float32), dtype=wp.vec3, device=device),
@@ -483,7 +550,8 @@ class RayCaster():
         self.pattern_cfg = GridPatternLocomotionCfg()
         self.body_attachement_name = "base"
         self.default_hit_value = 10
-        self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
+        # self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
+        self.terrain_mesh = env.scene_manager.terrain_mesh
         self.num_envs = env.num_envs
         self.device = env.device
 
@@ -525,7 +593,6 @@ class RayCaster():
     def get_data(self):
         return torch.nan_to_num(self.ray_hits_world, posinf=self.default_hit_value)
     
-    
     def debug_vis(self, env):
         if self.sphere_geom is None:
             self.sphere_geom = BatchWireframeSphereGeometry(
@@ -536,6 +603,77 @@ class RayCaster():
           self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0], only_render_selected=only_render_selected_range)
         else:
           self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])
+
+
+class FootContactSensor():
+    def __init__(self, env):        
+        self.feet_edge_pos = env.cfg.asset.feet_edge_pos
+        self.attach_yaw_only = True
+        self.pattern_cfg = BaseHeightLocomotionCfg()
+        self.default_hit_value = 10
+        # self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
+        self.terrain_mesh = env.scene_manager.terrain_mesh
+        self.num_envs = env.num_envs
+        self.num_feet = len(env.feet_indices)
+        self.device = env.device
+
+        self.ray_starts, self.ray_directions = self.pattern_cfg.pattern_func(self.pattern_cfg, self.device)
+        self.ray_starts = self.ray_starts.repeat(self.num_feet, 1)
+        self.ray_directions = self.ray_directions.repeat(self.num_feet, 1)
+
+        self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
+        self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
+        feet_edge_relative_pos = to_torch(env.cfg.asset.feet_edge_pos, device=env.device, requires_grad=False)
+        self.num_edge_points = feet_edge_relative_pos.shape[0]
+        self.feet_edge_relative_pos = (
+            feet_edge_relative_pos.unsqueeze(0).unsqueeze(0)
+            .expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
+        )
+        self.total_edges = self.num_feet * self.num_edge_points
+
+        self.feet_edge_pos = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, 3, device=env.device)
+        self.feet_ground_distance = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, device=env.device)
+        self.feet_contact = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, dtype=torch.bool, device=env.device)
+        self.env = env
+        self.sphere_geom = None
+
+    def update(self, dt, env_ids=...):
+        """Perform raycasting on the terrain.
+
+        Args:
+            env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
+        """
+        feet_pos, feet_quat = self.env.get_feet_pos_quat()
+        expanded_feet_pos = feet_pos.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
+        expanded_feet_quat = feet_quat.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 4)
+        feet_edge_pos = expanded_feet_pos.reshape(-1, 3) + quat_rotate(expanded_feet_quat.reshape(-1, 4), self.feet_edge_relative_pos.reshape(-1, 3))
+        self.feet_edge_pos[env_ids] = feet_edge_pos.reshape(self.num_envs, self.num_feet, self.num_edge_points, 3)
+
+        nearest_points = nearest_point(feet_edge_pos, self.terrain_mesh)
+        dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
+        self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
+        self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg.asset.feet_contact_radius
+
+    def get_data(self):
+        foot_contact = torch.any(self.feet_contact, dim=-1)
+        return foot_contact
+    
+    def debug_vis(self, env):
+        if self.sphere_geom is None:
+            self.sphere_geom = BatchWireframeSphereGeometry(
+                self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg.asset.feet_contact_radius, 16, 16, None, color=(1, 1, 0)
+            )
+        feet_edge_pos = self.feet_edge_pos.view(-1, 3)
+        feet_contact = self.feet_contact.view(-1)
+        color_red = to_torch(np.array([1., 0., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
+        color_green = to_torch(np.array([0., 1., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
+        colors = torch.where(feet_contact[..., None], color_green, color_red)
+        if self.env.selected_environment >= 0:
+          only_render_selected_range = [self.env.selected_environment * self.total_edges, (self.env.selected_environment + 1) * self.total_edges]
+          self.sphere_geom.draw(feet_edge_pos, env.gym, env.viewer, env.envs[0], only_render_selected=only_render_selected_range, custom_colors=colors)
+        else:
+          self.sphere_geom.draw(feet_edge_pos, env.gym, env.viewer, env.envs[0], custom_colors=colors)
+
 
 def update_image(new_image, fig, im):
     # To visualize environment RGB.
@@ -680,7 +818,8 @@ class RayCasterBaseHeight(RayCaster):
         self.pattern_cfg = BaseHeightLocomotionCfg()
         self.body_attachement_name = "base"
         self.default_hit_value = 10
-        self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
+        # self.terrain_mesh = convert_to_wp_mesh(env.scene_manager.all_vertices_mesh, env.scene_manager.all_triangles_mesh, env.device)
+        self.terrain_mesh = env.scene_manager.terrain_mesh
         self.num_envs = env.num_envs
         self.device = env.device
 

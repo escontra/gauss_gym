@@ -4,7 +4,7 @@ import math
 
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
-        num_envs = 64
+        num_envs = 32
         num_actions = 14
         num_observations = 48
         env_spacing = 8.0
@@ -17,20 +17,19 @@ class T1RoughCfg( LeggedRobotCfg ):
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi]  # Local frame[roll, pitch, yaw] radians.
 
         # Distance / angle from camera trajectory based termination conditions.
-        max_traj_pos_distance = 0.5
-        max_traj_yaw_distance_rad = 0.75
+        max_traj_pos_distance = 1.0
+        max_traj_yaw_distance_rad = math.pi / 2
 
     class terrain( LeggedRobotCfg.terrain ):
         mesh_type = 'gaussian'
 
         # Terrain parameters.
         scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
-        height_offset = -1.2
         curriculum = False
         measure_heights = False
 
     class init_state( LeggedRobotCfg.init_state ):
-        pos = [0.0, 0.0, 0.6] # x,y,z [m]
+        pos = [0.0, 0.0, 0.78] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
             'AAHead_yaw': 0.,
             'Head_pitch': 0.,
@@ -38,15 +37,15 @@ class T1RoughCfg( LeggedRobotCfg ):
             'Left_Hip_Roll': 0.,
             'Left_Hip_Yaw': 0.,
             'Left_Knee_Pitch': 0.4,
-            'Left_Ankle_Pitch': 0.,
-            'Left_Ankle_Roll': -0.2,
+            'Left_Ankle_Pitch': -0.25,
+            'Left_Ankle_Roll': 0.0,
 
             'Right_Hip_Pitch': -0.2,
             'Right_Hip_Roll': 0.,
             'Right_Hip_Yaw': 0.,
             'Right_Knee_Pitch': 0.4,
-            'Right_Ankle_Pitch': 0.,
-            'Right_Ankle_Roll': -0.2
+            'Right_Ankle_Pitch': -0.25,
+            'Right_Ankle_Roll': 0.0
         }
 
     class control( LeggedRobotCfg.control ):
@@ -66,11 +65,17 @@ class T1RoughCfg( LeggedRobotCfg ):
         file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf'
         name = "t1"
         camera_link_name = "H2"
-        foot_name = 'foot'
+        foot_name = 'foot_link'
         penalize_contacts_on = ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
-        terminate_after_contacts_on = ['Waist']
+        terminate_after_contacts_on = []
+        # terminate_after_contacts_on = ['Waist']
         flip_visual_attachments = False
         self_collisions = 0 # 1 to disable, 0 to enable...bitwise filter
+        feet_edge_pos = [[ 0.1215,  0.05, -0.03],
+                         [ 0.1215, -0.05, -0.03],
+                         [-0.1015,  0.05, -0.03],
+                         [-0.1015, -0.05, -0.03]] # x,y,z [m]
+        feet_contact_radius = 0.01
     
     # class domain_rand( LeggedRobotCfg.domain_rand):
     #     randomize_base_mass = True
@@ -81,14 +86,16 @@ class T1RoughCfg( LeggedRobotCfg ):
         soft_dof_vel_limit = 1.
         soft_torque_limit = 1.
         max_contact_force = 500.
-        only_positive_rewards = False
+        only_positive_rewards = True
         swing_period = 0.2
         feet_distance_ref = 0.2
         base_height_target: 0.68
+        terminate_height = 0.45
         class scales( LeggedRobotCfg.rewards.scales ):
             survival = 0.25
-            tracking_lin_vel_x = 1.0
-            tracking_lin_vel_y = 1.0
+            tracking_lin_vel = 0.
+            tracking_lin_vel_x = 1.
+            tracking_lin_vel_y = 1.
             tracking_ang_vel = 0.5
             base_height = -20.
             orientation = -5.
@@ -112,6 +119,10 @@ class T1RoughCfg( LeggedRobotCfg ):
             feet_roll = -0.1
             feet_distance = -1.
             feet_swing = 3.
+            feet_air_time = 0.
+
+    class normalization( LeggedRobotCfg.normalization ):
+        clip_actions = 1.
     
     class commands( LeggedRobotCfg.commands ):
         heading_command = True # if true: compute ang vel command from heading error
@@ -119,16 +130,42 @@ class T1RoughCfg( LeggedRobotCfg ):
         class ranges ( LeggedRobotCfg.commands.ranges ):
             lin_vel = [0.0, 1.0] # min max [m/s]
 
+    class sim(LeggedRobotCfg.sim):
+        dt = 0.002
+
+        class physx(LeggedRobotCfg.sim.physx):
+            num_threads = 4
+            solver_type = 1  # 0: pgs, 1: tgs
+            num_position_iterations = 4
+            num_velocity_iterations = 1
+            contact_offset = 0.02  # [m]
+            rest_offset = 0.0   # [m]
+            bounce_threshold_velocity = 0.2 #0.5 [m/s]
+            max_depenetration_velocity = 100.0
+            max_gpu_contact_pairs = 2**23 #2**24 -> needed for 8000 envs and more
+            default_buffer_size_multiplier = 5.0
+            contact_collection = 2 # 0: never, 1: last sub-step, 2: all sub-steps (default=2)
+
 class T1RoughCfgPPO( LeggedRobotCfgPPO ):
+
+    class policy( LeggedRobotCfgPPO.policy ):
+        init_noise_std = 0.13
     
-    runner_class_name = 'OnPolicyRunner'
+    runner_class_name = 'Runner'
     class runner( LeggedRobotCfgPPO.runner ):
         # policy_class_name = 'ActorCriticRecurrentWithImages'
         policy_class_name = 'ActorCritic'
         # algorithm_class_name = 'BehaviorCloning'
         algorithm_class_name = 'PPO'
-        teacher_iterations = 250
-        student_teacher_mix_iterations = 750
         run_name = ''
-        experiment_name = 'rough_t1'
+        experiment_name = ''
         load_run = -1
+        max_iterations = 10000
+
+    class algorithm( LeggedRobotCfgPPO.algorithm ):
+        learning_rate = 1.e-5
+        gamma = 0.995
+        lam = 0.95
+        entropy_coef = -0.01
+        symmetric_coef = 10.
+        num_learning_epochs = 20

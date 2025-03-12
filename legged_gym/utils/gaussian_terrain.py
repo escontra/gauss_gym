@@ -24,7 +24,10 @@ from legged_gym.teacher.sensors import (
   BatchWireframeAxisGeometry,
   GaussianSplattingRenderer,
 )
+from legged_gym.teacher import sensors
 import dataclasses
+import warp as wp
+wp.init()
 
 
 @dataclasses.dataclass
@@ -67,13 +70,6 @@ class GaussianTerrain:
     self.num_robots = num_robots
     self.type = self.cfg.terrain.mesh_type
 
-    if self.cfg.sim.up_axis == 1:
-      height_offset = [0, 0, self.cfg.terrain.height_offset]
-    elif self.cfg.sim.up_axis == 0:
-      height_offset = [0, self.cfg.terrain.height_offset, 0]
-    else:
-      raise ValueError
-    self._height_offset = np.array(height_offset)[None]
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -117,9 +113,7 @@ class GaussianTerrain:
     cam_offset = np.array(mesh_dict["offset"])[0].astype(np.float32)
     vertices = np.array(mesh_dict["vertices"]).astype(np.float32)
     triangles = np.array(mesh_dict["triangles"]).astype(np.uint32)
-    curr_cam_trans = (
-      np.array(mesh_dict["cam_trans"]).astype(np.float32) + self._height_offset
-    )
+    curr_cam_trans = np.array(mesh_dict["cam_trans"]).astype(np.float32)
 
     return RawMesh(
       scene_name=scene,
@@ -261,6 +255,7 @@ class GaussianSceneManager:
 
     self.all_vertices_mesh = np.concatenate(all_vertices)
     self.all_triangles_mesh = np.concatenate(all_triangles)
+    self.terrain_mesh = sensors.convert_to_wp_mesh(self.all_vertices_mesh, self.all_triangles_mesh, self._env.device)
 
     self.env_origins = np.array(env_origins)
     self.construct_trajectory_arrays()
@@ -281,15 +276,25 @@ class GaussianSceneManager:
     env_origins_z0 = np.pad(self.env_origins[:, :2], ((0, 0), (0, 1)), mode="constant", constant_values=0.0)
     cam_trans_orig = cam_trans_orig + env_origins_z0[:, None, :]
 
+    # Use warp to get ground position at each camera.
+    directions = np.array([0, 0, -1])[None, None].repeat(cam_trans_orig.shape[0], axis=0).repeat(cam_trans_orig.shape[1], axis=1)
+    directions_torch = to_torch(directions, device=self._env.device, requires_grad=False)
+    cam_trans_orig_torch = to_torch(cam_trans_orig, device=self._env.device, requires_grad=False)
+    ground_positions_world_frame = sensors.ray_cast(cam_trans_orig_torch.view(-1, 3), directions_torch.reshape(-1, 3), self.terrain_mesh)
+    ground_positions_world_frame = ground_positions_world_frame.view(*cam_trans_orig_torch.shape).cpu().numpy()
+    ground_positions_world_frame = ground_positions_world_frame - env_origins_z0[:, None, :]
+    self.ground_positions = to_torch(
+      repeat(ground_positions_world_frame),
+      device=self._env.device,
+      requires_grad=False,
+    )
+
     self.cam_trans_viz = to_torch(
       cam_trans_orig, device=self._env.device, requires_grad=False
     )
     self.cam_quat_xyzw_viz = to_torch(
       cam_quat_xyzw_orig, device=self._env.device, requires_grad=False
     )
-
-    # self.cam_trans_viz = to_torch(cam_trans_orig.reshape(-1, 3), device=self._env.device, requires_grad=False)
-    # self.cam_quat_xyzw_viz = to_torch(np.roll(cam_quat_wxyz_orig.reshape(-1, 4), -1, axis=-1), device=self._env.device, requires_grad=False)
 
     self.scenes = repeat(list(self._terrain.get_value("scene_name").values()))
     self.cam_trans = to_torch(
@@ -391,9 +396,12 @@ class GaussianSceneManager:
     robot_quat = to_torch(robot_quat.as_quaternion_xyzw(), device=self._env.device, requires_grad=False)
     return robot_quat
 
-  def sample_cam_pose(self, env_ids):
+  def sample_cam_pose(self, env_ids, use_ground_positions=False):
     # Sample a random camera position and orientation from the camera trajectories.
-    cam_trans_subs = self.cam_trans[env_ids]
+    if use_ground_positions:
+      cam_trans_subs = self.ground_positions[env_ids]
+    else:
+      cam_trans_subs = self.cam_trans[env_ids]
     cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
     rand = torch.rand((len(env_ids),), device=self._env.device)
     low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
