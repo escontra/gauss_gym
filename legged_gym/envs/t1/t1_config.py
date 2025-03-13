@@ -4,7 +4,7 @@ import math
 
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
-        num_envs = 32
+        num_envs = 64
         num_actions = 14
         num_observations = 48
         env_spacing = 8.0
@@ -153,9 +153,7 @@ class T1RoughCfgPPO( LeggedRobotCfgPPO ):
     
     runner_class_name = 'Runner'
     class runner( LeggedRobotCfgPPO.runner ):
-        # policy_class_name = 'ActorCriticRecurrentWithImages'
-        policy_class_name = 'ActorCritic'
-        # algorithm_class_name = 'BehaviorCloning'
+        policy_class_name = 'ActorCriticRecurrent'
         algorithm_class_name = 'PPO'
         run_name = ''
         experiment_name = ''

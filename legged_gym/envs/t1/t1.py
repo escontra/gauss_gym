@@ -95,14 +95,6 @@ class T1(LeggedRobot):
         # Reward survival
         return torch.ones(self.num_envs, dtype=torch.float, device=self.device)
 
-    def _reward_tracking_lin_vel_x(self):
-        # Tracking of linear velocity commands (x axes)
-        return torch.exp(-torch.square(self.commands[:, 0] - self.base_lin_vel[:, 0]) / self.cfg.rewards.tracking_sigma)
-
-    def _reward_tracking_lin_vel_y(self):
-        # Tracking of linear velocity commands (y axes)
-        return torch.exp(-torch.square(self.commands[:, 1] - self.base_lin_vel[:, 1]) / self.cfg.rewards.tracking_sigma)
-
     def _reward_root_acc(self):
         # Penalize root accelerations
         return torch.sum(torch.square((self.last_root_vel - self.root_states[:, 7:13]) / self.dt), dim=-1)

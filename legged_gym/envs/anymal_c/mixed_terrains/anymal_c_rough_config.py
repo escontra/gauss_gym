@@ -34,7 +34,7 @@ import math
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 32
+        num_envs = 1024
         num_actions = 12
         env_spacing = 8.0
 
@@ -106,8 +106,13 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
     class rewards( LeggedRobotCfg.rewards ):
         base_height_target = 0.5
         max_contact_force = 500.
-        only_positive_rewards = False
+        only_positive_rewards = True
         class scales( LeggedRobotCfg.rewards.scales ):
+            tracking_lin_vel = 0.
+            tracking_lin_vel_x = 1.
+            tracking_lin_vel_y = 1.
+            tracking_ang_vel = 0.5
+            lin_vel_z = -0.5
             pass
 
     class commands( LeggedRobotCfg.commands ):
@@ -117,13 +122,15 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
 
 class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
 
+    class policy( LeggedRobotCfgPPO.policy ):
+        init_noise_std = 0.5
+
     runner_class_name = 'Runner'
     # runner_class_name = 'StudentTeacherRunner'
     # runner_class_name = 'OnPolicyRunner'
     class runner( LeggedRobotCfgPPO.runner ):
-        policy_class_name = 'ActorCritic'
         # policy_class_name = 'ActorCriticRecurrentWithImages'
-        # policy_class_name = 'ActorCriticRecurrent'
+        policy_class_name = 'ActorCriticRecurrent'
         algorithm_class_name = 'PPO'
         # algorithm_class_name = 'BehaviorCloning'
         # algorithm_class_name = 'PPO'
@@ -132,6 +139,7 @@ class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
         run_name = ''
         experiment_name = ''
         load_run = -1
+        max_iterations = 10000
     # class algorithm:
     #     # training params
     #     num_learning_epochs = 5
@@ -141,8 +149,18 @@ class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
 
     class algorithm( LeggedRobotCfgPPO.algorithm ):
         learning_rate = 1.e-5
-        gamma = 0.995
+        # gamma = 0.995
+        gamma = 0.99
         lam = 0.95
         entropy_coef = -0.01
         symmetric_coef = 10.
         num_learning_epochs = 20
+
+        # value_loss_coef = 1.0
+        # use_clipped_value_loss = True
+        # clip_param = 0.2
+        # num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+        # schedule = 'adaptive' # could be adaptive, fixed
+        # desired_kl = 0.01
+        # # bound_coef = 1.0
+        # max_grad_norm = 1.
