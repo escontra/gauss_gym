@@ -21,6 +21,7 @@ def get_config():
   # Mesh generation parameters.
   config.voxel_size = 0.02
   config.sharpen_mesh = True
+  config.sharpen_iterations = 1
   config.sharpen_strength = 0.05
   config.decimation_factor = 4
   config.density_threshold = 0.07

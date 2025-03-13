@@ -12,8 +12,10 @@ import copy
 
 from ml_collections import config_flags
 from configs.base import get_config
+from PIL import Image
 
-_CONFIG = config_flags.DEFINE_config_dict("config", get_config())
+# _CONFIG = config_flags.DEFINE_config_dict("config", get_config())
+_CONFIG = config_flags.DEFINE_config_file("config")
 
 
 def _distance(p1, p2, up_axis):
@@ -62,6 +64,28 @@ def get_voxel_block_grid(
     )
 
 
+def rectangular_prism(init_pose, width, height, up_axis, color):
+  w, h = width / 2, height / 2
+  if up_axis == 'x':
+    min_bound = (-h, -w, -w)
+    max_bound = (h, w, w)
+  elif up_axis == 'y':
+    min_bound = (-w, -h, -w)
+    max_bound = (w, h, w)
+  elif up_axis == 'z':
+    min_bound = (-w, -w, -h)
+    max_bound = (w, w, h)
+
+  min_bound = init_pose.translation() + np.array(min_bound)
+  max_bound = init_pose.translation() + np.array(max_bound)
+
+  bbox = o3d.geometry.AxisAlignedBoundingBox(
+    min_bound=min_bound, max_bound=max_bound
+  )
+  bbox.color = color
+  return bbox
+
+
 def process_transforms(
   json_path: Path,
   transforms: dict,
@@ -70,6 +94,7 @@ def process_transforms(
   depth_scale: float,
   depth_max: float,
   bbox_slice_size: float,
+  up_axis: str,
   device: o3d.core.Device,
 ):
   start = time.time()
@@ -84,7 +109,11 @@ def process_transforms(
     depth_path = json_path.parents[0] / frame["depth_file_path"]
     if "right" in str(depth_path):
       continue  # TODO: Use both
-    depth = np.load(depth_path)
+    if depth_path.suffix == '.png':
+      depth = np.array(Image.open(depth_path))  # Reads as 16-bit integer
+      depth = depth.astype(float) / 1000.0  # Convert millimeters to meters
+    elif depth_path.suffix in ('.npy', '.npz'):
+      depth = np.load(depth_path)
     H, W = depth.shape
     depth = o3d.t.geometry.Image(
       o3d.core.Tensor(depth, dtype=o3d.core.Dtype.Float32)
@@ -144,21 +173,8 @@ def process_transforms(
     camera_orientations.append(pose.rotation().as_quaternion_xyzw())
 
     # Bounding boxes used to extract slices from input pointcloud.
-    min_bound = pose.translation() + np.array(
-      [-bbox_slice_size / 2, -3, -bbox_slice_size / 2]
-    )
-    max_bound = pose.translation() + np.array(
-      [bbox_slice_size / 2, 3, bbox_slice_size / 2]
-    )
-    bounding_box = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
-    bounding_box.color = (1.0, 0.0, 0.0)
-    bounding_boxes.append(bounding_box)
-
-    min_bound = pose.translation() + np.array([-0.25, -3, -0.25])
-    max_bound = pose.translation() + np.array([0.25, 3, 0.25])
-    p_bounding_box = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
-    p_bounding_box.color = (0.0, 0.0, 1.0)
-    point_checking_bounding_boxes.append(p_bounding_box)
+    bounding_boxes.append(rectangular_prism(pose,bbox_slice_size, 3., up_axis, (1.0, 0.0, 0.0)))
+    point_checking_bounding_boxes.append(rectangular_prism(pose, 0.5, 3., up_axis, (0.0, 0.0, 1.0)))
 
   print(
     "Finished integrating {} frames in {} seconds".format(
@@ -194,9 +210,12 @@ def enough_points(pcd, bbox, num_points):
 
 def march_idx_along_distance(positions, idx, distance, increment, up_axis):
   new_idx = idx
-  while np.linalg.norm(positions[idx] - positions[new_idx]) < distance:
+  # dist_sum = 0.0
+  # while dist_sum < distance:
+  while _distance(positions[idx], positions[new_idx], up_axis) < distance:
     if new_idx == 0 or new_idx == len(positions) - 1:
       break
+    # dist_sum += _distance(positions[idx], positions[new_idx], up_axis)
     new_idx += increment
   return new_idx
 
@@ -216,6 +235,7 @@ def get_mesh_at_frac(
   density_threshold,
   decimation_factor,
   sharpen_mesh,
+  sharpen_iterations,
   sharpen_strength,
   to_ig_euler_xyz,
   up_axis,
@@ -276,7 +296,7 @@ def get_mesh_at_frac(
   )
   if sharpen_mesh:
     mesh = mesh.filter_sharpen(
-      number_of_iterations=1, strength=sharpen_strength
+      number_of_iterations=sharpen_iterations, strength=sharpen_strength
     )
   mesh = mesh.compute_vertex_normals()
 
@@ -394,6 +414,7 @@ def main(_):
     config.depth_scale,
     config.depth_max,
     config.bbox_slice_size,
+    config.up_axis,
     device,
   )
 
@@ -442,6 +463,7 @@ def main(_):
         config.density_threshold,
         config.decimation_factor,
         config.sharpen_mesh,
+        config.sharpen_iterations,
         config.sharpen_strength,
         config.to_ig_euler_xyz,
         config.up_axis,
