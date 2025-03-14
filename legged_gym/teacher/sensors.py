@@ -742,6 +742,9 @@ class GaussianSplattingRenderer():
         cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
         self.camera_positions = cam_trans
         cam_trans = cam_trans.cpu().numpy()
+        cam_lin_vel, cam_ang_vel = self.scene_manager.get_cam_velocity_world_frame()
+        cam_lin_vel = cam_lin_vel.cpu().numpy()
+        cam_ang_vel = cam_ang_vel.cpu().numpy()
 
         self.camera_quats_xyzw = cam_quat
         cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
@@ -760,9 +763,15 @@ class GaussianSplattingRenderer():
         # Batch render multiple scenes.
         c2ws = vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix()
         scene_poses = defaultdict(list)
-        for k, v in zip(self.scene_manager.scenes, c2ws):
-            scene_poses[self.scene_path_map[k]].append(v)
+        scene_linear_velocities = defaultdict(list)
+        scene_angular_velocities = defaultdict(list)
+        for k, pose, lin_vel, ang_vel in zip(self.scene_manager.scenes, c2ws, cam_lin_vel, cam_ang_vel):
+            scene_poses[self.scene_path_map[k]].append(pose)
+            scene_linear_velocities[self.scene_path_map[k]].append(lin_vel)
+            scene_angular_velocities[self.scene_path_map[k]].append(ang_vel)
         scene_poses = {k: np.array(v) for k, v in scene_poses.items()}
+        scene_linear_velocities = {k: np.array(v) for k, v in scene_linear_velocities.items()}
+        scene_angular_velocities = {k: np.array(v) for k, v in scene_angular_velocities.items()}
         start, end = 0, 0
         for k, v in scene_poses.items():
             poses = vtf.SE3.from_matrix(v)
@@ -786,6 +795,8 @@ class GaussianSplattingRenderer():
             focal=self.env.cfg.env.focal_length,
             h=self.env.cfg.env.cam_height,
             w=self.env.cfg.env.cam_width,
+            camera_linear_velocity=scene_linear_velocities,
+            camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
         )
         renders = torch.cat(list(renders.values()), dim=0)

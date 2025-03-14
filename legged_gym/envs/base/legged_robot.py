@@ -83,7 +83,7 @@ class LeggedRobot(BaseTask):
         # Added observation manager to compute teacher observations more flexible
         self.sensors = {
             "raycast_grid": RayCaster(self),
-            # "gs_renderer": self.scene_manager.renderer,
+            "gs_renderer": self.scene_manager.renderer,
             "base_height_raycaster": RayCasterBaseHeight(self),
             "foot_contact_sensor": FootContactSensor(self)}
         obs_groups_cfg = {
@@ -569,9 +569,9 @@ class LeggedRobot(BaseTask):
 
     def get_camera_link_state(self):
       """Get the position of the camera link."""
-      camera_link_pos = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.camera_link_indices]
-      camera_link_pos = camera_link_pos.squeeze(1)
-      return camera_link_pos
+      camera_link_state = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.camera_link_indices]
+      camera_link_state = camera_link_state.squeeze(1)
+      return camera_link_state 
 
     def get_feet_pos_quat(self):
       feet_pos = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]

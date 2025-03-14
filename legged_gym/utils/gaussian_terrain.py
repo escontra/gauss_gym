@@ -325,20 +325,38 @@ class GaussianSceneManager:
 
   def get_cam_link_pose_world_frame(self):
     # In the frame of the world.
-    # Apply xyz offset in the local robot frame.
-    cam_offset_world = quat_apply(self._env.get_camera_link_state()[:, 3:7], self.local_offset)
-    cam_trans = self._env.get_camera_link_state()[:, :3] + cam_offset_world
-    cam_quat = self._env.get_camera_link_state()[:, 3:7]
-    return cam_trans, cam_quat
+    return self._env.get_camera_link_state()[:, :3], self._env.get_camera_link_state()[:, 3:7]
+
+  def get_cam_link_velocity_world_frame(self):
+    cam_link_lin_vel = self._env.get_camera_link_state()[:, 7:10]
+    cam_link_ang_vel = self._env.get_camera_link_state()[:, 10:13]
+    return cam_link_lin_vel, cam_link_ang_vel
 
   def get_cam_pose_world_frame(self):
-    cam_trans, cam_quat = self.get_cam_link_pose_world_frame()
-    cam_so3 = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
+    cam_link_trans, cam_link_quat = self.get_cam_link_pose_world_frame()
+    # Apply xyz offset in the local robot frame.
+    cam_trans = cam_link_trans + quat_apply(cam_link_quat, self.local_offset)
+    cam_so3 = vtf.SO3.from_quaternion_xyzw(cam_link_quat.cpu().numpy())
     cam_so3 = cam_so3 @ vtf.SO3.from_x_radians(self._env.cfg.env.cam_rpy_offset[0])
     cam_so3 = cam_so3 @ vtf.SO3.from_y_radians(self._env.cfg.env.cam_rpy_offset[1])
     cam_so3 = cam_so3 @ vtf.SO3.from_z_radians(self._env.cfg.env.cam_rpy_offset[2])
-    cam_quat = torch.tensor(cam_so3.as_quaternion_xyzw(), device=cam_quat.device, dtype=torch.float, requires_grad=False)
+    cam_quat = torch.tensor(cam_so3.as_quaternion_xyzw(), device=cam_link_quat.device, dtype=torch.float, requires_grad=False)
     return cam_trans, cam_quat
+
+  def get_cam_velocity_world_frame(self):
+    cam_link_lin_vel, cam_link_ang_vel = self.get_cam_link_velocity_world_frame()
+    _, cam_link_quat = self.get_cam_link_pose_world_frame()
+
+    # Angular velocity remains the same after offset
+    cam_ang_vel = cam_link_ang_vel
+
+    # Linear velocity needs to account for the offset
+    # v = v_link + ω × r, where r is the offset vector in world frame
+    # Using cross product of angular velocity with position offset
+    offset_world = quat_apply(cam_link_quat, self.local_offset)
+    velocity_from_rotation = torch.cross(cam_link_ang_vel, offset_world)
+    cam_lin_vel = cam_link_lin_vel + velocity_from_rotation
+    return cam_lin_vel, cam_ang_vel
 
   def get_cam_link_pose_local_frame(self):
     # The frame local to each environment.

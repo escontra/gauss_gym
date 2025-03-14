@@ -83,6 +83,9 @@ class BatchPLYRenderer:
         focal: float,
         h: int,
         w: int,
+        camera_linear_velocity: Union[Float[Tensor, "num_cameras 3"], None] = None,
+        camera_angular_velocity: Union[Float[Tensor, "num_cameras 3"], None] = None,
+        motion_blur_frac: float = 0.0,
         minibatch: int = 15,
         out_device: str = 'cpu',
     ) -> Tuple[Tensor, Tensor]:
@@ -213,6 +216,9 @@ class MultiSceneRenderer:
         focal: float,
         h: int,
         w: int,
+        camera_linear_velocity: Union[Dict[str, Float[Tensor, "num_cameras 3"]], None] = None,
+        camera_angular_velocity: Union[Dict[str, Float[Tensor, "num_cameras 3"]], None] = None,
+        motion_blur_frac: float = 0.0,
         minibatch: int = 15
     ) -> Dict[str, Tuple[Float[Tensor, "num_cameras h w 3"], Float[Tensor, "num_cameras h w 1"]]]:
         """
@@ -220,6 +226,10 @@ class MultiSceneRenderer:
         
         Args:
             scene_poses: Dictionary mapping PLY paths to camera poses (c2ws)
+            camera_linear_velocity: Dictionary mapping PLY paths to camera linear velocities.
+            camera_angular_velocity: Dictionary mapping PLY paths to camera angular velocities.
+              Angular velocity is in RPY radians per second.
+            motion_blur_frac: Fraction of samples in the batch to blur over [0, 1].
             focal: Focal length for all cameras
             h: Image height
             w: Image width
@@ -233,6 +243,9 @@ class MultiSceneRenderer:
           
           # Render each scene on its assigned GPU
           for ply_path, c2ws in scene_poses.items():
+              if camera_linear_velocity is not None:
+                cam_lin_vel = camera_linear_velocity[ply_path]
+                cam_ang_vel = camera_angular_velocity[ply_path]
               if ply_path not in self.renderers:
                   raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
               
@@ -240,7 +253,11 @@ class MultiSceneRenderer:
               renderer = self.renderers[ply_path]
               c2ws = torch.tensor(c2ws, dtype=torch.float32, device=renderer.device)
               # imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
-              imgs = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
+              imgs = renderer.batch_render(
+                  c2ws, focal, h, w,
+                  camera_linear_velocity=cam_lin_vel,
+                  camera_angular_velocity=cam_ang_vel,
+                  minibatch=minibatch, out_device=self.output_gpu)
               
               # Store results
               results[ply_path] = imgs
