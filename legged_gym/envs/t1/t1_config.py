@@ -4,15 +4,15 @@ import math
 
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
-        num_envs = 64
+        num_envs = 1024
         num_actions = 14
         num_observations = 48
         env_spacing = 8.0
 
         # Camera parameters.
         focal_length = 100
-        cam_height = 156
-        cam_width = 156
+        cam_height = 48
+        cam_width = 48
         cam_xyz_offset = [0.0, 0.0, 0.0]  # Local frame: [x, y, z] meters.
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi]  # Local frame[roll, pitch, yaw] radians.
 
@@ -29,6 +29,7 @@ class T1RoughCfg( LeggedRobotCfg ):
         measure_heights = False
 
     class init_state( LeggedRobotCfg.init_state ):
+        # pos = [0.0, 0.0, 0.82] # x,y,z [m]
         pos = [0.0, 0.0, 0.78] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
             'AAHead_yaw': 0.,
@@ -141,7 +142,7 @@ class T1RoughCfg( LeggedRobotCfg ):
             contact_offset = 0.02  # [m]
             rest_offset = 0.0   # [m]
             bounce_threshold_velocity = 0.2 #0.5 [m/s]
-            max_depenetration_velocity = 100.0
+            max_depenetration_velocity = 1.0
             max_gpu_contact_pairs = 2**23 #2**24 -> needed for 8000 envs and more
             default_buffer_size_multiplier = 5.0
             contact_collection = 2 # 0: never, 1: last sub-step, 2: all sub-steps (default=2)

@@ -84,7 +84,7 @@ class BatchPLYRenderer:
         h: int,
         w: int,
         minibatch: int = 15,
-        device: str = 'cpu',
+        out_device: str = 'cpu',
     ) -> Tuple[Tensor, Tensor]:
         """
         Batch render a set of cameras
@@ -102,7 +102,7 @@ class BatchPLYRenderer:
             - RGB images tensor of shape (num_cameras, h, w, 3)
             - Depth images tensor of shape (num_cameras, h, w, 1)
         """
-        device = torch.device(device) if device else self.device
+        out_device = torch.device(out_device) if out_device else self.device
         
         # Apply dataset transform and scale
         # c2ws is a Bx4x4 matrix of camera-to-world matrices
@@ -121,14 +121,14 @@ class BatchPLYRenderer:
         
         # Initialize output tensors
         num_images = c2ws.shape[0]
-        imgs_out = torch.empty((num_images, h, w, 3), device=device, dtype=torch.float32)
-        depth_out = torch.empty((num_images, h, w, 1), device=device, dtype=torch.float32)
+        imgs_out = torch.empty((num_images, h, w, 3), device=out_device, dtype=torch.uint8)
+        # depth_out = torch.empty((num_images, h, w, 1), device=out_device, dtype=torch.float32)
         
         # Render in batches
         for i in range(0, num_images, minibatch):
             batch_w2cs = w2cs[i:i + minibatch]
             # Render using gsplat
-            colors, depths, _ = rasterization(
+            colors, _, _ = rasterization(
                 self.means,
                 self.quats,
                 self.scales,
@@ -138,16 +138,17 @@ class BatchPLYRenderer:
                 K[None].repeat(len(batch_w2cs), 1, 1),
                 w,
                 h,
+                radius_clip=3.0,
                 sh_degree=self.sh_degree,
                 render_mode="RGB",
                 rasterize_mode='antialiased'
             )
             colors.clamp_(0, 1)  # Clamp colors to [0, 1]
             
-            imgs_out[i:i + minibatch] = colors[..., :3].to(device, non_blocking=True)
-            depth_out[i:i + minibatch] = (depths / self.dataparser_scale).to(device, non_blocking=True)
+            imgs_out[i:i + minibatch] = (255 * colors[..., :3].to(out_device, non_blocking=True)).to(torch.uint8)
+            # depth_out[i:i + minibatch] = (depths / self.dataparser_scale).to(out_device, non_blocking=True)
         
-        return imgs_out, depth_out
+        return imgs_out# , depth_out
 
 def create_spiral_poses(radius: float, num_frames: int) -> torch.Tensor:
     """Create camera poses for a spiral path around the origin."""
@@ -185,7 +186,7 @@ def create_spiral_poses(radius: float, num_frames: int) -> torch.Tensor:
     return torch.from_numpy(np.stack(poses, axis=0)).float()
 
 class MultiSceneRenderer:
-    def __init__(self, ply_paths: List[Union[str, Path]], renderer_gpus: List[int], output_gpu: Union[int, str]):
+    def __init__(self, ply_paths: List[Union[str, Path]], renderer_gpus: List[Union[int, str]], output_gpu: Union[int, str]):
         """
         Initialize multi-scene renderer that distributes rendering across multiple GPUs
         
@@ -194,9 +195,10 @@ class MultiSceneRenderer:
             renderer_gpus: List of GPU device IDs to distribute renderers across
             output_gpu: GPU device ID where output tensors will be placed
         """
-        self.renderer_gpus = renderer_gpus
+        self.renderer_gpus = [f"cuda:{gpu}" if isinstance(gpu, int) else gpu for gpu in renderer_gpus]
         self.output_gpu = f"cuda:{output_gpu}" if isinstance(output_gpu, int) else output_gpu
         self.renderers = {}
+        print(f'Rendering on GPUs: {self.renderer_gpus}, Outputting to GPU: {self.output_gpu}')
         
         # Instantiate renderers for each PLY file, distributing across GPUs
         for i, ply_path in enumerate(ply_paths):
@@ -227,19 +229,22 @@ class MultiSceneRenderer:
             Dictionary mapping PLY paths to (images, depth) tuples on output_gpu
         """
         results = {}
-        
-        # Render each scene on its assigned GPU
-        for ply_path, c2ws in scene_poses.items():
-            if ply_path not in self.renderers:
-                raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
-            
-            # Render on the assigned GPU and move results to output GPU
-            renderer = self.renderers[ply_path]
-            imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, device=self.output_gpu)
-            
-            # Store results
-            results[ply_path] = (imgs, depths)
-            
+        with torch.no_grad():
+          
+          # Render each scene on its assigned GPU
+          for ply_path, c2ws in scene_poses.items():
+              if ply_path not in self.renderers:
+                  raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
+              
+              # Render on the assigned GPU and move results to output GPU
+              renderer = self.renderers[ply_path]
+              c2ws = torch.tensor(c2ws, dtype=torch.float32, device=renderer.device)
+              # imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
+              imgs = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
+              
+              # Store results
+              results[ply_path] = imgs
+              
         return results
 
 def main():

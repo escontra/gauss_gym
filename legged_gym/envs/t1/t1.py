@@ -58,6 +58,13 @@ class T1(LeggedRobot):
               "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
               "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
               "actions": {"func": O.actions},
+              "ray_cast": {
+                  "func": O.ray_cast,
+                  "noise": self.cfg.noise.noise_scales.height_measurements,
+                  "sensor": "raycast_grid",
+                  "clip": (-1.0, 1.0),
+                  "scale": self.obs_scales.height_measurements
+              },
           },
           "student_observations": {
               # optional parameters: scale, clip([min, max]), noise
@@ -70,12 +77,8 @@ class T1(LeggedRobot):
               "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
               "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
               "actions": {"func": O.actions},
+              "images": {"func": O.gs_render, "sensor": "gs_renderer"},
           },
-          # "image_renders": {
-          #     "add_noise": False,
-          #     "is_recurrent": True,
-          #     "gs_render": {"func": O.gs_render, "sensor": "gs_renderer"}
-          # }
       }
       self.obs_manager = ObsManager(self, obs_groups_cfg)
 

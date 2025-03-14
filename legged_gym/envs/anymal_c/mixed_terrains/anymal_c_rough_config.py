@@ -39,9 +39,9 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         env_spacing = 8.0
 
         # Camera parameters.
-        focal_length = 100
-        cam_height = 156
-        cam_width = 156
+        focal_length = 40
+        cam_height = 64
+        cam_width = 64
         cam_xyz_offset = [0.44665475921048414, 0.009719827812061002, 0.17764090819492523] # Local frame: [x, y, z] meters.
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi] # Local frame[roll, pitch, yaw] radians.
 

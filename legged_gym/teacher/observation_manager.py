@@ -6,7 +6,9 @@ class ObsManager:
         self.obs_per_group = {}
         self.obs_dims_per_group = {}
         self.obs_dims_per_group_func = {}
-        self.obs = {}
+        self.obs_dims_per_group_obs = {}
+        # self.obs = {}
+        self.obs_dict = {}
         for group_name, obs_group in obs_groups_cfg.items():
             if obs_group is None:
                 continue
@@ -14,7 +16,7 @@ class ObsManager:
             obs_dim = 0
             add_noise = obs_group["add_noise"]
             self.obs_dims_per_group_func[group_name] = {}
-
+            self.obs_dims_per_group_obs[group_name] = {}
             for name, params in obs_group.items():
                 if not isinstance(params, dict):
                     continue
@@ -27,19 +29,25 @@ class ObsManager:
                     params["dof_indices"], _ = env.robot.find_dofs(params["dofs"])
                 if "bodies" in params.keys():
                     params["body_indices"], _ = env.robot.find_bodies(params["bodies"])
-                self.obs_per_group[group_name].append((function, params))
+                self.obs_per_group[group_name].append((name, function, params))
 
-                delta = function(env, params).shape[1]
+                example_obs = function(env, params)
+                obs_shape = example_obs.shape
+                obs_dtype = example_obs.dtype
+                delta = obs_shape[1]
                 self.obs_dims_per_group_func[group_name][name] = (obs_dim, obs_dim + delta)
+                self.obs_dims_per_group_obs[group_name][name] = (obs_shape[1:], obs_dtype)
                 obs_dim += delta
 
             self.obs_dims_per_group[group_name] = obs_dim
 
     def compute_obs(self, env):
-        self.obs = {}
+        # self.obs = {}
+        self.obs_dict = {}
         for group, function_list in self.obs_per_group.items():
             obs_list = []
-            for function, params in function_list:
+            obs_dict = {}
+            for name,function, params in function_list:
                 obs = function(env, params)
                 noise = params.get("noise")
                 clip = params.get("clip")
@@ -53,8 +61,10 @@ class ObsManager:
                       scale = scale[None]
                     obs = scale * obs
                 obs_list.append(obs)
-            self.obs[group] = torch.cat(obs_list, dim=1)
-        return self.obs
+                obs_dict[name] = obs
+            # self.obs[group] = torch.cat(obs_list, dim=1)
+            self.obs_dict[group] = obs_dict
+        return self.obs_dict
 
     def _add_uniform_noise(self, obs, noise_level):
         return obs + (2 * torch.rand_like(obs) - 1) * noise_level

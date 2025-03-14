@@ -712,9 +712,11 @@ class GaussianSplattingRenderer():
         print('Loading Gaussian Splatting Renderer...')
         self.scene_path_map = {s: os.path.join(os.path.dirname(os.path.dirname(self.terrain.get_mesh(s, f).filepath)), 'splat', 'splat.ply') for s, f in self.terrain.mesh_keys}
         self.path_scene_map = {v: k for k, v in self.scene_path_map.items()}
+        print(torch.cuda.device_count())
         self._gs_renderer = MultiSceneRenderer(
             list(self.scene_path_map.values()),
             renderer_gpus=[self.device],
+            # renderer_gpus=[1],
             output_gpu=self.device
 
         )
@@ -748,29 +750,47 @@ class GaussianSplattingRenderer():
         R_x = vtf.SO3.from_x_radians(-np.pi / 2)
         R_z = vtf.SO3.from_z_radians(np.pi)
         cam_trans -= self.env.env_origins.cpu().numpy()
-        cam_trans = np.dot(cam_trans, R_z.as_matrix())
-        cam_trans = np.dot(cam_trans, R_x.as_matrix())
-        cam_trans += self.scene_manager.cam_offset.cpu().numpy()
-        cam_rot = R_z.inverse() @ cam_rot
-        cam_rot  = R_x.inverse() @ cam_rot
+        # TODO: FIX THIS.
+        # cam_trans = np.dot(cam_trans, R_z.as_matrix())
+        # cam_trans = np.dot(cam_trans, R_x.as_matrix())
+        # cam_trans += self.scene_manager.cam_offset.cpu().numpy()
+        # cam_rot = R_z.inverse() @ cam_rot
+        # cam_rot  = R_x.inverse() @ cam_rot
 
         # Batch render multiple scenes.
         c2ws = vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix()
         scene_poses = defaultdict(list)
         for k, v in zip(self.scene_manager.scenes, c2ws):
             scene_poses[self.scene_path_map[k]].append(v)
-        scene_poses = {k: to_torch(np.array(v), device=self.device, requires_grad=False) for k, v in scene_poses.items()}
+        scene_poses = {k: np.array(v) for k, v in scene_poses.items()}
+        start, end = 0, 0
+        for k, v in scene_poses.items():
+            poses = vtf.SE3.from_matrix(v)
+            t = poses.translation()
+            end = start + t.shape[0]
+            q = poses.rotation()
+            if 'stairwell' not in k:
+              t = np.dot(t, R_z.as_matrix())
+              t = np.dot(t, R_x.as_matrix())
+              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
+              q = R_z.inverse() @ q
+              q  = R_x.inverse() @ q
+            else:
+              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
+            start = end
+            scene_poses[k] = vtf.SE3.from_rotation_and_translation(q, t).as_matrix()
+              
+
         renders = self._gs_renderer.batch_render(
             scene_poses,
             focal=self.env.cfg.env.focal_length,
             h=self.env.cfg.env.cam_height,
             w=self.env.cfg.env.cam_width,
-            minibatch=128,
+            minibatch=1024,
         )
-        renders = {k: v[0] for k, v in renders.items()}
         renders = torch.cat(list(renders.values()), dim=0)
 
-        self.renders[env_ids] = (255 * renders[env_ids]).to(torch.uint8)
+        self.renders[env_ids] = renders # (255 * renders[env_ids]).to(torch.uint8)
 
     def get_data(self):
         return self.renders

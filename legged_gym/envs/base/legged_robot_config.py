@@ -122,6 +122,13 @@ class LeggedRobotCfg(BaseConfig):
         thickness = 0.01
 
     class domain_rand:
+        randomize_motor = False
+        leg_motor_strength_range = [0.9, 1.1]
+        randomize_com = False
+        class com_range:
+            x = [-0.05, 0.15]
+            y = [-0.1, 0.1]
+            z = [-0.05, 0.05]
         randomize_friction = True
         friction_range = [0.5, 1.25]
         randomize_base_mass = False
@@ -211,6 +218,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+        mu_activation = None
         # only for 'ActorCriticRecurrent':
         # rnn_type = 'lstm'
         # rnn_hidden_size = 512
