@@ -83,7 +83,7 @@ class LeggedRobot(BaseTask):
         # Added observation manager to compute teacher observations more flexible
         self.sensors = {
             "raycast_grid": RayCaster(self),
-            "gs_renderer": self.scene_manager.renderer,
+            # "gs_renderer": self.scene_manager.renderer,
             "base_height_raycaster": RayCasterBaseHeight(self),
             "foot_contact_sensor": FootContactSensor(self)}
         obs_groups_cfg = {
@@ -1065,3 +1065,32 @@ class LeggedRobot(BaseTask):
     def _reward_feet_contact_forces(self):
         # penalize high contact forces
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=-1)
+
+    def _reward_feet_slip(self):
+        # Penalize feet velocities when contact
+        return (
+            torch.sum(
+                torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt).sum(dim=-1) * self.feet_contact.float(),
+                dim=-1,
+            )
+            * (self.episode_length_buf > 1).float()
+        )
+
+    def _reward_root_acc(self):
+        # Penalize root accelerations
+        return torch.sum(torch.square((self.last_root_vel - self.root_states[:, 7:13]) / self.dt), dim=-1)
+
+    def _reward_survival(self):
+        # Reward survival
+        return torch.ones(self.num_envs, dtype=torch.float, device=self.device)
+
+    def _reward_torque_tiredness(self):
+        # Penalize torque tiredness
+        return torch.sum(torch.square(self.torques / self.torque_limits).clip(max=1.0), dim=-1)
+
+    def _reward_power(self):
+        # Penalize power
+        return torch.sum((self.torques * self.dof_vel).clip(min=0.0), dim=-1)
+
+    def _reward_feet_vel_z(self):
+        return torch.sum(torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt)[:, :, 2], dim=-1)

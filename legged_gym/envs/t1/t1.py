@@ -28,15 +28,11 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from time import time
-import numpy as np
-import os
 
 from isaacgym import torch_utils as tu
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
-from typing import Tuple, Dict
 from legged_gym.envs import LeggedRobot
 from legged_gym.teacher import ObsManager
 import legged_gym.teacher.observations as O
@@ -94,14 +90,6 @@ class T1(LeggedRobot):
         obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras = super().step(actions)
         return obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras
 
-    def _reward_survival(self):
-        # Reward survival
-        return torch.ones(self.num_envs, dtype=torch.float, device=self.device)
-
-    def _reward_root_acc(self):
-        # Penalize root accelerations
-        return torch.sum(torch.square((self.last_root_vel - self.root_states[:, 7:13]) / self.dt), dim=-1)
-
     def _reward_dof_pos_limits(self):
         # Penalize dof positions too close to the limit
         lower = self.dof_pos_limits[:, 0] + 0.5 * (1 - self.cfg.rewards.soft_dof_pos_limit) * (
@@ -111,27 +99,6 @@ class T1(LeggedRobot):
             self.dof_pos_limits[:, 1] - self.dof_pos_limits[:, 0]
         )
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
-
-    def _reward_torque_tiredness(self):
-        # Penalize torque tiredness
-        return torch.sum(torch.square(self.torques / self.torque_limits).clip(max=1.0), dim=-1)
-
-    def _reward_power(self):
-        # Penalize power
-        return torch.sum((self.torques * self.dof_vel).clip(min=0.0), dim=-1)
-
-    def _reward_feet_slip(self):
-        # Penalize feet velocities when contact
-        return (
-            torch.sum(
-                torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt).sum(dim=-1) * self.feet_contact.float(),
-                dim=-1,
-            )
-            * (self.episode_length_buf > 1).float()
-        )
-
-    def _reward_feet_vel_z(self):
-        return torch.sum(torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt)[:, :, 2], dim=-1)
 
     def _reward_feet_roll(self):
         roll, _, _ = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
