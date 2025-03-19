@@ -34,7 +34,7 @@ import math
 
 class A1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 4096
+        num_envs = 2048
         num_actions = 12
         env_spacing = 8.0
 
@@ -59,6 +59,8 @@ class A1RoughCfg( LeggedRobotCfg ):
         scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
         curriculum = False
         measure_heights = False
+
+        cams_yaw_only = False
 
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.5] # x,y,z [m]
@@ -99,11 +101,14 @@ class A1RoughCfg( LeggedRobotCfg ):
         name = "a1"
         camera_link_name = "base"
         foot_name = "foot"
-        penalize_contacts_on = ["thigh", "calf"]
+        front_hip_names = ["FR_hip_joint", "FL_hip_joint"]
+        rear_hip_names = ["RR_hip_joint", "RL_hip_joint"]
+        penalize_contacts_on = ["thigh", "calf", "hip"]
         terminate_after_contacts_on = ["base", "imu"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
         feet_edge_pos = [[0., 0., 0.]] # x,y,z [m]
-        feet_contact_radius = 0.02
+        feet_contact_radius = 0.02 + 1e-4
+        armature = 0.01
   
     class domain_rand( LeggedRobotCfg.domain_rand ):
         randomize_motor = True
@@ -115,47 +120,102 @@ class A1RoughCfg( LeggedRobotCfg ):
             z = [-0.05, 0.05]
         randomize_base_mass = True
         added_mass_range = [0., 3.]
+        push_robots = True
+        push_interval_s = 10
+        max_push_vel_xy = 1.
 
     # class rewards( LeggedRobotCfg.rewards ):
+    #     # Simple reward function with energy and collisions as the only penalties.
     #     only_positive_rewards = True
-    #     soft_dof_pos_limit = 0.9
+    #     soft_dof_pos_limit = 1.0
     #     terminate_height = 0.08
     #     base_height_target = 0.40
-    #     class scales( LeggedRobotCfg.rewards.scales ):
+    #     class scales:
     #         tracking_lin_vel = 0.
     #         tracking_lin_vel_x = 1.
     #         tracking_lin_vel_y = 1.
     #         tracking_ang_vel = 0.5
-    #         lin_vel_z = -0.5
+    #         collision = -1.
+    #         energy_substeps = -4e-6
 
-    #         # Added:
-    #         dof_acc = -1.25e-7
-    #         torques = -0.0001
-    #         # dof_pos_limits = -10.0
-    #         base_height = -2.0
-  
-  
     class rewards( LeggedRobotCfg.rewards ):
-        only_positive_rewards = False
+        only_positive_rewards = True
+        soft_dof_pos_limit = 1.0
         terminate_height = 0.08
-        soft_dof_pos_limit = 0.8
-        max_contact_force = 100.0
-        base_height_target = 0.35
-        class scales:
+        base_height_target = 0.40
+        class scales( LeggedRobotCfg.rewards.scales ):
             tracking_lin_vel = 0.
             tracking_lin_vel_x = 1.
             tracking_lin_vel_y = 1.
             tracking_ang_vel = 0.5
+            # lin_vel_z = -0.5
+
+            # # Added:
+            # dof_acc = -1.25e-7
+            # dof_acc = -2.5e-8
+            torques = -0.0001
+            # # dof_pos_limits = -10.0
+
+            # Even more:
+            # dof_error = -0.4
+            # hip_pos = -4
+            # delta_torques = -1e-7
+            # energy_substeps = -2e-5
+            pass
+
+    # class rewards( LeggedRobotCfg.rewards ):
+    #     only_positive_rewards = False
+    #     soft_dof_pos_limit = 0.8
+    #     terminate_height = 0.08
+    #     class scales:
+    #         tracking_lin_vel = 0.
+    #         tracking_lin_vel_x = 1.5
+    #         tracking_lin_vel_y = 1.5
+    #         tracking_ang_vel = 0.5
+
+    #         energy_substeps = -2e-5
+    #         exceed_dof_pos_limits = -8e-1
+    #         exceed_torque_limits_l1norm = -8e-1
+    #         # Penalty for walking gait, probably not needed.
+    #         lin_vel_z = -1.
+    #         ang_vel_xy = -0.06
+    #         # orientation = -4.
+    #         dof_acc = -2.5e-7
+    #         # collision = -10.
+    #         action_rate = -0.1
+    #         delta_torques = -1e-7
+    #         torques = -1.e-5
+    #         # yaw_abs = -0.8
+    #         # lin_pos_y = -0.8
+    #         hip_pos = -0.4
+    #         dof_error = -0.04
+    #         pass
+
+
+    # class rewards( LeggedRobotCfg.rewards ):
+    #     only_positive_rewards = False
+    #     terminate_height = 0.08
+    #     soft_dof_pos_limit = 1.0
+    #     max_contact_force = 100.0
+    #     base_height_target = 0.35
+    #     class scales:
+    #         tracking_lin_vel = 0.
+    #         tracking_lin_vel_x = 1.
+    #         tracking_lin_vel_y = 1.
+    #         tracking_ang_vel = 0.5
   
-            # tracking_ang_vel = 0.05 # TODO: what?
-            # TODO: Need to add these.
-            # world_vel_l2norm = -1.
-            energy_substeps = -1e-6
-            energy = -0.
-            alive = 2.
-            # penalty for hardware safety
-            exceed_dof_pos_limits = -1e-1
-            exceed_torque_limits_i = -2e-1
+    #         energy_substeps = -1e-6
+    #         energy = -0.
+    #         alive = 2.
+    #         # penalty for hardware safety
+    #         exceed_dof_pos_limits = -1e-1
+    #         exceed_torque_limits_i = -2e-1
+
+    #         # Even more:
+    #         feet_air_time = 1.0
+    #         action_rate = -0.01
+    #         dof_acc = -2.5e-7
+    #         feet_slip = -0.1
 
     class commands( LeggedRobotCfg.commands ):
         heading_command = True # if true: compute ang vel command from heading error
