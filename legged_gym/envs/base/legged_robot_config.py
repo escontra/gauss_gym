@@ -41,6 +41,7 @@ class LeggedRobotCfg(BaseConfig):
         episode_length_s = 20 # episode length in seconds
 
     class terrain:
+        cams_yaw_only = True
         mesh_type = 'trimesh' # "heightfield" # none, plane, heightfield or trimesh
         scene_root = ''
         splat_root = ''

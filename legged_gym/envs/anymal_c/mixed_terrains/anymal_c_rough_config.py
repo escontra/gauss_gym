@@ -34,7 +34,7 @@ import math
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 1024
+        num_envs = 4096
         num_actions = 12
         env_spacing = 8.0
 
@@ -57,8 +57,10 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         curriculum = False
         measure_heights = False
 
+        cams_yaw_only = False
+
     class init_state( LeggedRobotCfg.init_state ):
-        pos = [0.0, 0.0, 0.6] # x,y,z [m]
+        pos = [0.0, 0.0, 0.7] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
             "LF_HAA": 0.0,
             "LH_HAA": 0.0,

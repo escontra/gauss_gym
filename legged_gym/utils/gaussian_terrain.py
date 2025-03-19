@@ -114,6 +114,9 @@ class GaussianTerrain:
     vertices = np.array(mesh_dict["vertices"]).astype(np.float32)
     triangles = np.array(mesh_dict["triangles"]).astype(np.uint32)
     curr_cam_trans = np.array(mesh_dict["cam_trans"]).astype(np.float32)
+    curr_cam_trans = self.smooth_path(
+      curr_cam_trans, smoothing_factor=9,
+      resample_num_points=20)
 
     return RawMesh(
       scene_name=scene,
@@ -139,10 +142,13 @@ class GaussianTerrain:
 
     for filepath, raw_mesh in self._mesh_dict.items():
       # Compute orientations from camera translations.
-      delta_xy = raw_mesh.cam_trans[1:, :2] - raw_mesh.cam_trans[:-1, :2]
-      delta_xyz = np.concatenate(
-        [delta_xy, np.zeros_like(delta_xy[:, :-1])], axis=-1
-      )
+      if self.cfg.terrain.cams_yaw_only:
+        delta_xy = raw_mesh.cam_trans[1:, :2] - raw_mesh.cam_trans[:-1, :2]
+        delta_xyz = np.concatenate(
+          [delta_xy, np.zeros_like(delta_xy[:, :-1])], axis=-1
+        )
+      else:
+        delta_xyz = raw_mesh.cam_trans[1:] - raw_mesh.cam_trans[:-1]
       x_component = delta_xyz / np.linalg.norm(
         delta_xyz, axis=-1, keepdims=True
       )
@@ -175,6 +181,73 @@ class GaussianTerrain:
         cam_quat_xyzw=cam_quat_xyzw,
         valid_pose_start_idxs=valid_pose_start_idxs,
       )
+
+  def smooth_path(self, poses, smoothing_factor=5, 
+                  # resample=True, resample_factor=1.0,
+                  resample_num_points: Union[int, None]=None,
+      ):
+    """Smooths a trajectory of poses using a Savitzky-Golay filter.
+    
+    Args:
+        poses (np.ndarray): Array of poses with shape [N, 3]
+        smoothing_factor (int): Window size for smoothing. Larger values create smoother paths.
+            Must be odd and at least 3. Default: 5
+        resample_num_points (int): Number of points to resample the path to. Default: None
+    Returns:
+        np.ndarray: Smoothed poses with shape [M, 3] where M depends on resample_num_points
+    """
+    import scipy.signal
+    import scipy.interpolate
+    
+    # Ensure poses is a numpy array
+    poses = np.array(poses)
+    
+    # Ensure smoothing_factor is odd
+    if smoothing_factor % 2 == 0:
+        smoothing_factor += 1
+    
+    # Ensure minimal window size
+    smoothing_factor = max(3, smoothing_factor)
+    
+    # Polynomial order - using 2 for quadratic smoothing
+    poly_order = min(2, smoothing_factor - 1)
+    
+    # Apply Savitzky-Golay filter to each dimension
+    smoothed_poses = np.zeros_like(poses)
+    for i in range(poses.shape[1]):
+        smoothed_poses[:, i] = scipy.signal.savgol_filter(
+            poses[:, i], smoothing_factor, poly_order
+        )
+    
+    if resample_num_points is None:
+        return smoothed_poses
+    
+    # Resample the path using spline interpolation
+    n_points = poses.shape[0]
+    new_n_points = resample_num_points
+    
+    # Create a parameter along the path (cumulative distance)
+    t = np.zeros(n_points)
+    for i in range(1, n_points):
+        t[i] = t[i-1] + np.linalg.norm(smoothed_poses[i] - smoothed_poses[i-1])
+    
+    # Normalize parameter to [0, 1]
+    if t[-1] > 0:
+        t = t / t[-1]
+    
+    # Create interpolation splines for each dimension
+    splines = [
+        scipy.interpolate.splrep(t, smoothed_poses[:, i], k=3) 
+        for i in range(smoothed_poses.shape[1])
+    ]
+    
+    # Sample new points
+    new_t = np.linspace(0, 1, new_n_points)
+    resampled_poses = np.zeros((new_n_points, poses.shape[1]))
+    for i in range(poses.shape[1]):
+        resampled_poses[:, i] = scipy.interpolate.splev(new_t, splines[i])
+    
+    return resampled_poses
 
 
 class GaussianSceneManager:
@@ -426,7 +499,7 @@ class GaussianSceneManager:
     high = (
       torch.ones((len(env_ids),), device=self._env.device)
       * cam_trans_subs.shape[1]
-      - 3
+      - 6
     )
     state_idx = (rand * (high - low) + low).to(torch.int64)
 
@@ -458,7 +531,7 @@ class GaussianSceneManager:
     )
     nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
     past_end = nearest_idx >= (
-      self.cam_trans.shape[1] - 2
+      self.cam_trans.shape[1] - 4
     )  # Past end of trajectory.
     distance_exceeded = yaw_exceeded = past_end
 

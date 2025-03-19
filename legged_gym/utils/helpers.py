@@ -136,6 +136,8 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
         # alg runner parameters
         if args.max_iterations is not None:
             cfg_train.runner.max_iterations = args.max_iterations
+        if args.load_run is not None:
+            cfg_train.runner.load_run = args.load_run
         if args.resume:
             cfg_train.runner.resume = args.resume
         if args.experiment_name is not None:

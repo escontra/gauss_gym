@@ -203,6 +203,7 @@ class LeggedRobot(BaseTask):
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_feet_pos[:] = self.get_feet_pos_quat()[0]
         self.last_contacts[:] = self.feet_contact[:]
+        self.last_torques = self.torques[:]
 
         self.obs_dict = self.obs_manager.compute_obs(self)        
 
@@ -261,6 +262,8 @@ class LeggedRobot(BaseTask):
         # log whether the episode ends by timeout or dead, or by reaching the goal
         self.extras["episode"]["timeout_ratio"] = self.time_out_buf.float().sum() / self.reset_buf.float().sum()
         self.extras["episode"]["num_terminated"] = self.reset_buf.float().sum()
+        for i in range(len(self.feet_indices)):
+            self.extras["episode"][f"{self.feet_names[i]}_contact_force"] = torch.mean(self.contact_forces[:, self.feet_indices[i], 2])
         # log additional curriculum info
         if self.cfg.terrain.curriculum:
             self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
@@ -480,6 +483,7 @@ class LeggedRobot(BaseTask):
         self.last_contacts[env_ids] = False
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
+        self.last_torques[env_ids] = 0.
         self.max_power_per_timestep[env_ids] = 0.
 
     def _reset_dofs(self, env_ids):
@@ -614,6 +618,7 @@ class LeggedRobot(BaseTask):
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
+        self.last_torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
@@ -773,7 +778,7 @@ class LeggedRobot(BaseTask):
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
-        feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
+        self.feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
         camera_link_names = [s for s in body_names if self.cfg.asset.camera_link_name in s]
         penalized_contact_names = []
         for name in self.cfg.asset.penalize_contacts_on:
@@ -810,21 +815,43 @@ class LeggedRobot(BaseTask):
             self.envs.append(env_handle)
             self.actor_handles.append(actor_handle)
 
-        self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
-        for i in range(len(feet_names)):
-            self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], feet_names[i])
+        if hasattr(self.cfg.asset, "front_hip_names"):
+            front_hip_names = getattr(self.cfg.asset, "front_hip_names")
+            self.front_hip_indices = torch.zeros(len(front_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+            for i, name in enumerate(front_hip_names):
+                self.front_hip_indices[i] = self.dof_names.index(name)
+        else:
+            front_hip_names = []
+
+        if hasattr(self.cfg.asset, "rear_hip_names"):
+            rear_hip_names = getattr(self.cfg.asset, "rear_hip_names")
+            self.rear_hip_indices = torch.zeros(len(rear_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+            for i, name in enumerate(rear_hip_names):
+                self.rear_hip_indices[i] = self.dof_names.index(name)
+        else:
+            rear_hip_names = []
+
+        hip_names = front_hip_names + rear_hip_names
+        if len(hip_names) > 0:
+            self.hip_indices = torch.zeros(len(hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+            for i, name in enumerate(hip_names):
+                self.hip_indices[i] = self.dof_names.index(name)
+
+        self.feet_indices = torch.zeros(len(self.feet_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(self.feet_names)):
+            self.feet_indices[i] = body_names.index(self.feet_names[i])
 
         self.camera_link_indices = torch.zeros(len(camera_link_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(camera_link_names)):
-            self.camera_link_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], camera_link_names[i])
+            self.camera_link_indices[i] = body_names.index(camera_link_names[i])
 
         self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(penalized_contact_names)):
-            self.penalised_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], penalized_contact_names[i])
+            self.penalised_contact_indices[i] = body_names.index(penalized_contact_names[i])
 
         self.termination_contact_indices = torch.zeros(len(termination_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(termination_contact_names)):
-            self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], termination_contact_names[i])
+            self.termination_contact_indices[i] = body_names.index(termination_contact_names[i])
 
     def _get_env_origins(self):
         """ Sets environment origins. On rough terrain the origins are defined by the terrain platforms.
@@ -1094,3 +1121,20 @@ class LeggedRobot(BaseTask):
 
     def _reward_feet_vel_z(self):
         return torch.sum(torch.square((self.last_feet_pos - self.get_feet_pos_quat()[0]) / self.dt)[:, :, 2], dim=-1)
+
+    def _reward_dof_error(self):
+        dof_error = torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
+        return dof_error
+
+    def _reward_hip_pos(self):
+        return torch.sum(torch.square(self.dof_pos[:, self.hip_indices] - self.default_dof_pos[:, self.hip_indices]), dim=1)
+
+    def _reward_delta_torques(self):
+        return torch.sum(torch.square(self.torques - self.last_torques), dim=1)
+
+    def _reward_exceed_torque_limits_l1norm(self):
+        """ square function for exceeding part """
+        exceeded_torques = torch.abs(self.substep_torques) - (self.torque_limits*self.cfg.rewards.soft_torque_limit)
+        exceeded_torques[exceeded_torques < 0.] = 0.
+        # sum along decimation axis and dof axis
+        return torch.norm(exceeded_torques, p=1, dim=-1).sum(dim=1)

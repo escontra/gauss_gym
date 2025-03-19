@@ -27,10 +27,13 @@ class T1RoughCfg( LeggedRobotCfg ):
         scene_root = f"{LEGGED_GYM_ROOT_DIR}/scenes"
         curriculum = False
         measure_heights = False
+        cams_yaw_only = True
 
     class init_state( LeggedRobotCfg.init_state ):
         # pos = [0.0, 0.0, 0.82] # x,y,z [m]
-        pos = [0.0, 0.0, 0.78] # x,y,z [m]
+        # pos = [0.0, 0.0, 0.78] # x,y,z [m]
+        pos = [0.0, 0.0, 0.86] # x,y,z [m]
+
         default_joint_angles = { # = target angles [rad] when action = 0.0
             'AAHead_yaw': 0.,
             'Head_pitch': 0.,
