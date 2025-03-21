@@ -176,6 +176,14 @@ class SkilledA1Real(UnitreeA1Real):
             return
         return super().update_low_state(ros_msg)
 
+class NoPythonTagLoader(yaml.SafeLoader):
+    pass
+
+def ignore_unknown(loader, tag_suffix, node):
+    return None  # or raise an error, or log
+
+NoPythonTagLoader.add_multi_constructor("tag:yaml.org,2002:python/", ignore_unknown)
+
 def main(args):
     log_level = rospy.DEBUG if args.debug else rospy.INFO
     rospy.init_node("a1_legged_gym_" + args.mode, log_level= log_level)
@@ -194,7 +202,7 @@ def main(args):
     # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
     #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
     with open(osp.join(args.logdir, "env_config.yaml"), "r", encoding="utf-8") as f:
-        config_dict = yaml.load(f.read(), Loader=yaml.FullLoader)
+        config_dict = yaml.load(f, Loader=NoPythonTagLoader)
     
     duration = config_dict["sim"]["dt"] * config_dict["control"]["decimation"] # in sec
     # config_dict["control"]["stiffness"]["joint"] -= 2.5 # kp
