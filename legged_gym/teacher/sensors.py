@@ -11,7 +11,7 @@ import numpy as np
 import warp as wp
 from isaacgym import gymapi, gymutil
 import math
-from legged_gym.envs.base.batch_gs_renderer import MultiSceneRenderer
+from rendering.batch_gs_renderer import MultiSceneRenderer
 import viser.transforms as vtf
 import matplotlib.pyplot as plt
 from PIL import Image
