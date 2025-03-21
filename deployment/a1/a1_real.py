@@ -18,22 +18,11 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
 
 import ros_numpy
+from legged_gym.utils.math import quat_rotate_inverse
 
 @torch.no_grad()
 def resize2d(img, size):
     return (F.adaptive_avg_pool2d(Variable(img), size)).data
-
-@torch.jit.script
-def quat_rotate_inverse(q, v):
-    shape = q.shape
-    q_w = q[:, -1]
-    q_vec = q[:, :3]
-    a = v * (2.0 * q_w ** 2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    c = q_vec * \
-        torch.bmm(q_vec.view(shape[0], 1, 3), v.view(
-            shape[0], 3, 1)).squeeze(-1) * 2.0
-    return a - b + c
 
 class UnitreeA1Real:
     """ This is the handler that works for ROS 1 on unitree. """
