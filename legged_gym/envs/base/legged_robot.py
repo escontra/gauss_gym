@@ -47,8 +47,9 @@ from legged_gym.utils.gaussian_terrain import GaussianSceneManager
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
-from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager, FootContactSensor
+from legged_gym.teacher.sensors import RayCaster, RayCasterBaseHeight, FootContactSensor
 from legged_gym.teacher import observation_groups
+from legged_gym.teacher.observation_manager import ObsManager
 import legged_gym.teacher.observations as O
 
 

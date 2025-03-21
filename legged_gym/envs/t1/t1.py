@@ -34,8 +34,6 @@ from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
 from legged_gym.envs import LeggedRobot
-from legged_gym.teacher import ObsManager
-import legged_gym.teacher.observations as O
 
 class T1(LeggedRobot):
 
