@@ -231,12 +231,10 @@ class UnitreeA1Real:
         assert hasattr(self, "legs_cmd_publisher"), "start_ros() not called, ROS handlers are not initialized!"
         obs_dict = {}
         for group in self.observation_groups:
-          print(group.name)
-          obs_dict[group.name] = {}
           if "teacher" in group.name:
               continue
+          obs_dict[group.name] = {}
           for observation in group.observations:
-              print('\t', observation.name)
               obs = observation.func(self, observation, is_real=True)
               if observation.name == "dof_pos":
                   self.dof_pos = obs + self.default_dof_pos
