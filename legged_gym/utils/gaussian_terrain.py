@@ -10,6 +10,7 @@ from legged_gym.utils.math import (
   quat_from_x_rot,
   quat_from_y_rot,
   quat_from_z_rot,
+  quat_rotate_inverse,
 )
 from isaacgym.torch_utils import (
   to_torch,
@@ -17,7 +18,6 @@ from isaacgym.torch_utils import (
   get_euler_xyz,
   quat_from_euler_xyz,
   quat_conjugate,
-  quat_rotate_inverse,
   torch_rand_float,
 )
 from isaacgym import gymapi
