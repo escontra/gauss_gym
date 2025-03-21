@@ -190,7 +190,7 @@ def main(args):
     #     with open(osp.join(args.walkdir, "config.json"), "r") as f:
     #         config_dict = json.load(f, object_pairs_hook= OrderedDict)
     assert args.logdir is not None
-    with open(osp.join(args.logdir, "config.json"), "r") as f:
+    with open(osp.join(args.logdir, "env_config.json"), "r") as f:
         config_dict = json.load(f, object_pairs_hook= OrderedDict)
     
     duration = config_dict["sim"]["dt"] * config_dict["control"]["decimation"] # in sec
