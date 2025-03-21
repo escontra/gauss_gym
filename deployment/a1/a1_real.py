@@ -157,8 +157,7 @@ class UnitreeA1Real:
         self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        observation_groups = self.cfg["observations"]["observation_groups"]
-        self.observation_groups = [getattr(observation_groups, name) for name in observation_groups]
+        self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
 
         self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
         self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
