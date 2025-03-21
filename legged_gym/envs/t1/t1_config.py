@@ -189,3 +189,4 @@ class T1RoughCfgPPO( LeggedRobotCfgPPO ):
         entropy_coef = -0.01
         symmetric_coef = 10.
         num_learning_epochs = 20
+        clip_min_std = 0.02

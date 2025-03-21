@@ -12,23 +12,20 @@
     - `cd isaacgym/python && pip install -e .`
     - Try running an example `cd examples && python 1080_balls_of_solitude.py`
     - For troubleshooting check docs `isaacgym/docs/index.html`)
-4. Install rsl_rl (PPO implementation)
-    - `git clone git@github.com:JonasFrey96/rsl_rl_from_pixels.git`
-    - `cd rsl_rl && git checkout dev/teacher_policy && pip install -e .` 
-5. Install legged_gym
+4. Install legged_gym
 - Clone this repository
     - `cd legged_gym && pip install -e .`
-6. Install gsplat:
+5. Install gsplat:
     - `pip install git+https://github.com/nerfstudio-project/gsplat.git`
-7. Additional dependencies:
+6. Additional dependencies:
     - `pip install plyfile jaxtyping tqdm`
     - `pip install https://github.com/NVIDIA/warp/releases/download/v0.15.1/warp_lang-0.15.1-py3-none-manylinux2014_x86_64.whl`
-8. Download different scenes from [here](https://drive.google.com/drive/folders/18DkqVDCjXky5xcWuvo8z3WeyOq6vn_hi?usp=sharing) and copy them to the base dir:
+7. Download different scenes from [here](https://drive.google.com/drive/folders/18DkqVDCjXky5xcWuvo8z3WeyOq6vn_hi?usp=sharing) and copy them to the base dir:
     - assets
     - scenes
     - legged_gym
-9. Update `scene_root` in `anymal_c_rough_config.py` to read from different scenes e.g. `apartment_to_grace` or `bridge`.
-10. Train policies with: `python legged_gym/scripts/train.py --task=anymal_c_rough`
+8. Update `scene_root` in `anymal_c_rough_config.py` to read from different scenes e.g. `apartment_to_grace` or `bridge`.
+9. Train policies with: `python legged_gym/scripts/train.py --task=anymal_c_rough`
 
 ---
 
