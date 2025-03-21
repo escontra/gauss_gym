@@ -240,10 +240,10 @@ class UnitreeA1Real:
                   self.dof_pos = obs + self.default_dof_pos
               if observation.name == "dof_vel":
                   self.dof_vel = obs
-              if obs.clip:
-                  obs = obs.clip(min=obs.clip[0], max=obs.clip[1])
-              if obs.scale is not None:
-                  scale = obs.scale
+              if observation.clip:
+                  obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
+              if observation.scale is not None:
+                  scale = observation.scale
                   if isinstance(scale, list):
                       scale = torch.tensor(scale, device=obs.device)[None]
                   obs = scale * obs
