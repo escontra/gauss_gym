@@ -95,6 +95,8 @@ class A1RoughCfg( LeggedRobotCfg ):
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
         torque_limits = 25 # override the urdf
+        computer_clip_torque = True
+        motor_clip_torque = False
 
     class asset( LeggedRobotCfg.asset ):
         file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf'
@@ -124,19 +126,9 @@ class A1RoughCfg( LeggedRobotCfg ):
         push_interval_s = 10
         max_push_vel_xy = 1.
 
-    # class rewards( LeggedRobotCfg.rewards ):
-    #     # Simple reward function with energy and collisions as the only penalties.
-    #     only_positive_rewards = True
-    #     soft_dof_pos_limit = 1.0
-    #     terminate_height = 0.08
-    #     base_height_target = 0.40
-    #     class scales:
-    #         tracking_lin_vel = 0.
-    #         tracking_lin_vel_x = 1.
-    #         tracking_lin_vel_y = 1.
-    #         tracking_ang_vel = 0.5
-    #         collision = -1.
-    #         energy_substeps = -4e-6
+    class normalization( LeggedRobotCfg.normalization ):
+        clip_actions = 1.
+        clip_actions_method = "hard"
 
     class rewards( LeggedRobotCfg.rewards ):
         only_positive_rewards = True
@@ -150,78 +142,10 @@ class A1RoughCfg( LeggedRobotCfg ):
             tracking_ang_vel = 0.5
             # lin_vel_z = -0.5
 
-            # # Added:
-            # dof_acc = -1.25e-7
-            # dof_acc = -2.5e-8
-            # torques = -0.0001
-            # # dof_pos_limits = -10.0
-
-            # Even more:
-            # dof_error = -0.4
-            # hip_pos = -4
-            # delta_torques = -1e-7
-            # energy_substeps = -2e-5
-            pass
-
-    # class rewards( LeggedRobotCfg.rewards ):
-    #     only_positive_rewards = False
-    #     soft_dof_pos_limit = 0.8
-    #     terminate_height = 0.08
-    #     class scales:
-    #         tracking_lin_vel = 0.
-    #         tracking_lin_vel_x = 1.5
-    #         tracking_lin_vel_y = 1.5
-    #         tracking_ang_vel = 0.5
-
-    #         energy_substeps = -2e-5
-    #         exceed_dof_pos_limits = -8e-1
-    #         exceed_torque_limits_l1norm = -8e-1
-    #         # Penalty for walking gait, probably not needed.
-    #         lin_vel_z = -1.
-    #         ang_vel_xy = -0.06
-    #         # orientation = -4.
-    #         dof_acc = -2.5e-7
-    #         # collision = -10.
-    #         action_rate = -0.1
-    #         delta_torques = -1e-7
-    #         torques = -1.e-5
-    #         # yaw_abs = -0.8
-    #         # lin_pos_y = -0.8
-    #         hip_pos = -0.4
-    #         dof_error = -0.04
-    #         pass
-
-
-    # class rewards( LeggedRobotCfg.rewards ):
-    #     only_positive_rewards = False
-    #     terminate_height = 0.08
-    #     soft_dof_pos_limit = 1.0
-    #     max_contact_force = 100.0
-    #     base_height_target = 0.35
-    #     class scales:
-    #         tracking_lin_vel = 0.
-    #         tracking_lin_vel_x = 1.
-    #         tracking_lin_vel_y = 1.
-    #         tracking_ang_vel = 0.5
-  
-    #         energy_substeps = -1e-6
-    #         energy = -0.
-    #         alive = 2.
-    #         # penalty for hardware safety
-    #         exceed_dof_pos_limits = -1e-1
-    #         exceed_torque_limits_i = -2e-1
-
-    #         # Even more:
-    #         feet_air_time = 1.0
-    #         action_rate = -0.01
-    #         dof_acc = -2.5e-7
-    #         feet_slip = -0.1
-
     class commands( LeggedRobotCfg.commands ):
         heading_command = True # if true: compute ang vel command from heading error
         class ranges ( LeggedRobotCfg.commands.ranges ):
             lin_vel = [0.0, 1.0] # min max [m/s]
-
 
 class A1RoughCfgPPO( LeggedRobotCfgPPO ):
 

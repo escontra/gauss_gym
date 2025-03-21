@@ -32,8 +32,22 @@ import torch
 from torch import Tensor
 import torch.nn.functional as F
 import numpy as np
-from isaacgym.torch_utils import quat_apply, normalize
 from typing import Tuple, Union
+
+@torch.jit.script
+def normalize(x, eps: float = 1e-9):
+    return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
+
+
+@torch.jit.script
+def quat_apply(a, b):
+    shape = b.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 3)
+    xyz = a[:, :3]
+    t = xyz.cross(b, dim=-1) * 2
+    return (b + a[:, 3:] * t + xyz.cross(t, dim=-1)).view(shape)
+
 
 # @ torch.jit.script
 def quat_apply_yaw(quat, vec):

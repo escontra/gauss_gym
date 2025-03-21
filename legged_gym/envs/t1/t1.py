@@ -39,51 +39,10 @@ import legged_gym.teacher.observations as O
 
 class T1(LeggedRobot):
 
-    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
-      super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
-      obs_groups_cfg = {
-          "teacher_observations": {
-              # optional parameters: scale, clip([min, max]), noise
-              "add_noise": True,  # turns off the noise in all observations
-              "is_recurrent": True,
-              "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
-              "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
-              "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
-              "gait_progress": {"func": O.gait_progress},
-              "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
-              "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
-              "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
-              "actions": {"func": O.actions},
-              "ray_cast": {
-                  "func": O.ray_cast,
-                  "noise": self.cfg.noise.noise_scales.height_measurements,
-                  "sensor": "raycast_grid",
-                  "clip": (-1.0, 1.0),
-                  "scale": self.obs_scales.height_measurements
-              },
-          },
-          "student_observations": {
-              # optional parameters: scale, clip([min, max]), noise
-              "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
-              "is_recurrent": True,
-              "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
-              "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
-              "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
-              "gait_progress": {"func": O.gait_progress},
-              "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
-              "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
-              "actions": {"func": O.actions},
-              "images": {"func": O.gs_render, "sensor": "gs_renderer"},
-          },
-      }
-      self.obs_manager = ObsManager(self, obs_groups_cfg)
-
-
     def _init_buffers(self):
         super()._init_buffers()
         self.gait_frequency = torch.ones(self.num_envs, dtype=torch.float, device=self.device)*self.cfg.commands.gait_frequency
         self.gait_process = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-
 
     def step(self, actions):
         self.gait_process[:] = torch.fmod(self.gait_process + self.dt * self.gait_frequency, 1.0)

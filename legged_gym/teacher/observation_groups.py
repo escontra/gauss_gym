@@ -1,7 +1,7 @@
 import dataclasses
 import legged_gym.teacher.observations as O
 from typing import Callable, Union, Tuple, List
-import numpy as np
+import copy
 
 
 @dataclasses.dataclass
@@ -137,4 +137,21 @@ STUDENT_OBSERVATION_GROUP = ObservationGroup(
   add_noise=True,
   add_latency=True,
   is_recurrent=True,
+)
+
+# T1.
+TEACHER_OBSERVATION_GROUP_T1 = copy.deepcopy(TEACHER_OBSERVATION_GROUP)
+TEACHER_OBSERVATION_GROUP_T1.observations.append(
+  Observation(
+    name="gait_progress",
+    func=O.gait_progress,
+  )
+)
+
+STUDENT_OBSERVATION_GROUP_T1_PROPRIO = copy.deepcopy(STUDENT_OBSERVATION_GROUP)
+STUDENT_OBSERVATION_GROUP_T1_PROPRIO.observations.append(
+  Observation(
+    name="gait_progress",
+    func=O.gait_progress,
+  )
 )

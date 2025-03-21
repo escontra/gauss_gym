@@ -5,6 +5,7 @@ import math
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
         num_envs = 1024
+        num_envs = 4096
         num_actions = 14
         num_observations = 48
         env_spacing = 8.0
@@ -19,6 +20,13 @@ class T1RoughCfg( LeggedRobotCfg ):
         # Distance / angle from camera trajectory based termination conditions.
         max_traj_pos_distance = 1.0
         max_traj_yaw_distance_rad = math.pi / 2
+
+    class observations( LeggedRobotCfg.observations ):
+        observation_groups = [
+            'TEACHER_OBSERVATION_GROUP_T1',
+            'STUDENT_OBSERVATION_GROUP_T1_PROPRIO',
+        ]
+        latency_resampling_time = 2.0 # [s]
 
     class terrain( LeggedRobotCfg.terrain ):
         mesh_type = 'gaussian'
@@ -80,11 +88,21 @@ class T1RoughCfg( LeggedRobotCfg ):
                          [-0.1015,  0.05, -0.03],
                          [-0.1015, -0.05, -0.03]] # x,y,z [m]
         feet_contact_radius = 0.01
-    
-    # class domain_rand( LeggedRobotCfg.domain_rand):
-    #     randomize_base_mass = True
-    #     added_mass_range = [-5., 5.]
-  
+
+    class domain_rand( LeggedRobotCfg.domain_rand ):
+        randomize_motor = True
+        leg_motor_strength_range = [0.9, 1.1]
+        randomize_com = True
+        class com_range:
+            x = [-0.05, 0.15]
+            y = [-0.1, 0.1]
+            z = [-0.05, 0.05]
+        randomize_base_mass = True
+        added_mass_range = [-1., 3.]
+        push_robots = True
+        push_interval_s = 10
+        max_push_vel_xy = 1.
+
     class rewards( LeggedRobotCfg.rewards ):
         soft_dof_pos_limit = 1.
         soft_dof_vel_limit = 1.
