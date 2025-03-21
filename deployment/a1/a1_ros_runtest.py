@@ -14,8 +14,6 @@ from sensor_msgs.msg import Image
 import ros_numpy
 
 from a1_real import UnitreeA1Real, resize2d
-from rsl_rl import modules
-from rsl_rl.utils.utils import get_obs_slice
 
 @torch.no_grad()
 def handle_forward_depth(ros_msg, model, publisher, output_resolution, device):
