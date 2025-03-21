@@ -33,7 +33,7 @@ from torch import Tensor
 import torch.nn.functional as F
 import numpy as np
 from isaacgym.torch_utils import quat_apply, normalize
-from typing import Tuple
+from typing import Tuple, Union
 
 # @ torch.jit.script
 def quat_apply_yaw(quat, vec):
@@ -145,4 +145,52 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     out = quat_candidates[
         F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
     ].reshape(batch_dim + (4,))
-    return standardize_quaternion(out)
+    return torch.roll(standardize_quaternion(out), -1, dims=-1)
+
+
+@torch.jit.script
+def quat_from_euler_xyz(roll, pitch, yaw):
+    cy = torch.cos(yaw * 0.5)
+    sy = torch.sin(yaw * 0.5)
+    cr = torch.cos(roll * 0.5)
+    sr = torch.sin(roll * 0.5)
+    cp = torch.cos(pitch * 0.5)
+    sp = torch.sin(pitch * 0.5)
+
+    qw = cy * cr * cp + sy * sr * sp
+    qx = cy * sr * cp - sy * cr * sp
+    qy = cy * cr * sp + sy * sr * cp
+    qz = sy * cr * cp - cy * sr * sp
+
+    return torch.stack([qx, qy, qz, qw], dim=-1)
+
+
+@torch.jit.script
+def _maybe_expand_tensor(value: Union[float, torch.Tensor], size: Union[None, int], device: Union[None, torch.device]):
+    if isinstance(value, (int, float)):
+        value = torch.tensor(value, requires_grad=False, device=device, dtype=torch.float)
+    assert isinstance(value, torch.Tensor)
+    if size is not None:
+        value = value.expand((size,))
+    return value
+
+@torch.jit.script
+def quat_from_x_rot(angle_rad: Union[float, torch.Tensor], size: Union[None, int]=None, device: Union[None, torch.device]=None):
+    angle_rad = _maybe_expand_tensor(angle_rad, size, device)
+    y_angle_rad = torch.zeros_like(angle_rad)
+    z_angle_rad = torch.zeros_like(angle_rad)
+    return quat_from_euler_xyz(angle_rad, y_angle_rad, z_angle_rad)
+
+@torch.jit.script
+def quat_from_y_rot(angle_rad: Union[float, torch.Tensor], size: Union[None, int]=None, device: Union[None, torch.device]=None):
+    angle_rad = _maybe_expand_tensor(angle_rad, size, device)
+    x_angle_rad = torch.zeros_like(angle_rad)
+    z_angle_rad = torch.zeros_like(angle_rad)
+    return quat_from_euler_xyz(x_angle_rad, angle_rad, z_angle_rad)
+
+@torch.jit.script
+def quat_from_z_rot(angle_rad: Union[float, torch.Tensor], size: Union[None, int]=None, device: Union[None, torch.device]=None):
+    angle_rad = _maybe_expand_tensor(angle_rad, size, device)
+    x_angle_rad = torch.zeros_like(angle_rad)
+    y_angle_rad = torch.zeros_like(angle_rad)
+    return quat_from_euler_xyz(x_angle_rad, y_angle_rad, angle_rad)

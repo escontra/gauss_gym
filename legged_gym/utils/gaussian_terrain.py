@@ -1,5 +1,4 @@
 import numpy as np
-import viser.transforms as vtf
 import os
 import pickle
 from typing import List, Union
@@ -8,6 +7,9 @@ from legged_gym.utils.math import (
   wrap_to_pi,
   matrix_to_quaternion,
   quat_apply,
+  quat_from_x_rot,
+  quat_from_y_rot,
+  quat_from_z_rot,
 )
 from isaacgym.torch_utils import (
   to_torch,
@@ -69,7 +71,6 @@ class GaussianTerrain:
     self.cfg = cfg
     self.num_robots = num_robots
     self.type = self.cfg.terrain.mesh_type
-
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -158,11 +159,12 @@ class GaussianTerrain:
       y_component = y_component / np.linalg.norm(
         y_component, axis=-1, keepdims=True
       )
-      cam_rot = vtf.SO3.from_matrix(np.stack([x_component, y_component, z_component], axis=2))
-      # Switch to OpenGL camera convention.
-      cam_rot = cam_rot @ vtf.SO3.from_y_radians(np.pi / 2)
-      cam_rot = cam_rot @ vtf.SO3.from_z_radians(-np.pi / 2)
-      cam_quat_xyzw = cam_rot.as_quaternion_xyzw()
+
+      cam_rot = matrix_to_quaternion(torch.tensor(np.stack([x_component, y_component, z_component], axis=2)))
+      y_rot = quat_from_y_rot(np.pi / 2, cam_rot.shape[0])
+      z_rot = quat_from_z_rot(-np.pi / 2, cam_rot.shape[0])
+      to_opencv = quat_mul(y_rot, z_rot)
+      cam_quat_xyzw = quat_mul(cam_rot, to_opencv.detach())
 
       # Compute valid poses to sample along camera trajectory.
       valid_pose_start_idxs = max_length - raw_mesh.cam_trans.shape[0]
@@ -282,6 +284,17 @@ class GaussianSceneManager:
         np.array(self._env.cfg.env.cam_xyz_offset)[None].repeat(self._env.num_envs, 0),
         dtype=torch.float, device=self._env.device, requires_grad=False
     )
+
+    self.cam_rpy_offset = quat_mul(
+      quat_mul(
+        quat_from_x_rot(self._env.cfg.env.cam_rpy_offset[0], 1, self._env.device),
+        quat_from_y_rot(self._env.cfg.env.cam_rpy_offset[1], 1, self._env.device)),
+        quat_from_z_rot(self._env.cfg.env.cam_rpy_offset[2], 1, self._env.device)).detach()
+
+    self.robot_frame_transform = quat_mul(
+      quat_from_z_rot(np.pi / 2, 1, self._env.device),
+      quat_from_y_rot(-np.pi / 2, 1, self._env.device)
+    ).detach()
 
   def spawn_meshes(self):
     # Add meshes to the environment.
@@ -409,11 +422,7 @@ class GaussianSceneManager:
     cam_link_trans, cam_link_quat = self.get_cam_link_pose_world_frame()
     # Apply xyz offset in the local robot frame.
     cam_trans = cam_link_trans + quat_apply(cam_link_quat, self.local_offset)
-    cam_so3 = vtf.SO3.from_quaternion_xyzw(cam_link_quat.cpu().numpy())
-    cam_so3 = cam_so3 @ vtf.SO3.from_x_radians(self._env.cfg.env.cam_rpy_offset[0])
-    cam_so3 = cam_so3 @ vtf.SO3.from_y_radians(self._env.cfg.env.cam_rpy_offset[1])
-    cam_so3 = cam_so3 @ vtf.SO3.from_z_radians(self._env.cfg.env.cam_rpy_offset[2])
-    cam_quat = torch.tensor(cam_so3.as_quaternion_xyzw(), device=cam_link_quat.device, dtype=torch.float, requires_grad=False)
+    cam_quat = quat_mul(cam_link_quat, self.cam_rpy_offset.expand(cam_link_quat.shape[0], -1))
     return cam_trans, cam_quat
 
   def get_cam_velocity_world_frame(self):
@@ -481,11 +490,7 @@ class GaussianSceneManager:
     #     \
     #      \
     #       +X (forward)
-    cam_quat = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
-    robot_quat = cam_quat @ vtf.SO3.from_z_radians(np.pi / 2)
-    robot_quat = robot_quat @ vtf.SO3.from_y_radians(-np.pi / 2)
-    robot_quat = to_torch(robot_quat.as_quaternion_xyzw(), device=self._env.device, requires_grad=False)
-    return robot_quat
+    return quat_mul(cam_quat, self.robot_frame_transform.expand(cam_quat.shape[0], -1))
 
   def sample_cam_pose(self, env_ids, use_ground_positions=False):
     # Sample a random camera position and orientation from the camera trajectories.
