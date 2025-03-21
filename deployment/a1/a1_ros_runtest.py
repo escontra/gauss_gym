@@ -12,6 +12,7 @@ import rospy
 from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import Image
 import ros_numpy
+import yaml
 
 from a1_real import UnitreeA1Real, resize2d
 
@@ -190,8 +191,10 @@ def main(args):
     #     with open(osp.join(args.walkdir, "config.json"), "r") as f:
     #         config_dict = json.load(f, object_pairs_hook= OrderedDict)
     assert args.logdir is not None
-    with open(osp.join(args.logdir, "env_config.json"), "r") as f:
-        config_dict = json.load(f, object_pairs_hook= OrderedDict)
+    # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
+    #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
+    with open(osp.join(args.logdir, "env_config.yaml"), "r", encoding="utf-8") as f:
+        config_dict = yaml.load(f.read(), Loader=yaml.FullLoader)
     
     duration = config_dict["sim"]["dt"] * config_dict["control"]["decimation"] # in sec
     # config_dict["control"]["stiffness"]["joint"] -= 2.5 # kp
