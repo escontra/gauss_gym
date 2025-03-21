@@ -234,7 +234,8 @@ class UnitreeA1Real:
           if "teacher" in group.name:
               continue
           for observation in group.observations:
-              obs = observation.func(self, observation.params, is_real=True)
+              print(observation.name)
+              obs = observation.func(self, observation, is_real=True)
               if observation.name == "dof_pos":
                   self.dof_pos = obs + self.default_dof_pos
               if observation.name == "dof_vel":
