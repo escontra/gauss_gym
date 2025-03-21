@@ -215,8 +215,8 @@ class UnitreeA1Real:
             rospy.loginfo("clip_actions_high: " + str(self.cfg["normalization"]["clip_actions_high"]))
             rospy.loginfo("clip_actions_low: " + str(self.cfg["normalization"]["clip_actions_low"]))
             self.clip_actions_method = "hard"
-            self.clip_actions_low = torch.tensor(self.cfg["normalization"]["clip_actions_low"], device= self.model_device, dtype= torch.float32)
-            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions_high"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_low = torch.tensor(-1 * self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
         else:
             rospy.loginfo("clip_actions_method is " + str(self.cfg["normalization"].get("clip_actions_method", None)))
         self.dof_map = self.extra_cfg["dof_map"]
