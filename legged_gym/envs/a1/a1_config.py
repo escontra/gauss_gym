@@ -34,7 +34,7 @@ import math
 
 class A1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 2048
+        num_envs = 4096
         num_actions = 12
         env_spacing = 8.0
 
@@ -153,7 +153,7 @@ class A1RoughCfg( LeggedRobotCfg ):
             # # Added:
             # dof_acc = -1.25e-7
             # dof_acc = -2.5e-8
-            torques = -0.0001
+            # torques = -0.0001
             # # dof_pos_limits = -10.0
 
             # Even more:

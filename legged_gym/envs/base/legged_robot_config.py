@@ -40,6 +40,13 @@ class LeggedRobotCfg(BaseConfig):
         send_timeouts = True # send time out information to the algorithm
         episode_length_s = 20 # episode length in seconds
 
+    class observations:
+        observation_groups = [
+            'TEACHER_OBSERVATION_GROUP',
+            'STUDENT_OBSERVATION_GROUP',
+        ]
+        latency_resampling_time = 2.0 # [s]
+
     class terrain:
         cams_yaw_only = True
         mesh_type = 'trimesh' # "heightfield" # none, plane, heightfield or trimesh

@@ -48,6 +48,7 @@ from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
 from legged_gym.teacher import RayCaster, RayCasterBaseHeight, ObsManager, FootContactSensor
+from legged_gym.teacher import observation_groups
 import legged_gym.teacher.observations as O
 
 
@@ -86,46 +87,7 @@ class LeggedRobot(BaseTask):
             # "gs_renderer": self.scene_manager.renderer,
             "base_height_raycaster": RayCasterBaseHeight(self),
             "foot_contact_sensor": FootContactSensor(self)}
-        obs_groups_cfg = {
-            "teacher_observations": {
-                # optional parameters: scale, clip([min, max]), noise
-                "add_noise": True,  # turns off the noise in all observations
-                "is_recurrent": True,
-                "base_lin_vel": {"func": O.base_lin_vel, "noise": 0.1},
-                "base_ang_vel": {"func": O.base_ang_vel, "noise": 0.2},
-                "projected_gravity": {"func": O.projected_gravity, "noise": 0.05},
-                "velocity_commands": {"func": O.velocity_commands},
-                "dof_pos": {"func": O.dof_pos, "noise": 0.01},
-                "dof_vel": {"func": O.dof_vel, "noise": 1.5},
-                "actions": {"func": O.actions},
-                "ray_cast": {
-                    "func": O.ray_cast,
-                    "noise": 0.1,
-                    "sensor": "raycast_grid",
-                    "clip": (-1, 1.0)
-                }
-            },
-            "student_observations": {
-                # optional parameters: scale, clip([min, max]), noise
-                "add_noise": self.cfg.noise.add_noise,  # turns off the noise in all observations
-                "is_recurrent": True,
-                "base_lin_vel": {"func": O.base_lin_vel, "noise": self.cfg.noise.noise_scales.lin_vel, "scale": self.obs_scales.lin_vel},
-                "base_ang_vel": {"func": O.base_ang_vel, "noise": self.cfg.noise.noise_scales.ang_vel, "scale": self.obs_scales.ang_vel},
-                "projected_gravity": {"func": O.projected_gravity, "noise": self.cfg.noise.noise_scales.gravity},
-                "velocity_commands": {"func": O.velocity_commands, "scale": self.commands_scale},
-                "dof_pos": {"func": O.dof_pos, "noise": self.cfg.noise.noise_scales.dof_pos, "scale": self.obs_scales.dof_pos},
-                "dof_vel": {"func": O.dof_vel, "noise": self.cfg.noise.noise_scales.dof_vel, "scale": self.obs_scales.dof_vel},
-                "actions": {"func": O.actions},
-                "ray_cast": {
-                    "func": O.ray_cast,
-                    "noise": self.cfg.noise.noise_scales.height_measurements,
-                    "sensor": "raycast_grid",
-                    "clip": (-1, 1.0)
-                }
-                # "images": {"func": O.gs_render, "sensor": "gs_renderer"},
-            },
-        }
-        self.obs_manager = ObsManager(self, obs_groups_cfg)
+        self.obs_manager = ObsManager(self, [getattr(observation_groups, group) for group in self.cfg.observations.observation_groups])
 
     def obs_group_size(self, group_name):
         return self.obs_manager.obs_dims_per_group[group_name]
@@ -414,15 +376,19 @@ class LeggedRobot(BaseTask):
             Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
         """
         # 
-        env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
+        resample_command_env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
 
         # Resample command scales. Commands are updated every timestep to guide
         # the robot along the camera trajectory.
-        self._resample_commands(env_ids)
+        self._resample_commands(resample_command_env_ids)
         if self.cfg.commands.heading_command:
             forward = tu.quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+
+        # Resample sensor latency.
+        resample_latency_env_ids = (self.episode_length_buf % int(self.cfg.observations.latency_resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
+        self.obs_manager.resample_sensor_latency(resample_latency_env_ids)
 
         # log max power across current env step
         self.max_power_per_timestep = torch.maximum(
@@ -486,6 +452,9 @@ class LeggedRobot(BaseTask):
         self.reset_buf[env_ids] = 1
         self.last_torques[env_ids] = 0.
         self.max_power_per_timestep[env_ids] = 0.
+
+        # Reset observation buffers.
+        self.obs_manager.reset_buffers(env_ids)
 
     def _reset_dofs(self, env_ids):
         """ Resets DOF position and velocities of selected environmments
