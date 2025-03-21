@@ -6,8 +6,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from legged_gym.envs.locomotion import LeggedEnv, NavEnv
 
-def projected_gravity(env: "LeggedEnv", params):
-    return env.projected_gravity
+from legged_gym.utils.math import quat_rotate_inverse
+
+def projected_gravity(env: "LeggedEnv", params, is_real=False):
+    if is_real:
+        return quat_rotate_inverse(
+            torch.tensor(env.low_state_buffer.imu.quaternion).unsqueeze(0),
+            env.gravity_vec,
+        ).to(env.model_device)
+    else:
+      return env.projected_gravity
 
 def gait_progress(env: "LeggedEnv", params):
     return torch.cat((
@@ -15,29 +23,45 @@ def gait_progress(env: "LeggedEnv", params):
       (torch.sin(2 * torch.pi * env.gait_process) * (env.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
     ), dim = -1)
 
-def base_lin_vel(env: "LeggedEnv", params):
+def base_lin_vel(env: "LeggedEnv", params, is_real=False):
     return env.base_lin_vel
 
-def base_ang_vel(env: "LeggedEnv", params):
-    return env.base_ang_vel
+def base_ang_vel(env: "LeggedEnv", params, is_real=False):
+    if is_real:
+        return torch.tensor(env.low_state_buffer.imu.gyroscope, device= env.model_device).unsqueeze(0)
+    else:
+        return env.base_ang_vel
 
-def velocity_commands(env: "LeggedEnv", params):
-    return env.commands[:, :3] # env.command_generator.get_command()
+def velocity_commands(env: "LeggedEnv", params, is_real=False):
+    if is_real:
+      return env.command_buf
+    else:
+      return env.commands[:, :3] # env.command_generator.get_command()
 
-def dof_pos(env: "ANY_ENV", params):
-    return env.dof_pos - env.default_dof_pos
+def dof_pos(env: "ANY_ENV", params, is_real=False):
+    if is_real:
+        return torch.tensor([
+            env.low_state_buffer.motorState[env.dof_map[i]].q for i in range(12)
+        ], dtype= torch.float32, device= env.model_device).unsqueeze(0) - env.default_dof_pos
+    else:
+        return env.dof_pos - env.default_dof_pos
 
-def dof_vel(env: "ANY_ENV", params):
-    return env.dof_vel
+def dof_vel(env: "ANY_ENV", params, is_real=False):
+    if is_real:
+      return torch.tensor([
+          env.low_state_buffer.motorState[env.dof_map[i]].dq for i in range(12)
+      ], dtype= torch.float32, device= env.model_device).unsqueeze(0)
+    else:
+      return env.dof_vel
 
-def actions(env: "ANY_ENV", params):
+def actions(env: "ANY_ENV", params, is_real=False):
     return env.actions
 
-def ray_cast(env: "ANY_ENV", params):
+def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     heights = env.root_states[:, 2].unsqueeze(1) - 0.5 - sensor.get_data()[..., 2]
     return heights
 
-def gs_render(env: "ANY_ENV", params):
+def gs_render(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     return sensor.get_data()

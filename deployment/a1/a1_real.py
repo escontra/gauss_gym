@@ -19,6 +19,7 @@ from sensor_msgs.msg import Image
 
 import ros_numpy
 from legged_gym.utils.math import quat_rotate_inverse
+from legged_gym.teacher import observation_groups
 
 @torch.no_grad()
 def resize2d(img, size):
@@ -138,21 +139,6 @@ class UnitreeA1Real:
                 self.update_move_cmd,
                 queue_size= 1,
             )
-        if "forward_depth" in self.all_obs_components:
-            if not self.forward_depth_embedding_dims:
-                self.forward_depth_subscriber = rospy.Subscriber(
-                    self.robot_namespace + self.forward_depth_topic,
-                    Image,
-                    self.update_forward_depth,
-                    queue_size= 1,
-                )
-            else:
-                self.forward_depth_subscriber = rospy.Subscriber(
-                    self.robot_namespace + self.forward_depth_topic,
-                    Float32MultiArrayStamped,
-                    self.update_forward_depth_embedding,
-                    queue_size= 1,
-                )
         self.pose_cmd_subscriber = rospy.Subscriber(
             "/body_pose",
             Pose,
@@ -171,14 +157,16 @@ class UnitreeA1Real:
         self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        self.obs_scales = self.cfg["normalization"]["obs_scales"]
-        self.obs_scales["dof_pos"] = torch.tensor(self.obs_scales["dof_pos"], device= self.model_device, dtype= torch.float32)
+        observation_groups = self.cfg["observations"]["observation_groups"]
+        self.observation_groups = [getattr(observation_groups, name) for name in observation_groups]
+
+        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
+        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
+
         if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
             self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12
         if not isinstance(self.cfg["control"]["stiffness"]["joint"], (list, tuple)):
             self.cfg["control"]["stiffness"]["joint"] = [self.cfg["control"]["stiffness"]["joint"]] * 12
-        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
-        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
         self.default_dof_pos = torch.zeros(12, device= self.model_device, dtype= torch.float32)
         for i in range(12):
             name = self.extra_cfg["dof_names"][i]
@@ -190,19 +178,6 @@ class UnitreeA1Real:
         if self.computer_clip_torque:
             self.torque_limits = self.extra_cfg["torque_limits"]
             rospy.loginfo("[Env] torque limit: {:.1f} {:.1f} {:.1f}".format(*self.torque_limits[:3]))
-
-        self.commands_scale = torch.tensor([
-            self.obs_scales["lin_vel"],
-            self.obs_scales["lin_vel"],
-            self.obs_scales["lin_vel"],
-        ], device= self.model_device, requires_grad= False)
-
-        self.obs_segments = self.get_obs_segment_from_components(self.cfg["env"]["obs_components"])
-        self.num_obs = self.get_num_obs_from_components(self.cfg["env"]["obs_components"])
-        components = self.cfg["env"].get("privileged_obs_components", None)
-        self.privileged_obs_segments = None if components is None else self.get_num_obs_from_components(components)
-        self.num_privileged_obs = None if components is None else self.get_num_obs_from_components(components)
-        self.all_obs_components = self.cfg["env"]["obs_components"] + (self.cfg["env"].get("privileged_obs_components", []) if components is not None else [])
         
         # store config values to attributes to improve speed
         self.clip_obs = self.cfg["normalization"]["clip_observations"]
@@ -212,8 +187,7 @@ class UnitreeA1Real:
         self.clip_actions = self.cfg["normalization"]["clip_actions"]
         if self.cfg["normalization"].get("clip_actions_method", None) == "hard":
             rospy.loginfo("clip_actions_method with hard mode")
-            rospy.loginfo("clip_actions_high: " + str(self.cfg["normalization"]["clip_actions_high"]))
-            rospy.loginfo("clip_actions_low: " + str(self.cfg["normalization"]["clip_actions_low"]))
+            rospy.loginfo("clip_actions: " + str(self.cfg["normalization"]["clip_actions"]))
             self.clip_actions_method = "hard"
             self.clip_actions_low = torch.tensor(-1 * self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
             self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
@@ -230,43 +204,11 @@ class UnitreeA1Real:
             rospy.get_param(self.robot_namespace + "/joint_limits/{}_min".format(s)) \
             for s in ["hip", "thigh", "calf"] * 4
         ])
-
-        if "forward_depth" in self.all_obs_components:
-            resolution = self.cfg["sensor"]["forward_camera"].get(
-                "output_resolution",
-                self.cfg["sensor"]["forward_camera"]["resolution"],
-            )
-            if not self.forward_depth_embedding_dims:
-                self.forward_depth_buf = torch.zeros(
-                    (self.num_envs, *resolution),
-                    device= self.model_device,
-                    dtype= torch.float32,
-                )
-            else:
-                self.forward_depth_embedding_buf = torch.zeros(
-                    (1, self.forward_depth_embedding_dims),
-                    device= self.model_device,
-                    dtype= torch.float32,
-                )
-
-    def _init_height_points(self):
-        """ Returns points at which the height measurments are sampled (in base frame)
-
-        Returns:
-            [torch.Tensor]: Tensor of shape (num_envs, self.num_height_points, 3)
-        """
-        return None
-    
-    def _get_heights(self):
-        """ TODO: get estimated terrain heights around the robot base """
-        # currently return a zero tensor with valid size
-        return torch.zeros(self.num_envs, 187, device= self.model_device, requires_grad= False)
     
     def clip_action_before_scale(self, actions):
         actions = torch.clip(actions, -self.clip_actions, self.clip_actions)
         if getattr(self, "clip_actions_method", None) == "hard":
             actions = torch.clip(actions, self.clip_actions_low, self.clip_actions_high)
-
         return actions
 
     def clip_by_torque_limit(self, actions_scaled):
@@ -285,62 +227,30 @@ class UnitreeA1Real:
         return torch.clip(actions_scaled, actions_low, actions_high)
 
     """ Get obs components and cat to a single obs input """
-    def _get_proprioception_obs(self):
-        # base_ang_vel = quat_rotate_inverse(
-        #     torch.tensor(self.low_state_buffer.imu.quaternion).unsqueeze(0),
-        #     torch.tensor(self.low_state_buffer.imu.gyroscope).unsqueeze(0),
-        # ).to(self.model_device)
-        # NOTE: Different from the isaacgym. 
-        # The anglar velocity is already in base frame, no need to rotate
-        base_ang_vel = torch.tensor(self.low_state_buffer.imu.gyroscope, device= self.model_device).unsqueeze(0)
-        projected_gravity = quat_rotate_inverse(
-            torch.tensor(self.low_state_buffer.imu.quaternion).unsqueeze(0),
-            self.gravity_vec,
-        ).to(self.model_device)
-        self.dof_pos = dof_pos = torch.tensor([
-            self.low_state_buffer.motorState[self.dof_map[i]].q for i in range(12)
-        ], dtype= torch.float32, device= self.model_device).unsqueeze(0)
-        self.dof_vel = dof_vel = torch.tensor([
-            self.low_state_buffer.motorState[self.dof_map[i]].dq for i in range(12)
-        ], dtype= torch.float32, device= self.model_device).unsqueeze(0)
-
-        # rospy.loginfo_throttle(5, 
-        #     "projected_gravity: " + \
-        #     ", ".join([str(i) for i in projected_gravity[0].cpu().tolist()])
-        # )
-        # rospy.loginfo_throttle(5, "Hacking projected_gravity y -= 0.15")
-        # projected_gravity[:, 1] -= 0.15
-        
-        return torch.cat([
-            torch.zeros((1, 3), device= self.model_device), # no linear velocity
-            base_ang_vel * self.obs_scales["ang_vel"],
-            projected_gravity,
-            self.command_buf * self.commands_scale,
-            (dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],
-            dof_vel * self.obs_scales["dof_vel"],
-            self.actions
-        ], dim= -1)
-
-    def _get_forward_depth_obs(self):
-        if not self.forward_depth_embedding_dims:
-            return self.forward_depth_buf.flatten(start_dim= 1)
-        else:
-            if self.low_state_get_time.to_sec() - self.forward_depth_embedding_stamp.to_sec() > 0.4:
-                rospy.logerr("Getting depth embedding later than low_state later than 0.4s")
-            return self.forward_depth_embedding_buf.flatten(start_dim= 1)
-
     def compute_observation(self):
-        """ use the updated low_state_buffer to compute observation vector """
+        """Use the updated low_state_buffer to compute observation vector."""
         assert hasattr(self, "legs_cmd_publisher"), "start_ros() not called, ROS handlers are not initialized!"
-        obs_segments = self.obs_segments
-        obs = []
-        for k, v in obs_segments.items():
-            obs.append(
-                getattr(self, "_get_" + k + "_obs")() * \
-                self.obs_scales.get(k, 1.)
-            )
-        obs = torch.cat(obs, dim= 1)
-        self.obs_buf = obs
+        obs_dict = {}
+        for group in self.observation_groups:
+          if "teacher" in group.name:
+              continue
+          for observation in group.observations:
+              obs = observation.func(self, observation.params, is_real=True)
+              if observation.name == "dof_pos":
+                  self.dof_pos = obs + self.default_dof_pos
+              if observation.name == "dof_vel":
+                  self.dof_vel = obs
+              if obs.clip:
+                  obs = obs.clip(min=obs.clip[0], max=obs.clip[1])
+              if obs.scale is not None:
+                  scale = obs.scale
+                  if isinstance(scale, list):
+                      scale = torch.tensor(scale, device=obs.device)[None]
+                  obs = scale * obs
+              obs_dict[group.name][observation.name] = obs
+
+        self.obs_dict = obs_dict
+
 
     """ The methods combined with outer model forms the step function
     NOTE: the outer user handles the loop frequency.
@@ -398,41 +308,8 @@ class UnitreeA1Real:
         """ The function that refreshes the buffer and return the observation vector.
         """
         self.compute_observation()
-        self.obs_buf = torch.clip(self.obs_buf, -self.clip_obs, self.clip_obs)
-        return self.obs_buf.to(self.model_device)
+        return self.obs_dict
 
-    """ Copied from legged_robot_field. Please check whether these are consistent. """
-    def get_obs_segment_from_components(self, components):
-        segments = OrderedDict()
-        if "proprioception" in components:
-            segments["proprioception"] = (48,)
-        if "height_measurements" in components:
-            segments["height_measurements"] = (187,)
-        if "forward_depth" in components:
-            resolution = self.cfg["sensor"]["forward_camera"].get(
-                "output_resolution",
-                self.cfg["sensor"]["forward_camera"]["resolution"],
-            )
-            segments["forward_depth"] = (1, *resolution)
-        # The following components are only for rebuilding the non-actor module.
-        # DO NOT use these in actor network and check consistency with simulator implementation.
-        if "base_pose" in components:
-            segments["base_pose"] = (6,) # xyz + rpy
-        if "robot_config" in components:
-            segments["robot_config"] = (1 + 3 + 1 + 12,)
-        if "engaging_block" in components:
-            # This could be wrong, please check the implementation of BarrierTrack
-            segments["engaging_block"] = (1 + (4 + 1) + 2,)
-        if "sidewall_distance" in components:
-            segments["sidewall_distance"] = (2,)
-        return segments
-        
-    def get_num_obs_from_components(self, components):
-        obs_segments = self.get_obs_segment_from_components(components)
-        num_obs = 0
-        for k, v in obs_segments.items():
-            num_obs += np.prod(v)
-        return num_obs
 
     """ ROS callbacks and handlers that update the buffer """
     def update_low_state(self, ros_msg):
@@ -458,20 +335,6 @@ class UnitreeA1Real:
         self.command_buf[0, 0] = ros_msg.linear.x
         self.command_buf[0, 1] = ros_msg.linear.y
         self.command_buf[0, 2] = ros_msg.angular.z
-
-    def update_forward_depth(self, ros_msg):
-        # TODO not checked.
-        self.forward_depth_header = ros_msg.header
-        buf = ros_numpy.numpify(ros_msg)
-        self.forward_depth_buf = resize2d(
-            torch.from_numpy(buf.astype(np.float32)).unsqueeze(0).unsqueeze(0).to(self.model_device),
-            self.forward_depth_buf.shape[-2:],
-        )
-
-    def update_forward_depth_embedding(self, ros_msg):
-        rospy.loginfo_once("a1_ros_run recieved forward depth embedding.")
-        self.forward_depth_embedding_stamp = ros_msg.header.stamp
-        self.forward_depth_embedding_buf[:] = torch.tensor(ros_msg.data).unsqueeze(0) # (1, d)
 
     def dummy_handler(self, ros_msg):
         """ To meet the need of teleop-legged-robots requirements """
