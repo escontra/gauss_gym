@@ -250,7 +250,8 @@ def main(args):
       key=os.path.getmtime,
     )[-1]
     model_dict = torch.load(
-      model_path, map_location=model_device, weights_only=True
+      model_path, map_location=model_device,
+      # weights_only=True
     )
     model.load_state_dict(model_dict["model"], strict=False)
     print(f'MODEL LOADED FROM: {model_path}')
