@@ -13,6 +13,7 @@ from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import Image
 import ros_numpy
 import yaml
+import pickle
 
 from a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
