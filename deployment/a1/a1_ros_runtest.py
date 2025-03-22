@@ -286,7 +286,7 @@ def main(args):
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            act_dist = model.act(obs)
+            act_dist = model.act(obs["student_observations"])
             actions = act_dist.loc
             # actions = policy(obs,
             #     obs_start= visual_obs_slice[0].start.item(),
