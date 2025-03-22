@@ -15,6 +15,7 @@ import ros_numpy
 import yaml
 
 from a1_real import UnitreeA1Real, resize2d
+from legged_gym.rl.modules import models
 
 @torch.no_grad()
 def handle_forward_depth(ros_msg, model, publisher, output_resolution, device):
@@ -204,6 +205,10 @@ def main(args):
     #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
     with open(osp.join(args.logdir, "env_config.yaml"), "r", encoding="utf-8") as f:
         config_dict = yaml.load(f, Loader=NoPythonTagLoader)
+    with open(osp.join(args.logdir, "train_config.yaml"), "r", encoding="utf-8") as f:
+        train_config_dict = yaml.load(f, Loader=NoPythonTagLoader)
+    with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
+        obs_group_sizes = pickle.load(f)
     
     duration = config_dict["sim"]["dt"] * config_dict["control"]["decimation"] # in sec
     # config_dict["control"]["stiffness"]["joint"] -= 2.5 # kp
@@ -230,6 +235,13 @@ def main(args):
     rate = rospy.Rate(1 / duration)
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
+    model = getattr(models, train_config_dict["runner"]["policy_class_name"])(
+      12,
+      obs_group_sizes["student_observations"],
+      obs_group_sizes["teacher_observations"],
+      train_config_dict["policy"]["init_noise_std"],
+      train_config_dict["policy"]["mu_activation"],
+    ).to(model_device)
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
         kp= 50,
