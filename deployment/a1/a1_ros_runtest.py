@@ -254,7 +254,6 @@ def main(args):
       # weights_only=True
     )
     model.load_state_dict(model_dict["model"], strict=False)
-    print(f'MODEL LOADED FROM: {model_path}')
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
         kp= 50,
@@ -264,6 +263,44 @@ def main(args):
     )
     obs = unitree_real_env.get_obs()
     actions = model.act(obs["student_observations"])
+
+    # memory_module = model.memory_a
+    # actor_mlp = model.actor
+
+    # @torch.jit.script
+    # def policy(observations: torch.Tensor, obs_start: int, obs_stop: int, obs_shape: Tuple[int, int, int]):
+    #     visual_latent = visual_encoder(
+    #         observations[..., obs_start:obs_stop].reshape(-1, *obs_shape)
+    #     ).reshape(1, -1)
+    #     obs = torch.cat([
+    #         observations[..., :obs_start],
+    #         visual_latent,
+    #         observations[..., obs_stop:],
+    #     ], dim= -1)
+    #     recurrent_embedding = memory_module(obs)
+    #     actions = actor_mlp(recurrent_embedding.squeeze(0))
+    #     return actions
+
+    rate = rospy.Rate(1 / duration)
+    with torch.no_grad():
+        while not rospy.is_shutdown():
+            # inference_start_time = rospy.get_time()
+            obs = unitree_real_env.get_obs()
+            act_dist = model.act(obs)
+            actions = act_dist.loc
+            # actions = policy(obs,
+            #     obs_start= visual_obs_slice[0].start.item(),
+            #     obs_stop= visual_obs_slice[0].stop.item(),
+            #     obs_shape= visual_obs_slice[1],
+            # )
+            unitree_real_env.send_action(actions)
+            # inference_duration = rospy.get_time() - inference_start_time
+            motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
+            rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
+            rate.sleep()
+            if unitree_real_env.low_state_buffer.wirelessRemote.btn.components.L2 or unitree_real_env.low_state_buffer.wirelessRemote.btn.components.R2:
+                unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
+                rospy.signal_shutdown("Controller send stop signal, exiting")
     return
 
 
