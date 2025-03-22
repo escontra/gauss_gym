@@ -14,6 +14,7 @@ from sensor_msgs.msg import Image
 import ros_numpy
 import yaml
 import pickle
+import glob
 
 from a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
@@ -244,6 +245,15 @@ def main(args):
       train_config_dict["policy"]["init_noise_std"],
       train_config_dict["policy"]["mu_activation"],
     ).to(model_device)
+    model_path = sorted(
+      glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),
+      key=os.path.getmtime,
+    )[-1]
+    model_dict = torch.load(
+      model_path, map_location=model_device, weights_only=True
+    )
+    model.load_state_dict(model_dict["model"], strict=False)
+    print(f'MODEL LOADED FROM: {model_path}')
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
         kp= 50,
@@ -253,7 +263,6 @@ def main(args):
     )
     obs = unitree_real_env.get_obs()
     actions = model.act(obs["student_observations"])
-    print('GOT actions: ', actions)
     return
 
 
