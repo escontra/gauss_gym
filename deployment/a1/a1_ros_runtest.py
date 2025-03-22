@@ -236,6 +236,7 @@ def main(args):
     rate = rospy.Rate(1 / duration)
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
+    print(obs_group_sizes)
     model = getattr(models, train_config_dict["runner"]["policy_class_name"])(
       12,
       obs_group_sizes["student_observations"],
@@ -243,6 +244,7 @@ def main(args):
       train_config_dict["policy"]["init_noise_std"],
       train_config_dict["policy"]["mu_activation"],
     ).to(model_device)
+    print('INITIALIZED MODEL')
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
         kp= 50,
