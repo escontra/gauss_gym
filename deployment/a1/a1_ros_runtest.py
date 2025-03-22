@@ -136,18 +136,19 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
         ros_rate.sleep()
         standup_timestep_i += 1
 
-    rospy.loginfo("Robot stood up! press R1 on the remote control to continue ...")
-    while not rospy.is_shutdown():
-        if env.low_state_buffer.wirelessRemote.btn.components.R1:
-            break
-        print(env.get_obs()["student_observations"]["projected_gravity"])
-        if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
-            env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
-            rospy.signal_shutdown("Controller send stop signal, exiting")
-            exit(0)
-        env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
-        ros_rate.sleep()
-    rospy.loginfo("Robot standing up procedure finished!")
+    # TODO(aescontrela): Uncomment this when we find the remote.
+    # rospy.loginfo("Robot stood up! press R1 on the remote control to continue ...")
+    # while not rospy.is_shutdown():
+    #     if env.low_state_buffer.wirelessRemote.btn.components.R1:
+    #         break
+    #     print(env.get_obs()["student_observations"]["projected_gravity"])
+    #     if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
+    #         env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
+    #         rospy.signal_shutdown("Controller send stop signal, exiting")
+    #         exit(0)
+    #     env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
+    #     ros_rate.sleep()
+    # rospy.loginfo("Robot standing up procedure finished!")
 
 class SkilledA1Real(UnitreeA1Real):
     """ Some additional methods to help the execution of skill policy """
@@ -236,7 +237,6 @@ def main(args):
     rate = rospy.Rate(1 / duration)
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
-    print(obs_group_sizes)
     model = getattr(models, train_config_dict["runner"]["policy_class_name"])(
       12,
       obs_group_sizes["student_observations"],
@@ -244,7 +244,6 @@ def main(args):
       train_config_dict["policy"]["init_noise_std"],
       train_config_dict["policy"]["mu_activation"],
     ).to(model_device)
-    print('INITIALIZED MODEL')
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
         kp= 50,
@@ -252,6 +251,9 @@ def main(args):
         warmup_timesteps= 50,
         device= model_device,
     )
+    obs = unitree_real_env.get_obs()
+    actions = model.act(obs["student_observations"])
+    print('GOT actions: ', actions)
     return
 
 
