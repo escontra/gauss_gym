@@ -159,13 +159,14 @@ class UnitreeA1Real:
 
         self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
 
-        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
-        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
 
         if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
             self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12
         if not isinstance(self.cfg["control"]["stiffness"]["joint"], (list, tuple)):
             self.cfg["control"]["stiffness"]["joint"] = [self.cfg["control"]["stiffness"]["joint"]] * 12
+        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
+        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
+
         self.default_dof_pos = torch.zeros(12, device= self.model_device, dtype= torch.float32)
         for i in range(12):
             name = self.extra_cfg["dof_names"][i]
