@@ -275,7 +275,7 @@ def main(args):
     cnn_keys = model.cnn_keys_a
     cnn_model = model.cnn_a
     @torch.jit.script
-    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
+    def _policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
         features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
         if cnn_keys:
           cnn_features = []
@@ -297,6 +297,9 @@ def main(args):
         input_a = memory_module(features, None, None)
         actions = actor(input_a.squeeze(0))
         return actions
+
+    import functools
+    policy = functools.partial(_policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys)
 
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
