@@ -173,16 +173,19 @@ class UnitreeA1Real:
             default_joint_angle = self.cfg["init_state"]["default_joint_angles"][name]
             self.default_dof_pos[i] = default_joint_angle
 
-        self.computer_clip_torque = self.cfg["control"].get("computer_clip_torque", True)
+        print(f"Default dof pos: {self.default_dof_pos}")
+
+        self.computer_clip_torque = self.cfg["control"]["computer_clip_torque"]
         rospy.loginfo("Computer Clip Torque (onboard) is " + str(self.computer_clip_torque))
         if self.computer_clip_torque:
             self.torque_limits = self.extra_cfg["torque_limits"]
             rospy.loginfo("[Env] torque limit: {:.1f} {:.1f} {:.1f}".format(*self.torque_limits[:3]))
         
         # store config values to attributes to improve speed
-        self.clip_obs = self.cfg["normalization"]["clip_observations"]
+        # self.clip_obs = self.cfg["normalization"]["clip_observations"]
         self.control_type = self.cfg["control"]["control_type"]
         self.action_scale = self.cfg["control"]["action_scale"]
+        print(f"Action scale: {self.action_scale}")
         rospy.loginfo("[Env] action scale: {:.1f}".format(self.action_scale))
         self.clip_actions = self.cfg["normalization"]["clip_actions"]
         if self.cfg["normalization"].get("clip_actions_method", None) == "hard":
@@ -204,6 +207,8 @@ class UnitreeA1Real:
             rospy.get_param(self.robot_namespace + "/joint_limits/{}_min".format(s)) \
             for s in ["hip", "thigh", "calf"] * 4
         ])
+        print(f"Joint limits high: {self.joint_limits_high}")
+        print(f"Joint limits low: {self.joint_limits_low}")
     
     def clip_action_before_scale(self, actions):
         if getattr(self, "clip_actions_method", None) == "hard":
