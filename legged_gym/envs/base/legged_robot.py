@@ -96,19 +96,80 @@ class LeggedRobot(BaseTask):
     def obs_group_size_per_name(self, group_name):
         return self.obs_manager.obs_dims_per_group_obs[group_name]
 
+    def clip_position_action_by_torque_limit(self, actions_scaled):
+        """ For position control, scaled actions should be in the coordinate of robot default dof pos
+        """
+        dof_vel = self.dof_vel
+        dof_pos_ = self.dof_pos - self.default_dof_pos
+        p_limits_low = (-self.torque_limits) + self.d_gains*dof_vel
+        p_limits_high = (self.torque_limits) + self.d_gains*dof_vel
+        actions_low = (p_limits_low/self.p_gains) + dof_pos_
+        actions_high = (p_limits_high/self.p_gains) + dof_pos_
+        actions_scaled_clipped = torch.clip(actions_scaled, actions_low, actions_high)
+        return actions_scaled_clipped
+
+    def pre_physics_step(self, actions):
+        if isinstance(self.cfg.normalization.clip_actions, (tuple, list)):
+            self.cfg.normalization.clip_actions = torch.tensor(
+                self.cfg.normalization.clip_actions,
+                device= self.device,
+            )
+        if isinstance(getattr(self.cfg.normalization, "clip_actions_low", None), (tuple, list)):
+            self.cfg.normalization.clip_actions_low = torch.tensor(
+                self.cfg.normalization.clip_actions_low,
+                device= self.device
+            )
+        if isinstance(getattr(self.cfg.normalization, "clip_actions_high", None), (tuple, list)):
+            self.cfg.normalization.clip_actions_high = torch.tensor(
+                self.cfg.normalization.clip_actions_high,
+                device= self.device
+            )
+        if getattr(self.cfg.normalization, "clip_actions_delta", None) is not None:
+            actions = torch.clip(
+                actions,
+                self.last_actions - self.cfg.normalization.clip_actions_delta,
+                self.last_actions + self.cfg.normalization.clip_actions_delta,
+            )
+        
+        # some customized action clip methods to bound the action output
+        if getattr(self.cfg.normalization, "clip_actions_method", None) == "tanh":
+            clip_actions = self.cfg.normalization.clip_actions
+            actions = (torch.tanh(actions) * clip_actions).to(self.device)
+        elif getattr(self.cfg.normalization, "clip_actions_method", None) == "hard":
+            actions = torch.clip(
+                actions,
+                self.cfg.normalization.clip_actions_low,
+                self.cfg.normalization.clip_actions_high,
+            )
+        else:
+            clip_actions = self.cfg.normalization.clip_actions
+            actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
+
+        if isinstance(self.cfg.control.action_scale, (tuple, list)):
+            self.cfg.control.action_scale = torch.tensor(self.cfg.control.action_scale, device= self.sim_device)
+
+        actions_scaled_clipped = actions * self.cfg.control.action_scale
+        if self.cfg.control.computer_clip_torque:
+            if self.cfg.control.control_type == "P":
+                actions_scaled_clipped = self.clip_position_action_by_torque_limit(actions_scaled_clipped)
+            else:
+                raise NotImplementedError
+
+        return actions, actions_scaled_clipped
+
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
 
         Args:
             actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
         """
-        clip_actions = self.cfg.normalization.clip_actions
-        self.actions[:] = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
+        actions, actions_scaled_clipped = self.pre_physics_step(actions)
+        self.actions[:] = actions
         # step physics and render each frame
         self.render()
         for dec_i in range(self.cfg.control.decimation):
             self.pre_decimation_step(dec_i)
-            self.torques = self._compute_torques(self.actions).view(self.torques.shape)
+            self.torques = self._compute_torques(actions, actions_scaled_clipped).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
             self.gym.simulate(self.sim)
             if self.device == 'cpu':
@@ -224,6 +285,8 @@ class LeggedRobot(BaseTask):
         self.extras["episode"]["max_power_throughout_episode"] = self.max_power_per_timestep[env_ids].max().cpu().item()
         # log whether the episode ends by timeout or dead, or by reaching the goal
         self.extras["episode"]["timeout_ratio"] = self.time_out_buf.float().sum() / self.reset_buf.float().sum()
+        self.extras["episode"]["distance_exceeded_ratio"] = self.distance_exceeded_buf.float().sum() / self.reset_buf.float().sum()
+        self.extras["episode"]["yaw_exceeded_ratio"] = self.yaw_exceeded_buf.float().sum() / self.reset_buf.float().sum()
         self.extras["episode"]["num_terminated"] = self.reset_buf.float().sum()
         for i in range(len(self.feet_indices)):
             self.extras["episode"][f"{self.feet_names[i]}_contact_force"] = torch.mean(self.contact_forces[:, self.feet_indices[i], 2])
@@ -417,7 +480,7 @@ class LeggedRobot(BaseTask):
             raise NotImplementedError()
         self.commands[:, :2] = velocity_command
 
-    def _compute_torques(self, actions):
+    def _compute_torques_original(self, actions):
         """ Compute torques from actions.
             Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
             [NOTE]: torques must have the same dimension as the number of DOFs, even if some DOFs are not actuated.
@@ -441,6 +504,24 @@ class LeggedRobot(BaseTask):
         else:
             raise NameError(f"Unknown controller type: {control_type}")
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
+
+    def _compute_torques(self, actions, actions_scaled_clipped):
+        if not self.cfg.control.computer_clip_torque:
+            return self._compute_torques_original(actions)
+        else:
+            actions_scaled_clipped = self.motor_strength * actions_scaled_clipped
+            if self.cfg.control.control_type == "P":
+                torques = self.p_gains * (actions_scaled_clipped + self.default_dof_pos - self.dof_pos) \
+                    - self.d_gains * self.dof_vel
+            else:
+                raise NotImplementedError
+            if self.cfg.control.motor_clip_torque:
+                torques = torch.clip(
+                    torques,
+                    -self.torque_limits * self.cfg.control.motor_clip_torque,
+                    self.torque_limits * self.cfg.control.motor_clip_torque,
+                )
+            return torques
 
     def _reset_buffers(self, env_ids):
         # reset buffers
@@ -591,7 +672,6 @@ class LeggedRobot(BaseTask):
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.last_torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
-        self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
         self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.last_feet_pos = torch.zeros_like(self.get_feet_pos_quat()[0])
@@ -857,7 +937,6 @@ class LeggedRobot(BaseTask):
 
     def _parse_cfg(self, cfg):
         self.dt = self.cfg.control.decimation * self.sim_params.dt
-        self.obs_scales = self.cfg.normalization.obs_scales
         self.reward_scales = class_to_dict(self.cfg.rewards.scales)
         self.command_ranges = class_to_dict(self.cfg.commands.ranges)
         if self.cfg.terrain.mesh_type not in ['heightfield', 'trimesh']:

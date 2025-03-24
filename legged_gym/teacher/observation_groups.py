@@ -77,12 +77,6 @@ TEACHER_OBSERVATION_GROUP = ObservationGroup(
 STUDENT_OBSERVATION_GROUP = ObservationGroup(
   name="student_observations",
   observations=[
-    # Observation(
-    #   name="base_lin_vel",
-    #   func=O.base_lin_vel,
-    #   noise=0.1,
-    #   scale=2.0,
-    # ),
     Observation(
       name="base_ang_vel",
       func=O.base_ang_vel,
@@ -118,25 +112,24 @@ STUDENT_OBSERVATION_GROUP = ObservationGroup(
       name="actions",
       func=O.actions,
     ),
-    # Observation(
-    #   name="ray_cast",
-    #   func=O.ray_cast,
-    #   noise=0.1,
-    #   sensor="raycast_grid",
-    #   clip=(-1.0, 1.0),
-    #   scale=5.0,
-    # ),
-    # Observation(
-    #     name="camera_images",
-    #     func=O.gs_render,
-    #     sensor="gs_renderer",
-    #     latency_range=(0.25, 0.30),
-    #     refresh_duration=1/10,
-    # )
   ],
   add_noise=True,
   add_latency=True,
   is_recurrent=True,
+)
+
+
+# A1.
+TEACHER_OBSERVATION_GROUP_A1_IMAGE = copy.deepcopy(TEACHER_OBSERVATION_GROUP)
+STUDENT_OBSERVATION_GROUP_A1_IMAGE = copy.deepcopy(STUDENT_OBSERVATION_GROUP)
+STUDENT_OBSERVATION_GROUP_A1_IMAGE.observations.append(
+  Observation(
+    name="camera_images",
+    func=O.gs_render,
+    sensor="gs_renderer",
+    latency_range=(0.25, 0.30),
+    refresh_duration=1/10,
+  )
 )
 
 # T1.

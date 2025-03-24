@@ -14,6 +14,7 @@ from legged_gym.rl.modules import models
 import torch.utils._pytree as pytree
 import time
 from legged_gym.utils.helpers import class_to_dict
+import pickle
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -47,7 +48,7 @@ def surrogate_loss(
 
 
 class Recorder:
-  def __init__(self, env_cfg, cfg):
+  def __init__(self, env_cfg, cfg, obs_group_sizes):
     self.cfg = cfg
     name = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     self.dir = os.path.join("logs", name)
@@ -74,6 +75,9 @@ class Recorder:
 
     with open(os.path.join(self.dir, "env_config.yaml"), "w") as file:
       yaml.dump(env_cfg, file)
+
+    with open(os.path.join(self.dir, "obs_group_sizes.pkl"), "wb") as file:
+      pickle.dump(obs_group_sizes, file)
 
   def record_episode_statistics(self, done, ep_info, it, write_record=False):
     if self.episode_steps is None:
@@ -219,6 +223,10 @@ class Runner:
     self.train_cfg = train_cfg
     self._set_seed()
     self.learning_rate = self.train_cfg["algorithm"]["learning_rate"]
+    self.obs_group_sizes = {
+      'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
+      'student_observations': self.env.obs_group_size_per_name("student_observations"),
+    }
     self.model = getattr(models, self.train_cfg["runner"]["policy_class_name"])(
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
@@ -309,7 +317,7 @@ class Runner:
     return obs
 
   def learn(self, num_learning_iterations, init_at_random_ep_len=False):
-    self.recorder = Recorder(class_to_dict(self.cfg), self.train_cfg)
+    self.recorder = Recorder(class_to_dict(self.cfg), self.train_cfg, self.obs_group_sizes)
     obs, privileged_obs = self.env.reset()
     obs = self.to_device(obs)
     privileged_obs = self.to_device(privileged_obs)

@@ -113,10 +113,7 @@ class ObsManager:
 
                 self.delayed_frames_per_group[group][name] = torch.where(
                     delay_refresh_mask,
-                    torch.minimum(
-                        buffer_delayed_frames,
-                        self.delayed_frames_per_group[group][name] + 1,
-                    ),
+                    buffer_delayed_frames,
                     self.delayed_frames_per_group[group][name] + 1,
                 )
                 self.delayed_frames_per_group[group][name] = torch.clip(
