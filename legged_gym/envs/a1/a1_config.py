@@ -32,6 +32,33 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 from legged_gym import LEGGED_GYM_ROOT_DIR
 import math
 
+
+a1_const_dof_range = dict( # copied from a1_const.h from unitree_legged_sdk
+    Hip_max= 0.802,
+    Hip_min=-0.802,
+    Thigh_max= 4.19,
+    Thigh_min= -1.05,
+    Calf_max= -0.916,
+    Calf_min= -2.7,
+)
+a1_action_scale = 0.5
+a1_default_joint_angles = { # = target angles [rad] when action = 0.0
+    'FL_hip_joint': 0.1,   # [rad]
+    'RL_hip_joint': 0.1,   # [rad]
+    'FR_hip_joint': -0.1 ,  # [rad]
+    'RR_hip_joint': -0.1,   # [rad]
+
+    'FL_thigh_joint': 0.8,     # [rad]
+    'RL_thigh_joint': 1.,   # [rad]
+    'FR_thigh_joint': 0.8,     # [rad]
+    'RR_thigh_joint': 1.,   # [rad]
+
+    'FL_calf_joint': -1.5,   # [rad]
+    'RL_calf_joint': -1.5,    # [rad]
+    'FR_calf_joint': -1.5,  # [rad]
+    'RR_calf_joint': -1.5,    # [rad]
+}
+
 class A1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         num_envs = 4096
@@ -64,22 +91,7 @@ class A1RoughCfg( LeggedRobotCfg ):
 
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.5] # x,y,z [m]
-        default_joint_angles = { # = target angles [rad] when action = 0.0
-            'FL_hip_joint': 0.1,   # [rad]
-            'RL_hip_joint': 0.1,   # [rad]
-            'FR_hip_joint': -0.1 ,  # [rad]
-            'RR_hip_joint': -0.1,   # [rad]
-
-            'FL_thigh_joint': 0.8,     # [rad]
-            'RL_thigh_joint': 1.,   # [rad]
-            'FR_thigh_joint': 0.8,     # [rad]
-            'RR_thigh_joint': 1.,   # [rad]
-
-            'FL_calf_joint': -1.5,   # [rad]
-            'RL_calf_joint': -1.5,    # [rad]
-            'FR_calf_joint': -1.5,  # [rad]
-            'RR_calf_joint': -1.5,    # [rad]
-        }
+        default_joint_angles = a1_default_joint_angles 
 
     class control( LeggedRobotCfg.control ):
         # PD Drive parameters:
@@ -91,7 +103,7 @@ class A1RoughCfg( LeggedRobotCfg ):
         # stiffness = {'joint': 35.}  # [N*m/rad]
         # damping = {'joint': 0.75}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.5
+        action_scale = a1_action_scale
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
         torque_limits = 25 # override the urdf
@@ -110,7 +122,7 @@ class A1RoughCfg( LeggedRobotCfg ):
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
         feet_edge_pos = [[0., 0., 0.]] # x,y,z [m]
         feet_contact_radius = 0.02 + 1e-4
-        armature = 0.01
+        armature = 0.01 # TODO: Should be 0.01?
   
     class domain_rand( LeggedRobotCfg.domain_rand ):
         randomize_motor = True
@@ -127,8 +139,23 @@ class A1RoughCfg( LeggedRobotCfg ):
         max_push_vel_xy = 1.
 
     class normalization( LeggedRobotCfg.normalization ):
-        clip_actions = 1.
-        clip_actions_method = "hard"
+        # clip_actions = 1.
+        clip_actions_method = None # "hard"
+        dof_pos_redundancy = 0.2
+        clip_actions_low = []
+        clip_actions_high = []
+        for sdk_joint_name, sim_joint_name in zip(
+            ["Hip", "Thigh", "Calf"] * 4,
+            [ # in the order as simulation
+                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+            ],
+        ): # This setting is only for position control.
+            clip_actions_low.append( (a1_const_dof_range[sdk_joint_name + "_min"] + dof_pos_redundancy - a1_default_joint_angles[sim_joint_name]) / a1_action_scale )
+            clip_actions_high.append( (a1_const_dof_range[sdk_joint_name + "_max"] - dof_pos_redundancy - a1_default_joint_angles[sim_joint_name]) / a1_action_scale )
+        del dof_pos_redundancy, sdk_joint_name, sim_joint_name # This is not intended to be an attribute of normalization
 
     class rewards( LeggedRobotCfg.rewards ):
         only_positive_rewards = True
@@ -141,6 +168,7 @@ class A1RoughCfg( LeggedRobotCfg ):
             tracking_lin_vel_y = 1.
             tracking_ang_vel = 0.5
             # lin_vel_z = -0.5
+            pass
 
     class commands( LeggedRobotCfg.commands ):
         heading_command = True # if true: compute ang vel command from heading error

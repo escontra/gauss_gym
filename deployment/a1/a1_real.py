@@ -189,8 +189,8 @@ class UnitreeA1Real:
             rospy.loginfo("clip_actions_method with hard mode")
             rospy.loginfo("clip_actions: " + str(self.cfg["normalization"]["clip_actions"]))
             self.clip_actions_method = "hard"
-            self.clip_actions_low = torch.tensor(-1 * self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
-            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_low = torch.tensor(self.cfg["normalization"]["clip_actions_low"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions_high"], device= self.model_device, dtype= torch.float32)
         else:
             rospy.loginfo("clip_actions_method is " + str(self.cfg["normalization"].get("clip_actions_method", None)))
         self.dof_map = self.extra_cfg["dof_map"]
@@ -206,9 +206,10 @@ class UnitreeA1Real:
         ])
     
     def clip_action_before_scale(self, actions):
-        actions = torch.clip(actions, -self.clip_actions, self.clip_actions)
         if getattr(self, "clip_actions_method", None) == "hard":
             actions = torch.clip(actions, self.clip_actions_low, self.clip_actions_high)
+        else:
+            actions = torch.clip(actions, -self.clip_actions, self.clip_actions)
         return actions
 
     def clip_by_torque_limit(self, actions_scaled):
@@ -261,7 +262,7 @@ class UnitreeA1Real:
         """
         self.actions = self.clip_action_before_scale(actions)
         if self.computer_clip_torque:
-            robot_coordinates_action = self.clip_by_torque_limit(actions * self.action_scale) + self.default_dof_pos.unsqueeze(0)
+            robot_coordinates_action = self.clip_by_torque_limit(self.actions * self.action_scale) + self.default_dof_pos.unsqueeze(0)
         else:
             rospy.logwarn_throttle(60, "You are using control without any torque clip. The network might output torques larger than the system can provide.")
             robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos.unsqueeze(0)

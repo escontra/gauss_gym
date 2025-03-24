@@ -256,8 +256,8 @@ def main(args):
     model.load_state_dict(model_dict["model"], strict=False)
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
-        kp= 50,
-        kd= 1.0,
+        kp= 40,
+        kd= 0.5,
         warmup_timesteps= 50,
         device= model_device,
     )
