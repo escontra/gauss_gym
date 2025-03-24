@@ -119,6 +119,7 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
         kd= None,
         warmup_timesteps= 25,
         device= "cpu",
+        policy=None,
     ):
     """
     Args:
@@ -143,6 +144,9 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
             kp= kp,
             kd= kd,
         )
+        if policy is not None:
+            actions = policy(env.get_obs())
+            print("actions:", actions)
         ros_rate.sleep()
         standup_timestep_i += 1
 
@@ -263,22 +267,13 @@ def main(args):
       # weights_only=True
     )
     model.load_state_dict(model_dict["model"], strict=False)
-    standup_procedure(unitree_real_env, rate,
-        angle_tolerance= 0.2,
-        kp= 40,
-        kd= 0.5,
-        warmup_timesteps= 50,
-        device= model_device,
-    )
-    obs = unitree_real_env.get_obs()
-    actions = model.act(obs["student_observations"])
 
+    # Jitted policy.
     memory_module = model.memory_a
     actor = model.actor
     mlp_keys = model.mlp_keys_a
     cnn_keys = model.cnn_keys_a
     cnn_model = model.cnn_a
-
     @torch.jit.script
     def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
         features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
@@ -302,6 +297,17 @@ def main(args):
         input_a = memory_module(features, None, None)
         actions = actor(input_a.squeeze(0))
         return actions
+
+    standup_procedure(unitree_real_env, rate,
+        angle_tolerance= 0.2,
+        kp= 40,
+        kd= 0.5,
+        warmup_timesteps= 50,
+        policy=policy,
+        device= model_device,
+    )
+    obs = unitree_real_env.get_obs()
+    actions = model.act(obs["student_observations"])
 
     rate = rospy.Rate(1 / duration)
     with torch.no_grad():
