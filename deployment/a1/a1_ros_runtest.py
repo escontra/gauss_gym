@@ -317,7 +317,7 @@ def main(args):
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
             actions = policy(obs['student_observations'])
-            actions = torch.zeros_like(actions)
+            # actions = torch.zeros_like(actions)
             # act_dist = model.act(obs["student_observations"])
             # actions = act_dist.loc
             # actions = policy(obs,
