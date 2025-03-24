@@ -225,8 +225,10 @@ class UnitreeA1Real:
         if control_type == "P":
             p_limits_low = (-self.torque_limits) + self.d_gains*self.dof_vel
             p_limits_high = (self.torque_limits) + self.d_gains*self.dof_vel
-            actions_low = (p_limits_low/self.p_gains) - self.default_dof_pos + self.dof_pos
-            actions_high = (p_limits_high/self.p_gains) - self.default_dof_pos + self.dof_pos
+            # actions_low = (p_limits_low/self.p_gains) - self.default_dof_pos + self.dof_pos
+            # actions_high = (p_limits_high/self.p_gains) - self.default_dof_pos + self.dof_pos
+            actions_low = (p_limits_low/self.p_gains) + self.dof_pos
+            actions_high = (p_limits_high/self.p_gains) + self.dof_pos
         else:
             raise NotImplementedError
 
