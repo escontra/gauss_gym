@@ -304,7 +304,7 @@ def main(args):
         angle_tolerance= 0.2,
         kp= 40,
         kd= 0.5,
-        warmup_timesteps= 100,
+        warmup_timesteps= 50,
         policy=policy,
         device= model_device,
     )
