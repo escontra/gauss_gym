@@ -145,7 +145,7 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
             kd= kd,
         )
         if policy is not None:
-            actions = policy(env.get_obs())
+            actions = policy(env.get_obs()['student_observations'])
             print("actions:", actions)
         ros_rate.sleep()
         standup_timestep_i += 1
