@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
+from typing import Dict, List, Optional
 from legged_gym.rl.modules import resnet
 from legged_gym.rl.modules.actor_critic import get_activation
 
@@ -123,7 +124,7 @@ class ActorCriticRecurrent(torch.nn.Module):
       # self.cnn_c = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], num_classes=IMAGE_EMBEDDING_DIM)
       self.cnn_c = resnet.NatureCNN(3, IMAGE_EMBEDDING_DIM)
     else:
-      self.cnn_c = None
+      self.cnn_c = nn.Identity()
 
     self.memory_a = Memory(latent_a_dim, type='lstm', num_layers=1, hidden_size=256)
     actor_layers = [
@@ -142,13 +143,13 @@ class ActorCriticRecurrent(torch.nn.Module):
     if self.cnn_keys_a:
       self.cnn_a = resnet.NatureCNN(3, IMAGE_EMBEDDING_DIM)
     else:
-      self.cnn_a = None
+      self.cnn_a = nn.Identity()
 
     self.logstd = torch.nn.parameter.Parameter(
       torch.full((1, num_act), fill_value=np.log(init_std)), requires_grad=True
     )
 
-  def process_obs(self, obs, mlp_keys, cnn_keys, cnn_model):
+  def process_obs(self, obs: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], cnn_model: nn.Module):
 
     features = torch.cat([obs[k] for k in mlp_keys], dim=-1)
     if cnn_keys:

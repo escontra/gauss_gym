@@ -2,19 +2,19 @@ import os
 import glob
 import yaml
 import numpy as np
+from typing import Dict, List
 import random
 import time
 import torch
-import torch.nn.functional as F
-
-from torch.utils.tensorboard import SummaryWriter
+import pickle
 import wandb
+import torch.nn.functional as F
+import torch.utils._pytree as pytree
+from torch.utils.tensorboard import SummaryWriter
+
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-import torch.utils._pytree as pytree
-import time
 from legged_gym.utils.helpers import class_to_dict
-import pickle
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -546,14 +546,54 @@ class Runner:
   def play(self):
     obs, _ = self.env.reset()
     obs = self.to_device(obs)
+
+    memory_module = self.model.memory_a
+    actor = self.model.actor
+    mlp_keys = self.model.mlp_keys_a
+    cnn_keys = self.model.cnn_keys_a
+    cnn_model = self.model.cnn_a
+
+    @torch.jit.script
+    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
+        features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+        if cnn_keys:
+          cnn_features = []
+          for k in cnn_keys:
+            cnn_obs = observations[k]
+            if cnn_obs.shape[-1] in [1, 3]:
+              cnn_obs = permute_cnn_obs(cnn_obs)
+            if cnn_obs.dtype == torch.uint8:
+              cnn_obs = cnn_obs.float() / 255.0
+
+            orig_batch_size = cnn_obs.shape[0]
+            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
+            cnn_feat = cnn_model(cnn_obs)
+            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
+            cnn_features.append(cnn_feat)
+
+          cnn_features = torch.cat(cnn_features, dim=-1)
+          features = torch.cat([features, cnn_features], dim=-1)
+        input_a = memory_module(features, None, None)
+        actions = actor(input_a.squeeze(0))
+        return actions
+
+
     while True:
       with torch.no_grad():
         obs = self.filter_nans(obs)
-        dist = self.model.act(obs)
-        act = dist.loc
+        act = policy(obs, mlp_keys, cnn_keys)
         obs, _, _, _, _ = self.env.step(act)
         obs = self.to_device(obs)
 
   def interrupt_handler(self, signal, frame):
     print("\nInterrupt received, waiting for video to finish...")
     self.interrupt = True
+
+
+def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() == 5:
+        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
+    elif x.dim() == 4:
+        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+    else:
+        return x  # or raise an error if that's not expected

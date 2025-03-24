@@ -16,6 +16,7 @@ import yaml
 import pickle
 import glob
 
+from typing import Dict, List
 from a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
 
@@ -30,6 +31,14 @@ def handle_forward_depth(ros_msg, model, publisher, output_resolution, device):
     embedding = model(forward_depth_buf)
     ros_data = embedding.reshape(-1).cpu().numpy().astype(np.float32)
     publisher.publish(Float32MultiArray(data= ros_data.tolist()))
+
+def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() == 5:
+        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
+    elif x.dim() == 4:
+        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+    else:
+        return x  # or raise an error if that's not expected
 
 class StandOnlyModel(torch.nn.Module):
     def __init__(self, action_scale, dof_pos_scale, tolerance= 0.2, delta= 0.1):
@@ -264,30 +273,44 @@ def main(args):
     obs = unitree_real_env.get_obs()
     actions = model.act(obs["student_observations"])
 
-    # memory_module = model.memory_a
-    # actor_mlp = model.actor
+    memory_module = model.memory_a
+    actor = model.actor
+    mlp_keys = model.mlp_keys_a
+    cnn_keys = model.cnn_keys_a
+    cnn_model = model.cnn_a
 
-    # @torch.jit.script
-    # def policy(observations: torch.Tensor, obs_start: int, obs_stop: int, obs_shape: Tuple[int, int, int]):
-    #     visual_latent = visual_encoder(
-    #         observations[..., obs_start:obs_stop].reshape(-1, *obs_shape)
-    #     ).reshape(1, -1)
-    #     obs = torch.cat([
-    #         observations[..., :obs_start],
-    #         visual_latent,
-    #         observations[..., obs_stop:],
-    #     ], dim= -1)
-    #     recurrent_embedding = memory_module(obs)
-    #     actions = actor_mlp(recurrent_embedding.squeeze(0))
-    #     return actions
+    @torch.jit.script
+    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
+        features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+        if cnn_keys:
+          cnn_features = []
+          for k in cnn_keys:
+            cnn_obs = observations[k]
+            if cnn_obs.shape[-1] in [1, 3]:
+              cnn_obs = permute_cnn_obs(cnn_obs)
+            if cnn_obs.dtype == torch.uint8:
+              cnn_obs = cnn_obs.float() / 255.0
+
+            orig_batch_size = cnn_obs.shape[0]
+            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
+            cnn_feat = cnn_model(cnn_obs)
+            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
+            cnn_features.append(cnn_feat)
+
+          cnn_features = torch.cat(cnn_features, dim=-1)
+          features = torch.cat([features, cnn_features], dim=-1)
+        input_a = memory_module(features, None, None)
+        actions = actor(input_a.squeeze(0))
+        return actions
 
     rate = rospy.Rate(1 / duration)
     with torch.no_grad():
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            act_dist = model.act(obs["student_observations"])
-            actions = act_dist.loc
+            actions = policy(obs, mlp_keys, cnn_keys)
+            # act_dist = model.act(obs["student_observations"])
+            # actions = act_dist.loc
             # actions = policy(obs,
             #     obs_start= visual_obs_slice[0].start.item(),
             #     obs_stop= visual_obs_slice[0].stop.item(),
