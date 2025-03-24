@@ -317,7 +317,7 @@ def main(args):
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            actions = policy(obs, mlp_keys, cnn_keys)
+            actions = policy(obs)
             # act_dist = model.act(obs["student_observations"])
             # actions = act_dist.loc
             # actions = policy(obs,
