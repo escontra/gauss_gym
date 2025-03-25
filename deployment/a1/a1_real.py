@@ -101,7 +101,7 @@ class UnitreeA1Real:
             else:
                 self.extra_cfg["torque_limits"][:] = self.cfg["control"]["torque_limits"]
         self.command_buf = torch.zeros((self.num_envs, 3,), device= self.model_device, dtype= torch.float32) # zeros for initialization
-        self.actions = torch.zeros((1, 12), device= model_device, dtype= torch.float32)
+        self.actions = torch.zeros((1, 12), device=model_device, dtype= torch.float32)
 
         self.process_configs()
     
@@ -267,7 +267,7 @@ class UnitreeA1Real:
     def send_action(self, actions):
         """ The function that send commands to the real robot.
         """
-        self.actions = self.clip_action_before_scale(actions)
+        self.actions[:] = self.clip_action_before_scale(actions)
         if self.computer_clip_torque:
             robot_coordinates_action = self.clip_by_torque_limit(self.actions * self.action_scale) + self.default_dof_pos.unsqueeze(0)
         else:

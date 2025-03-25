@@ -326,8 +326,8 @@ def main(args):
             # )
             unitree_real_env.send_action(actions)
             # inference_duration = rospy.get_time() - inference_start_time
-            motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
-            rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
+            # motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
+            # rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
             rate.sleep()
             # if unitree_real_env.low_state_buffer.wirelessRemote.btn.components.L2 or unitree_real_env.low_state_buffer.wirelessRemote.btn.components.R2:
             #     unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
