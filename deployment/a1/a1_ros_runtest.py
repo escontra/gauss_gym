@@ -247,9 +247,6 @@ def main(args):
         #     ], dtype= torch.float32, device= model_device, requires_grad= False),
         # ),
     )
-    rate = rospy.Rate(1 / duration)
-    unitree_real_env.start_ros()
-    unitree_real_env.wait_untill_ros_working()
     model = getattr(models, train_config_dict["runner"]["policy_class_name"])(
       12,
       obs_group_sizes["student_observations"],
@@ -300,19 +297,19 @@ def main(args):
     import functools
     policy = functools.partial(_policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys)
 
-    standup_procedure(unitree_real_env, rate,
-        angle_tolerance= 0.2,
-        kp= 50,
-        kd= 1.0,
-        warmup_timesteps= 50,
-        policy=policy,
-        device= model_device,
-    )
-    obs = unitree_real_env.get_obs()
-    actions = model.act(obs["student_observations"])
-
+    unitree_real_env.start_ros()
+    unitree_real_env.wait_untill_ros_working()
     rate = rospy.Rate(1 / duration)
+
     with torch.no_grad():
+        standup_procedure(unitree_real_env, rate,
+            angle_tolerance= 0.2,
+            kp= 50,
+            kd= 1.0,
+            warmup_timesteps= 50,
+            policy=policy,
+            device= model_device,
+        )
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
