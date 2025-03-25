@@ -151,17 +151,17 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
 
     # TODO(aescontrela): Uncomment this when we find the remote.
     # rospy.loginfo("Robot stood up! press R1 on the remote control to continue ...")
-    # while not rospy.is_shutdown():
-    #     if env.low_state_buffer.wirelessRemote.btn.components.R1:
-    #         break
-    #     print(env.get_obs()["student_observations"]["projected_gravity"])
-    #     if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
-    #         env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
-    #         rospy.signal_shutdown("Controller send stop signal, exiting")
-    #         exit(0)
-    #     env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
-    #     ros_rate.sleep()
-    # rospy.loginfo("Robot standing up procedure finished!")
+    while not rospy.is_shutdown():
+        if env.low_state_buffer.wirelessRemote.btn.components.R1:
+            break
+        print(env.get_obs()["student_observations"]["projected_gravity"])
+        if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
+            env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
+            rospy.signal_shutdown("Controller send stop signal, exiting")
+            exit(0)
+        env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
+        ros_rate.sleep()
+    rospy.loginfo("Robot standing up procedure finished!")
 
 class SkilledA1Real(UnitreeA1Real):
     """ Some additional methods to help the execution of skill policy """
@@ -302,8 +302,8 @@ def main(args):
 
     standup_procedure(unitree_real_env, rate,
         angle_tolerance= 0.2,
-        kp= 40,
-        kd= 0.5,
+        kp= 50,
+        kd= 1.0,
         warmup_timesteps= 50,
         policy=policy,
         device= model_device,
@@ -316,8 +316,9 @@ def main(args):
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            actions = policy(obs['student_observations'])
-            actions = torch.zeros_like(actions)
+            # actions = policy(obs['student_observations'])
+            actions = torch.zeros((1, 12), device=model_device)
+            # actions = torch.zeros_like(actions)
             # act_dist = model.act(obs["student_observations"])
             # actions = act_dist.loc
             # actions = policy(obs,
@@ -330,9 +331,9 @@ def main(args):
             motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
             rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
             rate.sleep()
-            if unitree_real_env.low_state_buffer.wirelessRemote.btn.components.L2 or unitree_real_env.low_state_buffer.wirelessRemote.btn.components.R2:
-                unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
-                rospy.signal_shutdown("Controller send stop signal, exiting")
+            # if unitree_real_env.low_state_buffer.wirelessRemote.btn.components.L2 or unitree_real_env.low_state_buffer.wirelessRemote.btn.components.R2:
+            #     unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
+            #     rospy.signal_shutdown("Controller send stop signal, exiting")
     return
 
 
