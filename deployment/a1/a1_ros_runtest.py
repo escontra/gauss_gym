@@ -154,12 +154,13 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
     while not rospy.is_shutdown():
         if env.low_state_buffer.wirelessRemote.btn.components.R1:
             break
-        print(env.get_obs()["student_observations"]["projected_gravity"])
         if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
             env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
             rospy.signal_shutdown("Controller send stop signal, exiting")
             exit(0)
         env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
+        if policy is not None:
+            _ = policy(env.get_obs()['student_observations'])
         ros_rate.sleep()
     rospy.loginfo("Robot standing up procedure finished!")
 
