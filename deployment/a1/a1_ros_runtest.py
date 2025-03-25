@@ -151,17 +151,17 @@ def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
 
     # TODO(aescontrela): Uncomment this when we find the remote.
     # rospy.loginfo("Robot stood up! press R1 on the remote control to continue ...")
-    while not rospy.is_shutdown():
-        if env.low_state_buffer.wirelessRemote.btn.components.R1:
-            break
-        if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
-            env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
-            rospy.signal_shutdown("Controller send stop signal, exiting")
-            exit(0)
-        env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
-        if policy is not None:
-            _ = policy(env.get_obs()['student_observations'])
-        ros_rate.sleep()
+    # while not rospy.is_shutdown():
+    #     if env.low_state_buffer.wirelessRemote.btn.components.R1:
+    #         break
+    #     if env.low_state_buffer.wirelessRemote.btn.components.L2 or env.low_state_buffer.wirelessRemote.btn.components.R2:
+    #         env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
+    #         rospy.signal_shutdown("Controller send stop signal, exiting")
+    #         exit(0)
+    #     env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
+    #     if policy is not None:
+    #         _ = policy(env.get_obs()['student_observations'])
+    #     ros_rate.sleep()
     rospy.loginfo("Robot standing up procedure finished!")
 
 class SkilledA1Real(UnitreeA1Real):
@@ -314,8 +314,8 @@ def main(args):
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            # actions = policy(obs['student_observations'])
-            actions = torch.zeros((1, 12), device=model_device)
+            actions = policy(obs['student_observations'])
+            # actions = torch.zeros((1, 12), device=model_device)
             # actions = torch.zeros_like(actions)
             # act_dist = model.act(obs["student_observations"])
             # actions = act_dist.loc
