@@ -259,11 +259,12 @@ def main(args):
       glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),
       key=os.path.getmtime,
     )[-1]
+    print(f'Loading model from {model_path}')
     model_dict = torch.load(
       model_path, map_location=model_device,
       # weights_only=True
     )
-    model.load_state_dict(model_dict["model"], strict=False)
+    model.load_state_dict(model_dict["model"], strict=True)
 
     # Jitted policy.
     memory_module = model.memory_a
