@@ -112,6 +112,7 @@ class LeggedRobotCfg(BaseConfig):
         file = ""
         name = "legged_robot"  # actor name
         camera_link_name = "None"
+        base_link_name = "base"
         foot_name = "None" # name of the feet bodies, used to index body state and contact force tensors
         penalize_contacts_on = []
         terminate_after_contacts_on = []
@@ -146,6 +147,16 @@ class LeggedRobotCfg(BaseConfig):
         push_robots = True
         push_interval_s = 15
         max_push_vel_xy = 1.
+        randomize_dof_damping = False
+        dof_damping_range = (0.0, 0.01)
+        randomize_dof_friction = False
+        dof_friction_range = (0.0, 0.2)
+        randomize_armature = False
+        armature_range = (0.0, 0.01)
+        randomize_foot_compliance = False
+        foot_compliance_range = (0.0, 1e-4)
+        randomize_foot_restitution = False
+        foot_restitution_range = (0.2, 1.0)
 
     class rewards:
         class scales:
@@ -175,26 +186,9 @@ class LeggedRobotCfg(BaseConfig):
         terminate_height = 0.0
 
     class normalization:
-        class obs_scales:
-            lin_vel = 2.0
-            ang_vel = 0.25
-            dof_pos = 1.0
-            dof_vel = 0.05
-            height_measurements = 5.0
         clip_observations = 100.
         clip_actions = 100.
         clip_actions_method = "hard"
-
-    class noise:
-        add_noise = True
-        noise_level = 1.0 # scales other values
-        class noise_scales:
-            dof_pos = 0.01
-            dof_vel = 1.5
-            lin_vel = 0.1
-            ang_vel = 0.2
-            gravity = 0.05
-            height_measurements = 0.1
 
     # viewer camera:
     class viewer:
@@ -259,9 +253,8 @@ class LeggedRobotCfgPPO(BaseConfig):
         max_iterations = 1500 # number of policy updates
 
         # logging
-        save_interval = 50 # check for potential saves every this many iterations
-        experiment_name = 'test'
-        run_name = ''
+        save_interval = 1 # check for potential saves every this many iterations
+        run_name = None
         # load and resume
         resume = False
         load_run = -1 # -1 = last run

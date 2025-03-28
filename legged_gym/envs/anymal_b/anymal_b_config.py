@@ -41,6 +41,4 @@ class AnymalBRoughCfg( AnymalCRoughCfg ):
 
 class AnymalBRoughCfgPPO( AnymalCRoughCfgPPO ):
     class runner ( AnymalCRoughCfgPPO.runner):
-        run_name = ''
-        experiment_name = 'rough_anymal_b'
         load_run = -1

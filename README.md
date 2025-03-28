@@ -41,11 +41,10 @@
     -  To run on CPU add following arguments: `--sim_device=cpu`, `--rl_device=cpu` (sim on CPU and rl on GPU is possible).
     -  To run headless (no rendering) add `--headless`.
     - **Important**: To improve performance, once the training starts press `v` to stop the rendering. You can then enable it later to check the progress.
-    - The trained policy is saved in `issacgym_anymal/logs/<experiment_name>/<date_time>_<run_name>/model_<iteration>.pt`. Where `<experiment_name>` and `<run_name>` are defined in the train config.
+    - The trained policy is saved in `issacgym_anymal/logs/<task>_<date_time>_<run_name>/model_<iteration>.pt`. Where `<run_name>` is defined in the train config.
     -  The following command line arguments override the values set in the config files:
      - --task TASK: Task name.
      - --resume:   Resume training from a checkpoint
-     - --experiment_name EXPERIMENT_NAME: Name of the experiment to run or load.
      - --run_name RUN_NAME:  Name of the run.
      - --load_run LOAD_RUN:   Name of the run to load when resume=True. If -1: will load the last run.
      - --checkpoint CHECKPOINT:  Saved model checkpoint number. If -1: will load the last checkpoint.
@@ -64,7 +63,6 @@ The base environment `legged_robot` implements a rough terrain locomotion task. 
 2. If adding a new robot:
     - Add the corresponding assets to `resources/`.
     - In `cfg` set the asset path, define body names, default_joint_positions and PD gains. Specify the desired `train_cfg` and the name of the environment (python class).
-    - In `train_cfg` set `experiment_name` and `run_name`
 3. (If needed) implement your environment in <your_env>.py, inherit from an existing environment, overwrite the desired functions and/or add your reward functions.
 4. Register your env in `isaacgym_anymal/envs/__init__.py`.
 5. Modify/Tune other parameters in your `cfg`, `cfg_train` as needed. To remove a reward set its scale to zero. Do not modify parameters of other envs!

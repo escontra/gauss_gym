@@ -1,6 +1,4 @@
 import os
-import glob
-import yaml
 import numpy as np
 from typing import Dict, List
 import random
@@ -10,12 +8,12 @@ import pickle
 import wandb
 import torch.nn.functional as F
 import torch.utils._pytree as pytree
+import pathlib
 from torch.utils.tensorboard import SummaryWriter
 
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils.helpers import class_to_dict
-
+from legged_gym.envs.base.legged_robot_config import LeggedRobotCfgPPO
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
   advantages = torch.zeros_like(rewards)
@@ -48,20 +46,27 @@ def surrogate_loss(
 
 
 class Recorder:
-  def __init__(self, env_cfg, cfg, obs_group_sizes):
+  def __init__(self, log_dir: pathlib.Path, env_cfg, cfg: LeggedRobotCfgPPO, obs_group_sizes):
+    self.env_cfg = env_cfg
     self.cfg = cfg
-    name = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-    self.dir = os.path.join("logs", name)
-    os.makedirs(self.dir)
-    self.model_dir = os.path.join(self.dir, "nn")
-    os.mkdir(self.model_dir)
-    self.writer = SummaryWriter(os.path.join(self.dir, "summaries"))
-    if self.cfg["runner"]["use_wandb"]:
+    self.log_dir = log_dir
+    self.obs_group_sizes = obs_group_sizes
+    self.initialized = False
+
+  def maybe_init(self):
+    if self.initialized:
+      return
+    print(f"Recording to: {self.log_dir}")
+    self.log_dir.mkdir(parents=True, exist_ok=True)
+    self.model_dir = self.log_dir / "nn"
+    self.model_dir.mkdir(parents=True, exist_ok=True)
+    self.writer = SummaryWriter(self.log_dir / "summaries")
+    if self.cfg.runner.use_wandb:
       wandb.init(
-        project=self.cfg["basic"]["task"],
-        dir=self.dir,
-        name=name,
-        notes=self.cfg["basic"]["description"],
+        project=self.cfg.task_name,
+        dir=self.log_dir,
+        name=self.log_dir.name,
+        notes=self.cfg.description,
         config=self.cfg,
       )
 
@@ -70,16 +75,18 @@ class Recorder:
     self.last_episode["steps"] = []
     self.episode_steps = None
 
-    with open(os.path.join(self.dir, "train_config.yaml"), "w") as file:
-      yaml.dump(self.cfg, file)
+    with open(self.log_dir / "train_config.pkl", "wb") as file:
+      pickle.dump(self.cfg, file)
 
-    with open(os.path.join(self.dir, "env_config.yaml"), "w") as file:
-      yaml.dump(env_cfg, file)
+    with open(self.log_dir / "env_config.pkl", "wb") as file:
+      pickle.dump(self.env_cfg, file)
 
-    with open(os.path.join(self.dir, "obs_group_sizes.pkl"), "wb") as file:
-      pickle.dump(obs_group_sizes, file)
+    with open(self.log_dir / "obs_group_sizes.pkl", "wb") as file:
+      pickle.dump(self.obs_group_sizes, file)
+    self.initialized = True
 
   def record_episode_statistics(self, done, ep_info, it, write_record=False):
+    self.maybe_init()
     if self.episode_steps is None:
       self.episode_steps = torch.zeros_like(done, dtype=int)
     else:
@@ -103,18 +110,20 @@ class Recorder:
         path = ("" if key == "steps" or key == "reward" else "episode/") + key
         value = self._mean(self.last_episode[key])
         self.writer.add_scalar(path, value, it)
-        if self.cfg["runner"]["use_wandb"]:
+        if self.cfg.runner.use_wandb:
           wandb.log({path: value}, step=it)
         self.last_episode[key].clear()
 
   def record_statistics(self, statistics, it):
+    self.maybe_init()
     for key, value in statistics.items():
       self.writer.add_scalar(key, float(value), it)
-      if self.cfg["runner"]["use_wandb"]:
+      if self.cfg.runner.use_wandb:
         wandb.log({key: float(value)}, step=it)
 
   def save(self, model_dict, it):
-    path = os.path.join(self.model_dir, "model_{}.pth".format(it))
+    self.maybe_init()
+    path = self.model_dir / f"model_{it}.pth"
     print("Saving model to {}".format(path))
     torch.save(model_dict, path)
 
@@ -214,7 +223,7 @@ class ExperienceBuffer:
 
 
 class Runner:
-  def __init__(self, env: vec_env.VecEnv, train_cfg, log_dir=None, device="cpu"):
+  def __init__(self, env: vec_env.VecEnv, train_cfg: LeggedRobotCfgPPO, log_dir: pathlib.Path, device="cpu"):
     self.test = True
     self.env = env
     self.device = device
@@ -222,28 +231,24 @@ class Runner:
     self.cfg = self.env.cfg
     self.train_cfg = train_cfg
     self._set_seed()
-    self.learning_rate = self.train_cfg["algorithm"]["learning_rate"]
+    self.learning_rate = self.train_cfg.algorithm.learning_rate
     self.obs_group_sizes = {
       'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
       'student_observations': self.env.obs_group_size_per_name("student_observations"),
     }
-    self.model = getattr(models, self.train_cfg["runner"]["policy_class_name"])(
+    self.model = getattr(models, self.train_cfg.runner.policy_class_name)(
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
-      self.train_cfg["policy"]["init_noise_std"],
-      self.train_cfg["policy"]["mu_activation"],
+      self.train_cfg.policy.init_noise_std,
+      self.train_cfg.policy.mu_activation,
     ).to(self.device)
     self.optimizer = torch.optim.Adam(
       self.model.parameters(), lr=self.learning_rate
     )
-    # self.load(self.train_cfg["runner"]["load_run"])
-    from pathlib import Path
-
-    self.load(str(Path(self.log_dir).parent))
 
     self.buffer = ExperienceBuffer(
-      self.train_cfg["runner"]["num_steps_per_env"],
+      self.train_cfg.runner.num_steps_per_env,
       self.env.num_envs,
       self.device,
     )
@@ -260,38 +265,41 @@ class Runner:
     self.buffer.add_buffer("time_outs", (), dtype=bool)
 
   def _set_seed(self):
-    if self.train_cfg["seed"] == -1:
-      self.train_cfg["seed"] = np.random.randint(0, 10000)
-    print("Setting seed: {}".format(self.train_cfg["seed"]))
+    if self.train_cfg.seed == -1:
+      self.train_cfg.seed = np.random.randint(0, 10000)
+    print("Setting seed: {}".format(self.train_cfg.seed))
 
-    random.seed(self.train_cfg["seed"])
-    np.random.seed(self.train_cfg["seed"])
-    torch.manual_seed(self.train_cfg["seed"])
-    os.environ["PYTHONHASHSEED"] = str(self.train_cfg["seed"])
-    torch.cuda.manual_seed(self.train_cfg["seed"])
-    torch.cuda.manual_seed_all(self.train_cfg["seed"])
+    random.seed(self.train_cfg.seed)
+    np.random.seed(self.train_cfg.seed)
+    torch.manual_seed(self.train_cfg.seed)
+    os.environ["PYTHONHASHSEED"] = str(self.train_cfg.seed)
+    torch.cuda.manual_seed(self.train_cfg.seed)
+    torch.cuda.manual_seed_all(self.train_cfg.seed)
 
-  def load(self, resume_path):
-    load_run = self.train_cfg["runner"]["load_run"]
-    checkpoint = self.train_cfg["runner"]["checkpoint"]
-    if (load_run == "-1") or (load_run == -1):
+  def load(self, resume_root: pathlib.Path):
+    if not self.train_cfg.runner.resume:
       return
-      # resume_path = os.path.join(resume_path, sorted(os.listdir(resume_path))[-1])
-      # resume_path = None
-    else:
-      resume_path = os.path.join(resume_path, load_run)
-    print(f"Loading checkpoint from: {resume_path}")
-    # if not self.cfg["basic"]["checkpoint"]:
-    #     return
-    if (checkpoint == "-1") or (checkpoint == -1):
-      model_path = sorted(
-        glob.glob(os.path.join(resume_path, "nn", "**/*.pth"), recursive=True),
-        key=os.path.getmtime,
+
+    load_run = self.train_cfg.runner.load_run
+    checkpoint = self.train_cfg.runner.checkpoint
+    if (load_run == "-1") or (load_run == -1):
+      resume_path = sorted(
+        [item for item in resume_root.iterdir() if item.is_dir()],
+        key=lambda path: path.stat().st_mtime,
       )[-1]
     else:
-      model_path = os.path.join(
-        resume_path, "nn", "model_{}.pth".format(checkpoint)
-      )
+      resume_path = resume_root / load_run
+    print(f"Loading checkpoint from: {resume_path}")
+    print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}')
+    print(f'\tLoading checkpoint: {checkpoint}')
+    if (checkpoint == "-1") or (checkpoint == -1):
+      model_path = sorted(
+        (resume_path / "nn").glob("*.pth"),
+        key=lambda path: path.stat().st_mtime,
+      )[-1]
+    else:
+      model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
+    print(f'\tLoading model weights from: {model_path}')
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
     )
@@ -317,15 +325,15 @@ class Runner:
     return obs
 
   def learn(self, num_learning_iterations, init_at_random_ep_len=False):
-    self.recorder = Recorder(class_to_dict(self.cfg), self.train_cfg, self.obs_group_sizes)
+    self.recorder = Recorder(self.log_dir, self.cfg, self.train_cfg, self.obs_group_sizes)
     obs, privileged_obs = self.env.reset()
     obs = self.to_device(obs)
     privileged_obs = self.to_device(privileged_obs)
 
-    if "clip_min_std" in self.train_cfg["algorithm"]:
+    if hasattr(self.train_cfg.algorithm, "clip_min_std"):
       # clip_min_std = torch.tensor(self.train_cfg["algorithm"]["clip_min_std"], device=self.device) if isinstance(self.train_cfg["algorithm"]["clip_min_std"], (tuple, list)) else self.train_cfg["algorithm"]["clip_min_std"]
       clip_min_std = torch.tensor(
-        self.train_cfg["algorithm"]["clip_min_std"], device=self.device
+        self.train_cfg.algorithm.clip_min_std, device=self.device
       )
     else:
       clip_min_std = None
@@ -340,7 +348,7 @@ class Runner:
     for it in range(num_learning_iterations):
       start = time.time()
       # within horizon_length, env.step() is called with same act
-      for n in range(self.train_cfg["runner"]["num_steps_per_env"]):
+      for n in range(self.train_cfg.runner.num_steps_per_env):
         self.buffer.update_data("obses", n, obs)
         self.buffer.update_data("privileged_obses", n, privileged_obs)
         if self.model.is_recurrent:
@@ -374,7 +382,7 @@ class Runner:
           done,
           ep_info,
           it,
-          n == (self.train_cfg["runner"]["num_steps_per_env"] - 1),
+          n == (self.train_cfg.runner.num_steps_per_env - 1),
         )
 
       all_obses = self.buffer["obses"]
@@ -433,7 +441,7 @@ class Runner:
       mean_actor_loss = 0
       mean_bound_loss = 0
       mean_entropy = 0
-      for n in range(self.train_cfg["algorithm"]["num_learning_epochs"]):
+      for n in range(self.train_cfg.algorithm.num_learning_epochs):
         values = self.model.est_value(
           all_privileged_obses, masks=traj_masks, hidden_states=hid_c
         )
@@ -447,8 +455,8 @@ class Runner:
             self.buffer["dones"] | self.buffer["time_outs"],
             values,
             last_values,
-            self.train_cfg["algorithm"]["gamma"],
-            self.train_cfg["algorithm"]["lam"],
+            self.train_cfg.algorithm.gamma,
+            self.train_cfg.algorithm.lam,
           )
           returns = values + advantages
           advantages = (advantages - advantages.mean()) / (
@@ -472,8 +480,8 @@ class Runner:
         loss = (
           value_loss
           + actor_loss
-          + self.train_cfg["algorithm"]["bound_coef"] * bound_loss
-          + self.train_cfg["algorithm"]["entropy_coef"] * entropy.mean()
+          + self.train_cfg.algorithm.bound_coef * bound_loss
+          + self.train_cfg.algorithm.entropy_coef * entropy.mean()
         )
         self.optimizer.zero_grad()
         loss.backward()
@@ -493,9 +501,9 @@ class Runner:
             axis=-1,
           )
           kl_mean = torch.mean(kl)
-          if kl_mean > self.train_cfg["algorithm"]["desired_kl"] * 2:
+          if kl_mean > self.train_cfg.algorithm.desired_kl * 2:
             self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-          elif kl_mean < self.train_cfg["algorithm"]["desired_kl"] / 2:
+          elif kl_mean < self.train_cfg.algorithm.desired_kl / 2:
             self.learning_rate = min(1e-2, self.learning_rate * 1.5)
           for param_group in self.optimizer.param_groups:
             param_group["lr"] = self.learning_rate
@@ -504,10 +512,10 @@ class Runner:
         mean_actor_loss += actor_loss.item()
         mean_bound_loss += bound_loss.item()
         mean_entropy += entropy.mean()
-      mean_value_loss /= self.train_cfg["algorithm"]["num_learning_epochs"]
-      mean_actor_loss /= self.train_cfg["algorithm"]["num_learning_epochs"]
-      mean_bound_loss /= self.train_cfg["algorithm"]["num_learning_epochs"]
-      mean_entropy /= self.train_cfg["algorithm"]["num_learning_epochs"]
+      mean_value_loss /= self.train_cfg.algorithm.num_learning_epochs
+      mean_actor_loss /= self.train_cfg.algorithm.num_learning_epochs
+      mean_bound_loss /= self.train_cfg.algorithm.num_learning_epochs
+      mean_entropy /= self.train_cfg.algorithm.num_learning_epochs
       self.recorder.record_statistics(
         {
           "value_loss": mean_value_loss,
@@ -527,7 +535,7 @@ class Runner:
       if clip_min_std is not None:
         self.model.clip_std(min=clip_min_std)
 
-      if (it + 1) % self.train_cfg["runner"]["save_interval"] == 0:
+      if (it + 1) % self.train_cfg.runner.save_interval == 0:
         self.recorder.save(
           {
             "model": self.model.state_dict(),

@@ -78,6 +78,7 @@ class T1RoughCfg( LeggedRobotCfg ):
         name = "t1"
         camera_link_name = "H2"
         foot_name = 'foot_link'
+        base_link_name = "Trunk"
         penalize_contacts_on = ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
         terminate_after_contacts_on = []
         # terminate_after_contacts_on = ['Waist']
@@ -177,8 +178,6 @@ class T1RoughCfgPPO( LeggedRobotCfgPPO ):
     class runner( LeggedRobotCfgPPO.runner ):
         policy_class_name = 'ActorCriticRecurrent'
         algorithm_class_name = 'PPO'
-        run_name = ''
-        experiment_name = ''
         load_run = -1
         max_iterations = 10000
 

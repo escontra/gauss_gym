@@ -262,11 +262,6 @@ class GaussianSceneManager:
 
     self.renderer = GaussianSplattingRenderer(self._env, self)
 
-    self.mesh_params = gymapi.TriangleMeshParams()
-    self.mesh_params.static_friction = self._env.cfg.terrain.static_friction
-    self.mesh_params.dynamic_friction = self._env.cfg.terrain.dynamic_friction
-    self.mesh_params.restitution = self._env.cfg.terrain.restitution
-
     self.command_scale = torch.zeros(
       self._env.num_envs, 1, device=self._env.device, dtype=torch.float32
     )
@@ -324,13 +319,17 @@ class GaussianSceneManager:
 
       mesh = self._terrain.get_mesh(scene, mesh)
       vertices = env_origin[None] + mesh.vertices
-      self.mesh_params.nb_vertices = vertices.shape[0]
-      self.mesh_params.nb_triangles = mesh.triangles.shape[0]
+      mesh_params = gymapi.TriangleMeshParams()
+      mesh_params.static_friction = self._env.cfg.terrain.static_friction
+      mesh_params.dynamic_friction = self._env.cfg.terrain.dynamic_friction
+      mesh_params.restitution = self._env.cfg.terrain.restitution
+      mesh_params.nb_vertices = vertices.shape[0]
+      mesh_params.nb_triangles = mesh.triangles.shape[0]
       self._env.gym.add_triangle_mesh(
         self._env.sim,
         vertices.flatten(order="C"),
         mesh.triangles.flatten(order="C"),
-        self.mesh_params,
+        mesh_params,
       )
 
       vertices_offset = (

@@ -29,7 +29,7 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 import os
-from datetime import datetime
+import time
 from typing import Tuple
 import torch
 import numpy as np
@@ -40,6 +40,7 @@ from legged_gym.rl.runner import Runner
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
 from .helpers import get_args, update_cfg_from_args, class_to_dict, get_load_path, set_seed, parse_sim_params
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
+import pathlib
 
 class TaskRegistry():
     def __init__(self):
@@ -90,6 +91,7 @@ class TaskRegistry():
             env_cfg, _ = self.get_cfgs(name)
         # override cfg from args (if specified)
         env_cfg, _ = update_cfg_from_args(env_cfg, None, args)
+        env_cfg.task_name = name
         set_seed(env_cfg.seed)
         # parse sim params (convert to dict first)
         sim_params = {"sim": class_to_dict(env_cfg.sim)}
@@ -110,7 +112,7 @@ class TaskRegistry():
             args (Args, optional): Isaac Gym comand line arguments. If None get_args() will be called. Defaults to None.
             train_cfg (Dict, optional): Training config file. If None 'name' will be used to get the config file. Defaults to None.
             log_root (str, optional): Logging directory for Tensorboard. Set to 'None' to avoid logging (at test time for example). 
-                                      Logs will be saved in <log_root>/<date_time>_<run_name>. Defaults to "default"=<path_to_LEGGED_GYM>/logs/<experiment_name>.
+                                      Logs will be saved in <log_root>/<date_time>_<run_name>. Defaults to "default"=<path_to_LEGGED_GYM>/logs.
 
         Raises:
             ValueError: Error if neither 'name' or 'train_cfg' are provided
@@ -135,30 +137,22 @@ class TaskRegistry():
         # override cfg from args (if specified)
         _, train_cfg = update_cfg_from_args(None, train_cfg, args)
 
+        new_run_name = f'{name}_{time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())}'
+        if train_cfg.runner.run_name is not None:
+            new_run_name += '_' + train_cfg.runner.run_name
+
         if log_root=="default":
-            log_root = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name)
-            log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
+            log_root = pathlib.Path(LEGGED_GYM_ROOT_DIR) / 'logs'
+            log_dir = pathlib.Path(log_root) / new_run_name
         elif log_root is None:
             log_dir = None
         else:
-            log_dir = os.path.join(log_root, datetime.now().strftime('%b%d_%H-%M-%S') + '_' + train_cfg.runner.run_name)
+            log_dir = pathlib.Path(log_root) / new_run_name
         
-        train_cfg_dict = class_to_dict(train_cfg)
-        
-        print('train_cfg_dict', train_cfg_dict)
-        
-        runner = eval(train_cfg.runner_class_name)(env, train_cfg_dict, log_dir, device=args.rl_device)
-        # TODO make this configurable to switch to PPO
-        # runner = StudentTeacherRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
-        # runner = OnPolicyRunner(env, train_cfg_dict, log_dir, device=args.rl_device)
-        
+        runner = eval(train_cfg.runner_class_name)(env, train_cfg, log_dir, device=args.rl_device)
         
         #save resume path before creating a new log_dir
-        resume = train_cfg.runner.resume
-        if resume:
-            # load previously trained model
-            # resume_path = get_load_path(log_root, load_run=train_cfg.runner.load_run, checkpoint=train_cfg.runner.checkpoint)
-            # print(f"Loading model from: {resume_path}")
+        if train_cfg.runner.resume:
             runner.load(log_root)
         return runner, train_cfg
 

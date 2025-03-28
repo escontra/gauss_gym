@@ -32,6 +32,25 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 from legged_gym import LEGGED_GYM_ROOT_DIR
 import math
 
+anymal_c_action_scale = 0.5
+anymal_c_default_joint_angles = { # = target angles [rad] when action = 0.0
+    "LF_HAA": 0.0,
+    "LH_HAA": 0.0,
+    "RF_HAA": -0.0,
+    "RH_HAA": -0.0,
+
+    "LF_HFE": 0.4,
+    "LH_HFE": -0.4,
+    "RF_HFE": 0.4,
+    "RH_HFE": -0.4,
+
+    "LF_KFE": -0.8,
+    "LH_KFE": 0.8,
+    "RF_KFE": -0.8,
+    "RH_KFE": 0.8,
+}
+
+
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         num_envs = 4096
@@ -46,8 +65,8 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
         cam_rpy_offset = [math.pi / 2, math.pi / 2, math.pi] # Local frame[roll, pitch, yaw] radians.
 
         # Distance / angle from camera trajectory based termination conditions.
-        max_traj_pos_distance = 0.5
-        max_traj_yaw_distance_rad = 0.75
+        max_traj_pos_distance = 1.0
+        max_traj_yaw_distance_rad = 1.0
 
     class terrain( LeggedRobotCfg.terrain ):
         mesh_type = 'gaussian'
@@ -61,38 +80,26 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
 
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0.0, 0.0, 0.7] # x,y,z [m]
-        default_joint_angles = { # = target angles [rad] when action = 0.0
-            "LF_HAA": 0.0,
-            "LH_HAA": 0.0,
-            "RF_HAA": -0.0,
-            "RH_HAA": -0.0,
-
-            "LF_HFE": 0.4,
-            "LH_HFE": -0.4,
-            "RF_HFE": 0.4,
-            "RH_HFE": -0.4,
-
-            "LF_KFE": -0.8,
-            "LH_KFE": 0.8,
-            "RF_KFE": -0.8,
-            "RH_KFE": 0.8,
-        }
+        default_joint_angles = anymal_c_default_joint_angles
 
     class control( LeggedRobotCfg.control ):
         # PD Drive parameters:
         stiffness = {'HAA': 80., 'HFE': 80., 'KFE': 80.}  # [N*m/rad]
         damping = {'HAA': 2., 'HFE': 2., 'KFE': 2.}     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.5
+        action_scale = anymal_c_action_scale
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
         use_actuator_network = True
         actuator_net_file = "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+        computer_clip_torque = False
+        motor_clip_torque = False
 
     class asset( LeggedRobotCfg.asset ):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/anymal_c/urdf/anymal_c.urdf"
         name = "anymal_c"
         camera_link_name = "base"
+        base_link_name = "base"
         foot_name = "FOOT"
         penalize_contacts_on = ["SHANK", "THIGH"]
         terminate_after_contacts_on = ["base"]
@@ -104,6 +111,22 @@ class AnymalCRoughCfg( LeggedRobotCfg ):
     class domain_rand( LeggedRobotCfg.domain_rand):
         randomize_base_mass = True
         added_mass_range = [-5., 5.]
+        randomize_motor = True
+        leg_motor_strength_range = [0.9, 1.1]
+        randomize_com = True
+        class com_range:
+            x = [-0.05, 0.15]
+            y = [-0.1, 0.1]
+            z = [-0.05, 0.05]
+        push_robots = True
+        push_interval_s = 10.
+        max_push_vel_xy = 1.
+        randomize_friction = True
+        friction_range = [0.5, 1.25]
+
+    class normalization( LeggedRobotCfg.normalization ):
+        # clip_actions = 1.
+        clip_actions_method = None # "hard"
   
     class rewards( LeggedRobotCfg.rewards ):
         base_height_target = 0.5
@@ -126,6 +149,7 @@ class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
 
     class policy( LeggedRobotCfgPPO.policy ):
         init_noise_std = 0.5
+        mu_activation = None
 
     runner_class_name = 'Runner'
     # runner_class_name = 'StudentTeacherRunner'
@@ -138,8 +162,6 @@ class AnymalCRoughCfgPPO( LeggedRobotCfgPPO ):
         # algorithm_class_name = 'PPO'
         teacher_iterations = 250
         student_teacher_mix_iterations = 750
-        run_name = ''
-        experiment_name = ''
         load_run = -1
         max_iterations = 10000
     # class algorithm:
