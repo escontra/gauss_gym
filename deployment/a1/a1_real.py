@@ -7,6 +7,7 @@ import os
 import os.path as osp
 from collections import OrderedDict
 from typing import Tuple
+import pygame
 
 import rospy
 from unitree_legged_msgs.msg import LowState
@@ -37,6 +38,7 @@ class UnitreeA1Real:
             lin_vel_deadband= 0.1,
             ang_vel_deadband= 0.1,
             move_by_wireless_remote= False, # if True, command will not listen to move_cmd_subscriber, but wireless remote.
+            move_by_gamepad=True, # if True, command will not listen to move_cmd_subscriber, but gamepad.
             cfg= dict(),
             extra_cfg= dict(),
             model_device= torch.device("cpu"),
@@ -64,6 +66,8 @@ class UnitreeA1Real:
         self.lin_vel_deadband = lin_vel_deadband
         self.ang_vel_deadband = ang_vel_deadband
         self.move_by_wireless_remote = move_by_wireless_remote
+        self.move_by_gamepad = move_by_gamepad
+        assert not (self.move_by_wireless_remote and self.move_by_gamepad), "Cannot move by both wireless remote and gamepad at the same time."
         self.cfg = cfg
         self.extra_cfg = dict(
             torque_limits= torch.tensor([33.5] * 12, dtype= torch.float32, device= self.model_device, requires_grad= False), # Nm
@@ -104,6 +108,47 @@ class UnitreeA1Real:
         self.actions = torch.zeros((1, 12), device=model_device, dtype= torch.float32)
 
         self.process_configs()
+
+        if self.move_by_gamepad:
+            self.vel_x = 0.0
+            self.vel_y = 0.0
+            self.ang_vel = 0.0
+            self.quit_pressed = False
+            self.start_pressed = False
+            self._initialize_gamepad()
+
+    def _initialize_gamepad(self):
+      # Initialize Pygame and its joystick module
+      pygame.init()
+      pygame.joystick.init()
+
+      # Check for joystick(s)
+      joystick_count = pygame.joystick.get_count()
+      print(f"Number of joysticks: {joystick_count}")
+      if joystick_count == 0:
+          raise ValueError("No joystick detected.")
+      else:
+          # Initialize the first joystick
+          self.joystick = pygame.joystick.Joystick(0)
+          self.joystick.init()
+          print("Joystick initialized:", self.joystick.get_name())
+
+    def _poll_gamepad(self):
+        for event in pygame.event.get():
+            # Handle axis motion events
+            if event.type == pygame.JOYAXISMOTION:
+                if event.axis == 0:
+                  self.vel_y = event.value
+                elif event.axis == 1:
+                  self.vel_x = event.value
+                elif event.axis == 3:
+                  self.ang_vel = event.value
+            elif event.type == pygame.JOYBUTTONDOWN:
+                if event.button == 0:
+                  self.start_pressed = True
+                elif event.button == 1:
+                  self.quit_pressed = True
+        print(f"Vel x: {self.vel_x}, Vel y: {self.vel_y}, Ang vel: {self.ang_vel}")
     
     def start_ros(self):
         # initialze several buffers so that the system works even without message update.
@@ -240,6 +285,8 @@ class UnitreeA1Real:
     def compute_observation(self):
         """Use the updated low_state_buffer to compute observation vector."""
         assert hasattr(self, "legs_cmd_publisher"), "start_ros() not called, ROS handlers are not initialized!"
+        if self.move_by_gamepad:
+            self._poll_gamepad()
         obs_dict = {}
         for group in self.observation_groups:
           if "teacher" in group.name:

@@ -237,6 +237,7 @@ def main(args):
         forward_depth_topic=None,
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
+        move_by_gamepad=True,
         # skill_vel_range= env_config["commands"]["ranges"]["lin_vel_x"],
         model_device= model_device,
         # extra_cfg= dict(
