@@ -92,25 +92,28 @@ class Recorder:
       pickle.dump(self.obs_group_sizes, file)
     self.initialized = True
 
-  def record_episode_statistics(self, done, ep_info, it, write_record=False):
+  def record_episode_statistics(self, done, ep_info, it, discount_factor_dict={}, write_record=False):
     self.maybe_init()
     if self.episode_steps is None:
       self.episode_steps = torch.zeros_like(done, dtype=int)
     else:
       self.episode_steps += 1
-    for val in self.episode_steps[done]:
-      self.last_episode["steps"].append(val.item())
-    self.episode_steps[done] = 0
 
     for key, value in ep_info.items():
       if self.episode_statistics.get(key) is None:
         self.episode_statistics[key] = torch.zeros_like(value)
-      self.episode_statistics[key] += value
+      discount_factor = discount_factor_dict.get(key, 1.0)
+      discount_factor = discount_factor ** self.episode_steps
+      self.episode_statistics[key] += value * discount_factor
       if self.last_episode.get(key) is None:
         self.last_episode[key] = []
       for done_value in self.episode_statistics[key][done]:
         self.last_episode[key].append(done_value.item())
       self.episode_statistics[key][done] = 0
+
+    for val in self.episode_steps[done]:
+      self.last_episode["steps"].append(val.item())
+    self.episode_steps[done] = 0
 
     if write_record:
       for key in self.last_episode.keys():
@@ -364,7 +367,7 @@ class Runner:
           )
         with torch.no_grad():
           dist = self.model.act(obs)
-          _ = self.model.est_value(privileged_obs)
+          value = self.model.est_value(privileged_obs)
           act = dist.sample()
         obs, privileged_obs, rew, done, infos = self.env.step(act)
         obs, privileged_obs, rew, done = (
@@ -380,7 +383,12 @@ class Runner:
         self.buffer.update_data(
           "time_outs", n, infos["time_outs"].to(self.device)
         )
-        ep_info = {"reward": rew}
+        bootstrapped_rew = torch.where(done, 0., rew)
+        bootstrapped_rew = torch.where(infos["time_outs"], value, bootstrapped_rew)
+        ep_info = {
+          "reward": rew,
+          "return": bootstrapped_rew,
+        }
         self.recorder.record_statistics(
           {f"episode/{k}": v for k, v in infos["episode"].items()},
           it,
@@ -389,7 +397,8 @@ class Runner:
           done,
           ep_info,
           it,
-          n == (self.train_cfg.runner.num_steps_per_env - 1),
+          discount_factor_dict={"return": self.train_cfg.algorithm.gamma},
+          write_record=n == (self.train_cfg.runner.num_steps_per_env - 1),
         )
 
       all_obses = self.buffer["obses"]

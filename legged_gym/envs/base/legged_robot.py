@@ -110,21 +110,16 @@ class LeggedRobot(BaseTask):
         return actions_scaled_clipped
 
     def pre_physics_step(self, actions):
-        if isinstance(self.cfg.normalization.clip_actions, (tuple, list)):
-            self.cfg.normalization.clip_actions = torch.tensor(
-                self.cfg.normalization.clip_actions,
-                device= self.device,
-            )
-        if isinstance(getattr(self.cfg.normalization, "clip_actions_low", None), (tuple, list)):
-            self.cfg.normalization.clip_actions_low = torch.tensor(
-                self.cfg.normalization.clip_actions_low,
-                device= self.device
-            )
-        if isinstance(getattr(self.cfg.normalization, "clip_actions_high", None), (tuple, list)):
-            self.cfg.normalization.clip_actions_high = torch.tensor(
-                self.cfg.normalization.clip_actions_high,
-                device= self.device
-            )
+        clip_actions = self.cfg.normalization.clip_actions
+        if isinstance(clip_actions, (tuple, list)):
+            clip_actions = torch.tensor(clip_actions, device=self.device)
+
+        clip_actions_low = self.cfg.normalization.clip_actions_low
+        clip_actions_high = self.cfg.normalization.clip_actions_high
+        if isinstance(clip_actions_low, (tuple, list)):
+            clip_actions_low = torch.tensor(clip_actions_low, device=self.device)
+        if isinstance(clip_actions_high, (tuple, list)):
+            clip_actions_high = torch.tensor(clip_actions_high, device=self.device)
         if getattr(self.cfg.normalization, "clip_actions_delta", None) is not None:
             actions = torch.clip(
                 actions,
@@ -133,23 +128,20 @@ class LeggedRobot(BaseTask):
             )
         
         # some customized action clip methods to bound the action output
-        if getattr(self.cfg.normalization, "clip_actions_method", None) == "tanh":
-            clip_actions = self.cfg.normalization.clip_actions
+        if self.cfg.normalization.clip_actions_method == "tanh":
             actions = (torch.tanh(actions) * clip_actions).to(self.device)
-        elif getattr(self.cfg.normalization, "clip_actions_method", None) == "hard":
+        elif self.cfg.normalization.clip_actions_method == "hard":
             actions = torch.clip(
-                actions,
-                self.cfg.normalization.clip_actions_low,
-                self.cfg.normalization.clip_actions_high,
+                actions, clip_actions_low, clip_actions_high,
             )
         else:
-            clip_actions = self.cfg.normalization.clip_actions
             actions = torch.clip(actions, -clip_actions, clip_actions)
 
-        if isinstance(self.cfg.control.action_scale, (tuple, list)):
-            self.cfg.control.action_scale = torch.tensor(self.cfg.control.action_scale, device= self.sim_device)
+        action_scale = self.cfg.control.action_scale
+        if isinstance(action_scale, (tuple, list)):
+            action_scale = torch.tensor(action_scale, device= self.sim_device)
 
-        actions_scaled_clipped = actions * self.cfg.control.action_scale
+        actions_scaled_clipped = actions * action_scale
         if self.cfg.control.computer_clip_torque:
             if self.cfg.control.control_type == "P":
                 actions_scaled_clipped = self.clip_position_action_by_torque_limit(actions_scaled_clipped)
@@ -471,6 +463,8 @@ class LeggedRobot(BaseTask):
             forward = tu.quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+
+        self._update_physics_curriculum()
 
         # Resample sensor latency.
         resample_latency_env_ids = (self.episode_length_buf % int(self.cfg.observations.latency_resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
@@ -912,6 +906,32 @@ class LeggedRobot(BaseTask):
             self.gym.set_actor_rigid_body_properties(env_handle, actor_handle, body_props_randomized, recomputeInertia=True)
             self.envs.append(env_handle)
             self.actor_handles.append(actor_handle)
+
+    def _update_physics_curriculum(self):
+        if not self.cfg.domain_rand.apply_physics_curriculum:
+            return
+
+        if (self.common_step_counter - 1) % self.cfg.domain_rand.physics_curriculum_update_every == 0:
+            # Progressively increases joint friction range.
+            end = self.cfg.domain_rand.physics_curriculum_steps
+            progress = np.clip(self.common_step_counter / end, 0., 1.)
+            upper = self.cfg.domain_rand.dof_friction_range[1]
+            lower = self.cfg.domain_rand.dof_friction_range[0]
+            new_lower = lower + (upper - lower) * (1 - progress)
+            print(f'Physics Curriculum [{self.common_step_counter}] progress: {progress}, new_lower: {new_lower}, upper: {upper}')
+            for i in range(self.num_envs):
+                dof_props = self.gym.get_actor_dof_properties(
+                    self.envs[i],
+                    self.actor_handles[i])
+                if self.cfg.domain_rand.randomize_dof_friction:
+                    new_friction = np.random.uniform(new_lower, upper)
+                else:
+                    new_friction = new_lower
+                dof_props["friction"].fill(new_friction)
+                self.gym.set_actor_dof_properties(
+                    self.envs[i],
+                    self.actor_handles[i],
+                    dof_props)
 
     def _get_env_origins(self):
         """ Sets environment origins. On rough terrain the origins are defined by the terrain platforms.

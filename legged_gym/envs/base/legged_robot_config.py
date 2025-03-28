@@ -158,6 +158,11 @@ class LeggedRobotCfg(BaseConfig):
         randomize_foot_restitution = False
         foot_restitution_range = (0.2, 1.0)
 
+        # For physics curriculum.
+        apply_physics_curriculum = False
+        physics_curriculum_steps = 120000
+        physics_curriculum_update_every = 250
+
     class rewards:
         class scales:
             termination = -0.0

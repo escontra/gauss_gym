@@ -537,7 +537,8 @@ class GaussianSceneManager:
     past_end = nearest_idx >= (
       self.cam_trans.shape[1] - 4
     )  # Past end of trajectory.
-    distance_exceeded = yaw_exceeded = past_end
+    distance_exceeded = past_end.clone()
+    yaw_exceeded = past_end.clone()
 
     distance = torch.norm((curr_cam_link_trans - nearest_cam_trans)[:, :2], dim=-1)
     distance_exceeded |= distance > self._env.cfg.env.max_traj_pos_distance
