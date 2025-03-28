@@ -139,16 +139,23 @@ class UnitreeA1Real:
             if event.type == pygame.JOYAXISMOTION:
                 if event.axis == 0:
                   self.vel_y = event.value
+                  self.command_buf[0, 1] = event.value
                 elif event.axis == 1:
-                  self.vel_x = event.value
+                  self.command_buf[0, 0] = -1 * event.value
                 elif event.axis == 3:
-                  self.ang_vel = event.value
+                  self.command_buf[0, 2] = event.value
             elif event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 0:
                   self.start_pressed = True
                 elif event.button == 1:
                   self.quit_pressed = True
-        print(f"Vel x: {self.vel_x}, Vel y: {self.vel_y}, Ang vel: {self.ang_vel}")
+        if self.quit_pressed:
+            self.command_buf[0, :] = 0.
+        if np.linalg.norm(self.command_buf[0, :2]) < self.lin_vel_deadband:
+            self.command_buf[0, :2] = 0.
+        if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
+            self.command_buf[0, 2] = 0.
+        print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
     
     def start_ros(self):
         # initialze several buffers so that the system works even without message update.
