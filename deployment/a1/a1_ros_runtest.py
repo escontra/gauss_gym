@@ -201,7 +201,10 @@ def ignore_unknown(loader, tag_suffix, node):
     return None  # or raise an error, or log
 
 
-def class_to_dict(obj) -> dict:
+max_depth = 5
+def class_to_dict(obj, depth=0) -> dict:
+    if depth == max_depth:
+        return obj
     if not  hasattr(obj,"__dict__"):
         return obj
     result = {}
@@ -212,9 +215,9 @@ def class_to_dict(obj) -> dict:
         val = getattr(obj, key)
         if isinstance(val, list):
             for item in val:
-                element.append(class_to_dict(item))
+                element.append(class_to_dict(item), depth + 1)
         else:
-            element = class_to_dict(val)
+            element = class_to_dict(val, depth + 1)
         result[key] = element
     return result
 
