@@ -151,9 +151,9 @@ class UnitreeA1Real:
                   self.quit_pressed = True
         if self.quit_pressed:
             self.command_buf[0, :] = 0.
-        if np.linalg.norm(self.command_buf[0, :2]) < self.lin_vel_deadband:
+        if np.linalg.norm(self.command_buf[0, :2].cpu().numpy()) < self.lin_vel_deadband:
             self.command_buf[0, :2] = 0.
-        if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
+        if np.abs(self.command_buf[0, 2].cpu().numpy()) < self.ang_vel_deadband:
             self.command_buf[0, 2] = 0.
         print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
     
