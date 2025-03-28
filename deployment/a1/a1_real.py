@@ -166,6 +166,8 @@ class UnitreeA1Real:
             self.cfg.control.stiffness['joint'] = [self.cfg.control.stiffness['joint']] * 12
         self.d_gains = torch.tensor(self.cfg.control.damping['joint'], device= self.model_device, dtype= torch.float32)
         self.p_gains = torch.tensor(self.cfg.control.stiffness['joint'], device= self.model_device, dtype= torch.float32)
+        print(f"P Gains: {self.p_gains}")
+        print(f"D Gains: {self.d_gains}")
 
         self.default_dof_pos = torch.zeros(12, device= self.model_device, dtype= torch.float32)
         for i in range(12):
