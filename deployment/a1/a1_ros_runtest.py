@@ -227,7 +227,7 @@ def main(args):
         obs_group_sizes = pickle.load(f)
     
     duration = env_config["sim"]["dt"] * env_config["control"]["decimation"] # in sec
-    env_config["control"]["stiffness"]["joint"] += 20.0 # kp
+    env_config["control"]["stiffness"]["joint"] += 30.0 # kp
     env_config["control"]["damping"]["joint"] += 0.5 # kp
 
     model_device = torch.device("cpu") if args.mode == "upboard" else torch.device("cuda")
