@@ -9,6 +9,8 @@ from collections import OrderedDict
 from typing import Tuple
 import pygame
 
+os.environ["SDL_VIDEODRIVER"] = "dummy"
+
 import rospy
 from unitree_legged_msgs.msg import LowState
 from unitree_legged_msgs.msg import LegsCmd
