@@ -200,7 +200,23 @@ class NoPythonTagLoader(yaml.SafeLoader):
 def ignore_unknown(loader, tag_suffix, node):
     return None  # or raise an error, or log
 
-NoPythonTagLoader.add_multi_constructor("tag:yaml.org,2002:python/", ignore_unknown)
+
+def class_to_dict(obj) -> dict:
+    if not  hasattr(obj,"__dict__"):
+        return obj
+    result = {}
+    for key in dir(obj):
+        if key.startswith("_"):
+            continue
+        element = []
+        val = getattr(obj, key)
+        if isinstance(val, list):
+            for item in val:
+                element.append(class_to_dict(item))
+        else:
+            element = class_to_dict(val)
+        result[key] = element
+    return result
 
 def main(args):
     log_level = rospy.DEBUG if args.debug else rospy.INFO
@@ -219,12 +235,17 @@ def main(args):
     assert args.logdir is not None
     # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
     #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
+    print(f'READING FROM: {osp.join(args.logdir, "env_config.pkl")}')
     with open(osp.join(args.logdir, "env_config.pkl"), "rb") as f:
         env_config = pickle.load(f)
     with open(osp.join(args.logdir, "train_config.pkl"), "rb") as f:
         train_config = pickle.load(f)
     with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
         obs_group_sizes = pickle.load(f)
+    print('ENV CONFIG:')
+    print(class_to_dict(env_config))
+    print('TRAIN CONFIG:')
+    print(class_to_dict(train_config))
     print('FROM CONFIG:')
     print(env_config.control.stiffness)
     print(env_config.control.damping)
