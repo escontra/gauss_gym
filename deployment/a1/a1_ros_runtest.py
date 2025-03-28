@@ -307,9 +307,9 @@ def main(args):
     with torch.no_grad():
         standup_procedure(unitree_real_env, rate,
             angle_tolerance= 0.2,
-            kp= 50,
-            kd= 1.0,
-            warmup_timesteps= 50,
+            kp= 80,
+            kd= 1.5,
+            warmup_timesteps= 100,
             policy=policy,
             device= model_device,
         )
