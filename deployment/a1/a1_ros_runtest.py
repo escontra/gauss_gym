@@ -17,7 +17,7 @@ import pickle
 import glob
 
 from typing import Dict, List
-from a1_real import UnitreeA1Real, resize2d
+from deployment.a1.a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
 
 @torch.no_grad()
@@ -225,6 +225,9 @@ def main(args):
         train_config = pickle.load(f)
     with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
         obs_group_sizes = pickle.load(f)
+    print('FROM CONFIG:')
+    print(env_config.control.stiffness)
+    print(env_config.control.damping)
     
     duration = env_config.sim.dt * env_config.control.decimation # in sec
     # env_config["control"]["stiffness"]["joint"] -= 2.5 # kp
