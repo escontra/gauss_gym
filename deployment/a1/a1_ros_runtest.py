@@ -215,7 +215,7 @@ def class_to_dict(obj, depth=0) -> dict:
         val = getattr(obj, key)
         if isinstance(val, list):
             for item in val:
-                element.append(class_to_dict(item), depth + 1)
+                element.append(class_to_dict(item, depth + 1))
         else:
             element = class_to_dict(val, depth + 1)
         result[key] = element
