@@ -219,17 +219,14 @@ def main(args):
     # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
     #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
     print(f'READING FROM: {osp.join(args.logdir, "env_config.pkl")}')
-    with open(osp.join(args.logdir, "env_config.pkl"), "rb") as f:
+    with open(osp.join(args.logdir, "env_config_dict.pkl"), "rb") as f:
         env_config = pickle.load(f)
-    with open(osp.join(args.logdir, "train_config.pkl"), "rb") as f:
+    with open(osp.join(args.logdir, "train_config_dict.pkl"), "rb") as f:
         train_config = pickle.load(f)
     with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
         obs_group_sizes = pickle.load(f)
-    print('FROM CONFIG:')
-    print(env_config.control.stiffness)
-    print(env_config.control.damping)
     
-    duration = env_config.sim.dt * env_config.control.decimation # in sec
+    duration = env_config["sim"]["dt"] * env_config["control"]["decimation"] # in sec
     # env_config["control"]["stiffness"]["joint"] -= 2.5 # kp
 
     model_device = torch.device("cpu") if args.mode == "upboard" else torch.device("cuda")
@@ -251,12 +248,12 @@ def main(args):
         #     ], dtype= torch.float32, device= model_device, requires_grad= False),
         # ),
     )
-    model = getattr(models, train_config.runner.policy_class_name)(
+    model = getattr(models, train_config["runner"]["policy_class_name"])(
       12,
       obs_group_sizes["student_observations"],
       obs_group_sizes["teacher_observations"],
-      train_config.policy.init_noise_std,
-      train_config.policy.mu_activation,
+      train_config["policy"]["init_noise_std"],
+      train_config["policy"]["mu_activation"],
     ).to(model_device)
     model_path = sorted(
       glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),

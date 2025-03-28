@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfgPPO
+from legged_gym.utils.helpers import class_to_dict
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
   advantages = torch.zeros_like(rewards)
@@ -78,8 +79,14 @@ class Recorder:
     with open(self.log_dir / "train_config.pkl", "wb") as file:
       pickle.dump(self.cfg, file)
 
+    with open(self.log_dir / "train_config_dict.pkl", "wb") as file:
+      pickle.dump(class_to_dict(self.cfg), file)
+
     with open(self.log_dir / "env_config.pkl", "wb") as file:
       pickle.dump(self.env_cfg, file)
+
+    with open(self.log_dir / "env_config_dict.pkl", "wb") as file:
+      pickle.dump(class_to_dict(self.env_cfg), file)
 
     with open(self.log_dir / "obs_group_sizes.pkl", "wb") as file:
       pickle.dump(self.obs_group_sizes, file)
