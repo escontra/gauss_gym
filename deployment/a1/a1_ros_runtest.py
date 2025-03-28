@@ -219,25 +219,25 @@ def main(args):
     assert args.logdir is not None
     # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
     #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
-    with open(osp.join(args.logdir, "env_config.yaml"), "r", encoding="utf-8") as f:
-        config_dict = yaml.load(f, Loader=NoPythonTagLoader)
-    with open(osp.join(args.logdir, "train_config.yaml"), "r", encoding="utf-8") as f:
-        train_config_dict = yaml.load(f, Loader=NoPythonTagLoader)
+    with open(osp.join(args.logdir, "env_config.pkl"), "rb") as f:
+        env_config = pickle.load(f)
+    with open(osp.join(args.logdir, "train_config.pkl"), "rb") as f:
+        train_config = pickle.load(f)
     with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
         obs_group_sizes = pickle.load(f)
     
-    duration = config_dict["sim"]["dt"] * config_dict["control"]["decimation"] # in sec
-    # config_dict["control"]["stiffness"]["joint"] -= 2.5 # kp
+    duration = env_config.sim.dt * env_config.control.decimation # in sec
+    # env_config["control"]["stiffness"]["joint"] -= 2.5 # kp
 
     model_device = torch.device("cpu") if args.mode == "upboard" else torch.device("cuda")
 
     unitree_real_env = UnitreeA1Real(
         robot_namespace= args.namespace,
-        cfg= config_dict,
+        cfg= env_config,
         forward_depth_topic=None,
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
-        # skill_vel_range= config_dict["commands"]["ranges"]["lin_vel_x"],
+        # skill_vel_range= env_config["commands"]["ranges"]["lin_vel_x"],
         model_device= model_device,
         # extra_cfg= dict(
         #     motor_strength= torch.tensor([
@@ -248,12 +248,12 @@ def main(args):
         #     ], dtype= torch.float32, device= model_device, requires_grad= False),
         # ),
     )
-    model = getattr(models, train_config_dict["runner"]["policy_class_name"])(
+    model = getattr(models, train_config.runner.policy_class_name)(
       12,
       obs_group_sizes["student_observations"],
       obs_group_sizes["teacher_observations"],
-      train_config_dict["policy"]["init_noise_std"],
-      train_config_dict["policy"]["mu_activation"],
+      train_config.policy.init_noise_std,
+      train_config.policy.mu_activation,
     ).to(model_device)
     model_path = sorted(
       glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),
@@ -338,11 +338,11 @@ def main(args):
 
     # unitree_real_env = SkilledA1Real(
     #     robot_namespace= args.namespace,
-    #     cfg= config_dict,
+    #     cfg= env_config,
     #     forward_depth_topic= "/visual_embedding" if args.mode == "upboard" else "/camera/depth/image_rect_raw",
-    #     forward_depth_embedding_dims= config_dict["policy"]["visual_latent_size"] if args.mode == "upboard" else None,
+    #     forward_depth_embedding_dims= env_config["policy"]["visual_latent_size"] if args.mode == "upboard" else None,
     #     move_by_wireless_remote= True,
-    #     skill_vel_range= config_dict["commands"]["ranges"]["lin_vel_x"],
+    #     skill_vel_range= env_config["commands"]["ranges"]["lin_vel_x"],
     #     model_device= model_device,
     #     # extra_cfg= dict(
     #     #     motor_strength= torch.tensor([
@@ -354,15 +354,15 @@ def main(args):
     #     # ),
     # )
 
-    model = getattr(modules, config_dict["runner"]["policy_class_name"])(
+    model = getattr(modules, env_config["runner"]["policy_class_name"])(
         num_actor_obs= unitree_real_env.num_obs,
         num_critic_obs= unitree_real_env.num_privileged_obs,
         num_actions= 12,
         obs_segments= unitree_real_env.obs_segments,
         privileged_obs_segments= unitree_real_env.privileged_obs_segments,
-        **config_dict["policy"],
+        **env_config["policy"],
     )
-    config_dict["terrain"]["measure_heights"] = False
+    env_config["terrain"]["measure_heights"] = False
     # load the model with the latest checkpoint
     model_names = [i for i in os.listdir(args.logdir) if i.startswith("model_")]
     model_names.sort(key= lambda x: int(x.split("_")[-1].split(".")[0]))
@@ -373,8 +373,8 @@ def main(args):
 
     rospy.loginfo("duration: {}, motor Kp: {}, motor Kd: {}".format(
         duration,
-        config_dict["control"]["stiffness"]["joint"],
-        config_dict["control"]["damping"]["joint"],
+        env_config["control"]["stiffness"]["joint"],
+        env_config["control"]["damping"]["joint"],
     ))
     # rospy.loginfo("[Env] motor strength: {}".format(unitree_real_env.motor_strength))
 
@@ -394,9 +394,9 @@ def main(args):
             partial(handle_forward_depth,
                 model= visual_encoder,
                 publisher= embeding_publisher,
-                output_resolution= config_dict["sensor"]["forward_camera"].get(
+                output_resolution= env_config["sensor"]["forward_camera"].get(
                     "output_resolution",
-                    config_dict["sensor"]["forward_camera"]["resolution"],
+                    env_config["sensor"]["forward_camera"]["resolution"],
                 ),
                 device= model_device,
             ),

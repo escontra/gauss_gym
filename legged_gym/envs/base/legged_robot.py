@@ -713,10 +713,8 @@ class LeggedRobot(BaseTask):
         # motor_strength
         self.motor_strength = torch.ones(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         if self.cfg.domain_rand.randomize_motor:
-            mtr_rng = self.cfg.domain_rand.leg_motor_strength_range
             self.motor_strength = tu.torch_rand_float(
-                mtr_rng[0],
-                mtr_rng[1],
+                *self.cfg.domain_rand.leg_motor_strength_range,
                 (self.num_envs, self.num_actions),
                 device=self.device,
             )

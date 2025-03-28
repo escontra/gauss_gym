@@ -94,12 +94,12 @@ class UnitreeA1Real:
             # motor strength is multiplied directly to the action.
             motor_strength= torch.ones(12, dtype= torch.float32, device= self.model_device, requires_grad= False),
         ); self.extra_cfg.update(extra_cfg)
-        if "torque_limits" in self.cfg["control"]:
-            if isinstance(self.cfg["control"]["torque_limits"], (tuple, list)):
-                for i in range(len(self.cfg["control"]["torque_limits"])):
-                    self.extra_cfg["torque_limits"][i] = self.cfg["control"]["torque_limits"][i]
+        if hasattr(self.cfg.control, "torque_limits"):
+            if isinstance(self.cfg.control.torque_limits, (tuple, list)):
+                for i in range(len(self.cfg.control.torque_limits)):
+                    self.extra_cfg["torque_limits"][i] = self.cfg.control.torque_limits[i]
             else:
-                self.extra_cfg["torque_limits"][:] = self.cfg["control"]["torque_limits"]
+                self.extra_cfg["torque_limits"][:] = self.cfg.control.torque_limits
         self.command_buf = torch.zeros((self.num_envs, 3,), device= self.model_device, dtype= torch.float32) # zeros for initialization
         self.actions = torch.zeros((1, 12), device=model_device, dtype= torch.float32)
 
@@ -157,25 +157,25 @@ class UnitreeA1Real:
         self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
+        self.observation_groups = [getattr(observation_groups, name) for name in self.cfg.observations.observation_groups]
 
 
-        if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
-            self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12
-        if not isinstance(self.cfg["control"]["stiffness"]["joint"], (list, tuple)):
-            self.cfg["control"]["stiffness"]["joint"] = [self.cfg["control"]["stiffness"]["joint"]] * 12
-        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
-        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
+        if not isinstance(self.cfg.control.damping.joint, (list, tuple)):
+            self.cfg.control.damping.joint = [self.cfg.control.damping.joint] * 12
+        if not isinstance(self.cfg.control.stiffness.joint, (list, tuple)):
+            self.cfg.control.stiffness.joint = [self.cfg.control.stiffness.joint] * 12
+        self.d_gains = torch.tensor(self.cfg.control.damping.joint, device= self.model_device, dtype= torch.float32)
+        self.p_gains = torch.tensor(self.cfg.control.stiffness.joint, device= self.model_device, dtype= torch.float32)
 
         self.default_dof_pos = torch.zeros(12, device= self.model_device, dtype= torch.float32)
         for i in range(12):
             name = self.extra_cfg["dof_names"][i]
-            default_joint_angle = self.cfg["init_state"]["default_joint_angles"][name]
+            default_joint_angle = self.cfg.init_state.default_joint_angles[name]
             self.default_dof_pos[i] = default_joint_angle
 
         print(f"Default dof pos: {self.default_dof_pos}")
 
-        self.computer_clip_torque = self.cfg["control"]["computer_clip_torque"]
+        self.computer_clip_torque = self.cfg.control.computer_clip_torque
         rospy.loginfo("Computer Clip Torque (onboard) is " + str(self.computer_clip_torque))
         if self.computer_clip_torque:
             self.torque_limits = self.extra_cfg["torque_limits"]
@@ -183,19 +183,19 @@ class UnitreeA1Real:
         
         # store config values to attributes to improve speed
         # self.clip_obs = self.cfg["normalization"]["clip_observations"]
-        self.control_type = self.cfg["control"]["control_type"]
-        self.action_scale = self.cfg["control"]["action_scale"]
+        self.control_type = self.cfg.control.control_type
+        self.action_scale = self.cfg.control.action_scale
         print(f"Action scale: {self.action_scale}")
         rospy.loginfo("[Env] action scale: {:.1f}".format(self.action_scale))
-        self.clip_actions = self.cfg["normalization"]["clip_actions"]
-        if self.cfg["normalization"].get("clip_actions_method", None) == "hard":
+        self.clip_actions = self.cfg.normalization.clip_actions
+        if self.cfg.normalization.clip_actions_method == "hard":
             rospy.loginfo("clip_actions_method with hard mode")
-            rospy.loginfo("clip_actions: " + str(self.cfg["normalization"]["clip_actions"]))
+            rospy.loginfo("clip_actions: " + str(self.cfg.normalization.clip_actions))
             self.clip_actions_method = "hard"
-            self.clip_actions_low = torch.tensor(self.cfg["normalization"]["clip_actions_low"], device= self.model_device, dtype= torch.float32)
-            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions_high"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_low = torch.tensor(self.cfg.normalization.clip_actions_low, device= self.model_device, dtype= torch.float32)
+            self.clip_actions_high = torch.tensor(self.cfg.normalization.clip_actions_high, device= self.model_device, dtype= torch.float32)
         else:
-            rospy.loginfo("clip_actions_method is " + str(self.cfg["normalization"].get("clip_actions_method", None)))
+            rospy.loginfo("clip_actions_method is " + str(self.cfg.normalization.clip_actions_method))
         self.dof_map = self.extra_cfg["dof_map"]
 
         # get ROS params for hardware configs
@@ -221,7 +221,7 @@ class UnitreeA1Real:
         """ Different from simulation, we reverse the process and clip the actions directly,
         so that the PD controller runs in robot but not our script.
         """
-        control_type = self.cfg["control"]["control_type"]
+        control_type = self.cfg.control.control_type
         if control_type == "P":
             p_limits_low = (-self.torque_limits) + self.d_gains*self.dof_vel
             p_limits_high = (self.torque_limits) + self.d_gains*self.dof_vel
