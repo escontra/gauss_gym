@@ -201,26 +201,6 @@ def ignore_unknown(loader, tag_suffix, node):
     return None  # or raise an error, or log
 
 
-max_depth = 5
-def class_to_dict(obj, depth=0) -> dict:
-    if depth == max_depth:
-        return obj
-    if not  hasattr(obj,"__dict__"):
-        return obj
-    result = {}
-    for key in dir(obj):
-        if key.startswith("_"):
-            continue
-        element = []
-        val = getattr(obj, key)
-        if isinstance(val, list):
-            for item in val:
-                element.append(class_to_dict(item, depth + 1))
-        else:
-            element = class_to_dict(val, depth + 1)
-        result[key] = element
-    return result
-
 def main(args):
     log_level = rospy.DEBUG if args.debug else rospy.INFO
     rospy.init_node("a1_legged_gym_" + args.mode, log_level= log_level)
@@ -245,10 +225,6 @@ def main(args):
         train_config = pickle.load(f)
     with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
         obs_group_sizes = pickle.load(f)
-    print('ENV CONFIG:')
-    print(class_to_dict(env_config))
-    print('TRAIN CONFIG:')
-    print(class_to_dict(train_config))
     print('FROM CONFIG:')
     print(env_config.control.stiffness)
     print(env_config.control.damping)
