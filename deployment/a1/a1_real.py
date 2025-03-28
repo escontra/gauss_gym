@@ -149,12 +149,16 @@ class UnitreeA1Real:
                   self.start_pressed = True
                 elif event.button == 1:
                   self.quit_pressed = True
-        # if self.quit_pressed:
-        #     self.command_buf[0, :] = 0.
+        if self.quit_pressed:
+            self.command_buf[0, :] = 0.
+        if self.command_buf[0, :2].norm() < self.lin_vel_deadband:
+            self.command_buf[0, :2] = 0.
         # if np.linalg.norm(self.command_buf[0, :2].cpu().numpy()) < self.lin_vel_deadband:
-        #     self.command_buf[0, :2] = 0.
+            # self.command_buf[0, :2] = 0.
+        if self.command_buf[0, 2].norm() < self.ang_vel_deadband:
+            self.command_buf[0, 2] = 0.
         # if np.abs(self.command_buf[0, 2].cpu().numpy()) < self.ang_vel_deadband:
-        #     self.command_buf[0, 2] = 0.
+            # self.command_buf[0, 2] = 0.
         print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
     
     def start_ros(self):
