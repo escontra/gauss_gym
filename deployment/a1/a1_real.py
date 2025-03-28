@@ -101,7 +101,7 @@ class UnitreeA1Real:
             else:
                 self.extra_cfg["torque_limits"][:] = self.cfg["control"]["torque_limits"]
         self.command_buf = torch.zeros((self.num_envs, 3,), device= self.model_device, dtype= torch.float32) # zeros for initialization
-        self.command_buf[:, 0] = 0.25
+        self.command_buf[:, 0] = 0.50
         self.actions = torch.zeros((1, 12), device=model_device, dtype= torch.float32)
 
         self.process_configs()
