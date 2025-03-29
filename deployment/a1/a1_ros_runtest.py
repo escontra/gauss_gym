@@ -227,7 +227,8 @@ def main(args):
         obs_group_sizes = pickle.load(f)
     
     duration = env_config["sim"]["dt"] * env_config["control"]["decimation"] # in sec
-    # env_config["control"]["stiffness"]["joint"] -= 2.5 # kp
+    env_config["control"]["stiffness"]["joint"] += 30.0 # kp
+    env_config["control"]["damping"]["joint"] += 0.5 # kp
 
     model_device = torch.device("cpu") if args.mode == "upboard" else torch.device("cuda")
 
@@ -237,6 +238,7 @@ def main(args):
         forward_depth_topic=None,
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
+        move_by_gamepad=True,
         # skill_vel_range= env_config["commands"]["ranges"]["lin_vel_x"],
         model_device= model_device,
         # extra_cfg= dict(
@@ -306,9 +308,9 @@ def main(args):
     with torch.no_grad():
         standup_procedure(unitree_real_env, rate,
             angle_tolerance= 0.2,
-            kp= 50,
-            kd= 1.0,
-            warmup_timesteps= 50,
+            kp= 80,
+            kd= 1.5,
+            warmup_timesteps= 100,
             policy=policy,
             device= model_device,
         )
