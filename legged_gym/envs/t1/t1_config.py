@@ -112,7 +112,7 @@ class T1RoughCfg( LeggedRobotCfg ):
         only_positive_rewards = True
         swing_period = 0.2
         feet_distance_ref = 0.2
-        base_height_target: 0.68
+        base_height_target = 0.68
         terminate_height = 0.45
         class scales( LeggedRobotCfg.rewards.scales ):
             survival = 0.25
@@ -146,6 +146,9 @@ class T1RoughCfg( LeggedRobotCfg ):
 
     class normalization( LeggedRobotCfg.normalization ):
         clip_actions = 1.
+        clip_actions_low = []
+        clip_actions_high = []
+        clip_actions_method = None
     
     class commands( LeggedRobotCfg.commands ):
         heading_command = True # if true: compute ang vel command from heading error
