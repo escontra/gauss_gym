@@ -129,8 +129,8 @@ STUDENT_OBSERVATION_GROUP = ObservationGroup(
       func=O.actions,
     ),
   ],
-  add_noise=True,
-  add_latency=True,
+  add_noise=False,
+  add_latency=False,
   is_recurrent=True,
 )
 

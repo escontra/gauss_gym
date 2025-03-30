@@ -1,7 +1,22 @@
 <mujoco model="T1">
-    <compiler angle="radian" meshdir="meshes/" />
+    <compiler angle="radian" meshdir="../meshes/" />
     <size njmax="500" nconmax="100" />
+    <default>
+    <joint limited="true" damping="0.01" armature="0.01" frictionloss="0.0" />
+    <equality solref="0.001 2" />
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" density="0"/>
+    </default>
+      <default class="collision">
+        <geom group="3" material="transparent" priority="1" friction="1. 0.01 0.005"/>
+    </default>
+  </default>
     <asset>
+        <material name="metal" rgba=".9 .95 .95 1"/>
+        <material name="black" rgba="0 0 0 1"/>
+        <material name="white" rgba="1 1 1 1"/>
+        <material name="gray" rgba="0.4 0.4 0.4 1"/>
+        <material name="transparent" rgba="0.5 0.5 0.5 1"/>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
         <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>
         <material name="matplane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true"/>
@@ -131,8 +146,8 @@
         </body>
     </worldbody>
     <actuator>
-        <!-- <motor name="AAHead_yaw" joint="AAHead_yaw" ctrlrange="-45.0 45.0" ctrllimited="true" />
-        <motor name="Head_pitch" joint="Head_pitch" ctrllimited="true" ctrlrange="-7 7" gear="1" /> -->
+        <motor name="AAHead_yaw" joint="AAHead_yaw" ctrlrange="-45.0 45.0" ctrllimited="true" />
+        <motor name="Head_pitch" joint="Head_pitch" ctrllimited="true" ctrlrange="-7 7" gear="1" />
         <motor name="Left_Hip_Pitch" joint="Left_Hip_Pitch" ctrlrange="-45.0 45.0" ctrllimited="true" />
         <motor name="Left_Hip_Roll" joint="Left_Hip_Roll" ctrlrange="-45.0 45.0" ctrllimited="true" />
         <motor name="Left_Hip_Yaw" joint="Left_Hip_Yaw" ctrlrange="-30.0 30.0" ctrllimited="true" />
