@@ -55,8 +55,8 @@
             <joint type="free" />
             <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.76 0.76 0.76 1.0" mesh="Trunk" />
             <geom size="0.075 0.1 0.15" pos="0.06 0 0.12" type="box" rgba="0.76 0.76 0.76 0.0" />
-            <geom pos="0.0625 0 0.243" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H1" />
-            <geom pos="0.0625 0 0.30485" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H2" />
+            <!-- <geom pos="0.0625 0 0.243" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H1" /> -->
+            <!-- <geom pos="0.0625 0 0.30485" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H2" /> -->
             <geom pos="0.0575 0.1063 0.219" quat="0.995004 0 0.0998334 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.76 0.76 0.76 1.0" mesh="AL1" />
             <geom pos="0.0575 0.1533 0.219" quat="0.776807 -0.621775 0.0779406 0.0623856" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="AL2" />
             <geom pos="0.0460173 0.16655 0.161096" quat="0.776807 -0.621775 0.0779406 0.0623856" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="AL3" />
@@ -69,11 +69,11 @@
             <body name="H1" pos="0.0625 0 0.243">
               <inertial pos="-0.000508 -0.001403 0.057432" quat="0.763881 -0.0132172 0.00173419 0.645219" mass="0.44391" diaginertia="0.000241549 0.00022351 0.000149941"/>
               <joint name="AAHead_yaw" pos="0 0 0" axis="0 0 1" limited="true" range="-1.57 1.57" />
-              <geom class="visual" material="gray" mesh="H1"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H1" />
               <body name="H2" pos="0 0 0.06185">
                 <inertial pos="0.007802 0.001262 0.098631" quat="0.988453 0.106172 -0.0745686 -0.0782786" mass="0.631019" diaginertia="0.00203553 0.00192467 0.00172381"/>
                 <joint name="Head_pitch" pos="0 0 0" axis="0 1 0" limited="true" range="-0.35 1.22" />
-                <geom class="visual" material="gray" mesh="H2"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H2" />
                 <geom size="0.08" pos="0.01 0 0.11" class="collision" name="head"/>
               </body>
             </body>

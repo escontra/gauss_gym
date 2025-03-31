@@ -3,11 +3,11 @@ import sys
 import select
 import numpy as np
 
-import isaacgym
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.helpers import get_args
+from legged_gym.teacher import observation_groups
 
 import torch
 import mujoco, mujoco.viewer
@@ -22,6 +22,48 @@ def quat_rotate_inverse(q, v):
     b = np.cross(q_vec, v) * (q_w * 2.0)
     c = q_vec * (np.dot(q_vec, v) * 2.0)
     return a - b + c
+
+""" Get obs components and cat to a single obs input """
+def compute_observation(env_cfg, observation_groups, mj_data, command, gait_frequency, gait_process, default_dof_pos, actions):
+    
+    obs_dict = {}
+    for group in observation_groups:
+        if "teacher" in group.name:
+            continue
+        obs_dict[group.name] = {}
+        for observation in group.observations:
+            if observation.name == "projected_gravity":
+                quat = mj_data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.float32)
+                obs = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0]))
+                obs = torch.tensor(obs, dtype=torch.float32)
+            elif observation.name == "base_ang_vel":
+                obs = torch.tensor(mj_data.sensor("angular-velocity").data.astype(np.float32))
+            elif observation.name == "lin_vel":
+                obs = torch.tensor(mj_data.sensor("velocity").data.astype(np.float32))
+            elif observation.name == "dof_pos":
+                obs = torch.tensor(mj_data.qpos.astype(np.float32)[7:]) - torch.tensor(default_dof_pos)
+            elif observation.name == "dof_vel":
+                obs = torch.tensor(mj_data.qvel.astype(np.float32)[6:])
+            elif observation.name == "velocity_commands":
+                obs = torch.tensor(command)
+            elif observation.name == "gait_progress":
+                obs = torch.cat((
+                    (torch.cos(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
+                    (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
+                ), dim = -1)
+            elif observation.name == "actions":
+                obs = torch.tensor(actions)
+            obs = obs.unsqueeze(0)
+            if observation.clip:
+                obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
+            if observation.scale is not None:
+                scale = observation.scale
+                if isinstance(scale, list):
+                    scale = torch.tensor(scale, device=obs.device)[None]
+                obs = scale * obs
+            obs_dict[group.name][observation.name] = obs
+
+    return obs_dict
 
 
 if __name__ == "__main__":
@@ -55,10 +97,15 @@ if __name__ == "__main__":
        if isinstance(getattr(env_cfg.domain_rand, attr_name), bool):
           setattr(env_cfg.domain_rand, attr_name, False)
 
+    # TODO: can we get rid of the env?
     env, _ = task_registry.make_env(name=env_cfg.task_name, args=args, env_cfg=env_cfg)
     train_cfg.runner.resume = True
     train_cfg.runner_class_name = "MuJoCoRunner"
     mujoco_runner, train_cfg = task_registry.make_alg_runner(env, name=env_cfg.task_name, args=args, train_cfg=train_cfg)
+
+    observation_groups = [getattr(observation_groups, name) for name in env_cfg.observations.observation_groups]
+
+    print("Starting MuJoCo viewer...")
 
     mj_model = mujoco.MjModel.from_xml_path(env_cfg.asset.mujoco_file)
     mj_model.opt.timestep = env_cfg.sim.dt
@@ -99,6 +146,7 @@ if __name__ == "__main__":
     lin_vel_x = lin_vel_y = ang_vel_yaw = 0.0
     it = 0
 
+    print("Launching MuJoCo viewer...")
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         viewer.cam.elevation = -20
         print(f"Set command (x, y, yaw): ")
@@ -126,20 +174,11 @@ if __name__ == "__main__":
             base_ang_vel = mj_data.sensor("angular-velocity").data.astype(np.float32)
             projected_gravity = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0]))
             if it % env_cfg.control.decimation == 0:
-                obs = np.zeros(env_cfg.num_observations, dtype=np.float32)
-                obs[0:3] = projected_gravity * env_cfg.normalization.gravity
-                obs[3:6] = base_ang_vel * env_cfg.normalization.ang_vel
-                obs[6] = lin_vel_x * env_cfg.normalization.lin_vel
-                obs[7] = lin_vel_y * env_cfg.normalization.lin_vel
-                obs[8] = ang_vel_yaw * env_cfg.normalization.ang_vel
-                obs[9] = np.cos(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8)
-                obs[10] = np.sin(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8)
-                obs[11:23] = (dof_pos - default_dof_pos) * env_cfg.normalization.dof_pos
-                obs[23:35] = dof_vel * env_cfg.normalization.dof_vel
-                obs[35:47] = actions
-                dist = mujoco_runner.act(torch.tensor(obs).unsqueeze(0))
-                actions[:] = dist.loc.detach().numpy()
+                obs = compute_observation(env_cfg, observation_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos, actions)
+                dist = mujoco_runner.act(obs['student_observations'])
+                actions[:] = dist.detach().cpu().numpy()
                 actions[:] = np.clip(actions, -env_cfg.normalization.clip_actions, env_cfg.normalization.clip_actions)
+                # actions[:2] = 0
                 dof_targets[:] = default_dof_pos + env_cfg.control.action_scale * actions
             mj_data.ctrl = np.clip(
                 dof_stiffness * (dof_targets - dof_pos) - dof_damping * dof_vel,
@@ -150,4 +189,4 @@ if __name__ == "__main__":
             viewer.cam.lookat[:] = mj_data.qpos.astype(np.float32)[0:3]
             viewer.sync()
             it += 1
-            gait_process = np.fmod(gait_process + env_cfg.sim.dt * gait_frequency, 1.0)
+            gait_process = float(np.fmod(gait_process + env_cfg.sim.dt * gait_frequency, 1.0))
