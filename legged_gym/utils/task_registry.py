@@ -35,7 +35,7 @@ from legged_gym.rl.env import vec_env
 from legged_gym.rl.runner import Runner
 
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
-from .helpers import set_seed, parse_sim_params
+from .helpers import set_seed
 import pathlib
 from legged_gym.utils import flags, config
 
@@ -54,27 +54,6 @@ class TaskRegistry():
     def get_cfgs(self, name: str) -> Dict:
         return self.cfgs[name]
     
-    def make_env(self, cfg: config.Config) -> vec_env.VecEnv:
-        """ Creates an environment either from a registered namme or from the provided config file.
-
-        Args:
-            cfg (Config): Config file.
-
-        Returns:
-            isaacgym.VecTaskPython: The created environment
-        """
-        # check if there is a registered env with that name
-        task_class = self.get_task_class(cfg.task)
-
-        set_seed(cfg.seed)
-        physics_engine, sim_params = parse_sim_params(cfg)
-        env = task_class(   cfg=cfg,
-                            sim_params=sim_params,
-                            physics_engine=physics_engine,
-                            sim_device=cfg.sim_device,
-                            headless=cfg.headless)
-        return env
-
     def make_alg_runner(self, env, cfg: config.Config) -> Runner:
         """ Creates the training algorithm  either from a registered namme or from the provided config file.
 
@@ -85,24 +64,24 @@ class TaskRegistry():
         Returns:
             Runner: The created algorithm
         """
-        new_run_name = [f'{cfg.task}']
-        if cfg.runner.run_name != "":
-            new_run_name += [cfg.runner.run_name]
+        new_run_name = [f'{cfg["task"]}']
+        if cfg["runner"]["run_name"] != "":
+            new_run_name += [cfg["runner"]["run_name"]]
         new_run_name += [time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())]
         new_run_name = '_'.join(new_run_name)
 
-        if cfg.logdir=="default":
+        if cfg["logdir"]=="default":
             log_root = pathlib.Path(LEGGED_GYM_ROOT_DIR) / 'logs'
             log_dir = pathlib.Path(log_root) / new_run_name
-        elif cfg.logdir is None:
+        elif cfg["logdir"] is None:
             log_dir = None
         else:
             log_dir = pathlib.Path(log_root) / new_run_name
         
-        runner = eval(cfg.runner.class_name)(env, cfg, log_dir, device=cfg.rl_device)
+        runner = eval(cfg["runner"]["class_name"])(env, cfg, log_dir, device=cfg["rl_device"])
         
         #save resume path before creating a new log_dir
-        if cfg.runner.resume:
+        if cfg["runner"]["resume"]:
             runner.load(log_root)
         return runner
 

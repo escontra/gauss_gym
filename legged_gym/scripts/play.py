@@ -38,7 +38,7 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import flags, config
-
+from legged_gym.utils import helpers
 
 
 def main(argv = None):
@@ -68,8 +68,10 @@ def main(argv = None):
           cfg = cfg.update({f'domain_rand.{attr_name}.apply': False})
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
-
-    env = task_registry.make_env(cfg=cfg)
+    cfg = dict(cfg)
+    task_class = task_registry.get_task_class(cfg["task"])
+    helpers.set_seed(cfg["seed"])
+    env = task_class(cfg=cfg)
     ppo_runner = task_registry.make_alg_runner(env=env, cfg=cfg)
     ppo_runner.play()
 

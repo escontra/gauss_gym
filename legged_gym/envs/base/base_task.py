@@ -30,49 +30,31 @@
 
 import sys
 from isaacgym import gymapi
-from isaacgym import gymutil
-import numpy as np
 import torch
 
 # Base class for RL tasks
 class BaseTask():
 
-    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
+    def __init__(self, cfg):
         self.gym = gymapi.acquire_gym()
 
-        self.sim_params = sim_params
-        self.physics_engine = physics_engine
-        self.sim_device = sim_device
-        sim_device_type, self.sim_device_id = gymutil.parse_device_str(self.sim_device)
-        self.headless = headless
-
-        # env device is GPU only if sim is on GPU and use_gpu_pipeline=True, otherwise returned tensors are copied to CPU by physX.
-        if sim_device_type=='cuda' and sim_params.use_gpu_pipeline:
-            self.device = self.sim_device
-        else:
-            self.device = 'cpu'
-
-        # graphics device for rendering, -1 for no rendering
-        self.graphics_device_id = self.sim_device_id
-        if self.headless == True:
-            self.graphics_device_id = -1
-
-        self.num_envs = cfg.env.num_envs
+        self.num_envs = cfg["env"]["num_envs"]
 
         # optimization flags for pytorch JIT
         torch._C._jit_set_profiling_mode(False)
         torch._C._jit_set_profiling_executor(False)
 
         # allocate buffers
+        self.extras = {}
+
+        # create envs, sim and viewer
+        self.create_sim()
+
         self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
 
-        self.extras = {}
-
-        # create envs, sim and viewer
-        self.create_sim()
         self.gym.prepare_sim(self.sim)
 
         # todo: read from config
@@ -83,7 +65,7 @@ class BaseTask():
         self.selected_environment = 0
 
         # if running with a viewer, set up keyboard shortcuts and camera
-        if self.headless == False:
+        if not self.headless:
             # subscribe to keyboard shortcuts
             self.viewer = self.gym.create_viewer(
                 self.sim, gymapi.CameraProperties())

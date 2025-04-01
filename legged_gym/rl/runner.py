@@ -60,12 +60,12 @@ class Recorder:
     self.model_dir = self.log_dir / "nn"
     self.model_dir.mkdir(parents=True, exist_ok=True)
     self.writer = SummaryWriter(self.log_dir / "summaries")
-    if self.cfg.runner.use_wandb:
+    if self.cfg["runner"]["use_wandb"]:
       wandb.init(
-        project=self.cfg.task_name,
+        project=self.cfg["task_name"],
         dir=self.log_dir,
         name=self.log_dir.name,
-        notes=self.cfg.description,
+        notes=self.cfg["description"],
         config=self.cfg,
       )
 
@@ -74,7 +74,8 @@ class Recorder:
     self.last_episode["steps"] = []
     self.episode_steps = None
 
-    self.cfg.save(self.log_dir / "config.yaml")
+    config.Config(self.cfg).save(self.log_dir / "config.yaml")
+    # self.cfg.save(self.log_dir / "config.yaml")
 
     with open(self.log_dir / "obs_group_sizes.pkl", "wb") as file:
       pickle.dump(self.obs_group_sizes, file)
@@ -108,7 +109,7 @@ class Recorder:
         path = ("" if key == "steps" or key == "reward" else "episode/") + key
         value = self._mean(self.last_episode[key])
         self.writer.add_scalar(path, value, it)
-        if self.cfg.runner.use_wandb:
+        if self.cfg["runner"]["use_wandb"]:
           wandb.log({path: value}, step=it)
         self.last_episode[key].clear()
 
@@ -116,7 +117,7 @@ class Recorder:
     self.maybe_init()
     for key, value in statistics.items():
       self.writer.add_scalar(key, float(value), it)
-      if self.cfg.runner.use_wandb:
+      if self.cfg["runner"]["use_wandb"]:
         wandb.log({key: float(value)}, step=it)
 
   def save(self, model_dict, it):
@@ -228,24 +229,24 @@ class Runner:
     self.log_dir = log_dir
     self.cfg = cfg
     self._set_seed()
-    self.learning_rate = self.cfg.algorithm.learning_rate
+    self.learning_rate = self.cfg["algorithm"]["learning_rate"]
     self.obs_group_sizes = {
       'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
       'student_observations': self.env.obs_group_size_per_name("student_observations"),
     }
-    self.model = getattr(models, self.cfg.runner.policy_class_name)(
+    self.model = getattr(models, self.cfg["runner"]["policy_class_name"])(
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
-      self.cfg.policy.init_noise_std,
-      self.cfg.policy.mu_activation,
+      self.cfg["policy"]["init_noise_std"],
+      self.cfg["policy"]["mu_activation"],
     ).to(self.device)
     self.optimizer = torch.optim.Adam(
       self.model.parameters(), lr=self.learning_rate
     )
 
     self.buffer = ExperienceBuffer(
-      self.cfg.runner.num_steps_per_env,
+      self.cfg["runner"]["num_steps_per_env"],
       self.env.num_envs,
       self.device,
     )
@@ -262,8 +263,7 @@ class Runner:
     self.buffer.add_buffer("time_outs", (), dtype=bool)
 
   def _set_seed(self):
-
-    seed = self.cfg.seed
+    seed = self.cfg["seed"]
     if seed == -1:
       seed = np.random.randint(0, 10000)
     print("Setting RL seed: {}".format(seed))
@@ -276,11 +276,11 @@ class Runner:
     torch.cuda.manual_seed_all(seed)
 
   def load(self, resume_root: pathlib.Path):
-    if not self.cfg.runner.resume:
+    if not self.cfg["runner"]["resume"]:
       return
 
-    load_run = self.cfg.runner.load_run
-    checkpoint = self.cfg.runner.checkpoint
+    load_run = self.cfg["runner"]["load_run"]
+    checkpoint = self.cfg["runner"]["checkpoint"]
     if (load_run == "-1") or (load_run == -1):
       resume_path = sorted(
         [item for item in resume_root.iterdir() if item.is_dir()],
@@ -329,9 +329,9 @@ class Runner:
     obs = self.to_device(obs)
     privileged_obs = self.to_device(privileged_obs)
 
-    if hasattr(self.cfg.algorithm, "clip_min_std"):
+    if hasattr(self.cfg["algorithm"], "clip_min_std"):
       clip_min_std = torch.tensor(
-        self.cfg.algorithm.clip_min_std, device=self.device
+        self.cfg["algorithm"]["clip_min_std"], device=self.device
       )
     else:
       clip_min_std = None
@@ -346,7 +346,7 @@ class Runner:
     for it in range(num_learning_iterations):
       start = time.time()
       # within horizon_length, env.step() is called with same act
-      for n in range(self.cfg.runner.num_steps_per_env):
+      for n in range(self.cfg["runner"]["num_steps_per_env"]):
         self.buffer.update_data("obses", n, obs)
         self.buffer.update_data("privileged_obses", n, privileged_obs)
         if self.model.is_recurrent:
@@ -385,8 +385,8 @@ class Runner:
           done,
           ep_info,
           it,
-          discount_factor_dict={"return": self.cfg.algorithm.gamma},
-          write_record=n == (self.cfg.runner.num_steps_per_env - 1),
+          discount_factor_dict={"return": self.cfg["algorithm"]["gamma"]},
+          write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
         )
 
       all_obses = self.buffer["obses"]
@@ -445,7 +445,7 @@ class Runner:
       mean_actor_loss = 0
       mean_bound_loss = 0
       mean_entropy = 0
-      for n in range(self.cfg.algorithm.num_learning_epochs):
+      for n in range(self.cfg["algorithm"]["num_learning_epochs"]):
         values = self.model.est_value(
           all_privileged_obses, masks=traj_masks, hidden_states=hid_c
         )
@@ -459,8 +459,8 @@ class Runner:
             self.buffer["dones"] | self.buffer["time_outs"],
             values,
             last_values,
-            self.cfg.algorithm.gamma,
-            self.cfg.algorithm.lam,
+            self.cfg["algorithm"]["gamma"],
+            self.cfg["algorithm"]["lam"],
           )
           returns = values + advantages
           advantages = (advantages - advantages.mean()) / (
@@ -484,8 +484,8 @@ class Runner:
         loss = (
           value_loss
           + actor_loss
-          + self.cfg.algorithm.bound_coef * bound_loss
-          + self.cfg.algorithm.entropy_coef * entropy.mean()
+          + self.cfg["algorithm"]["bound_coef"] * bound_loss
+          + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
         )
         self.optimizer.zero_grad()
         loss.backward()
@@ -505,9 +505,9 @@ class Runner:
             axis=-1,
           )
           kl_mean = torch.mean(kl)
-          if kl_mean > self.cfg.algorithm.desired_kl * 2:
+          if kl_mean > self.cfg["algorithm"]["desired_kl"] * 2:
             self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-          elif kl_mean < self.cfg.algorithm.desired_kl / 2:
+          elif kl_mean < self.cfg["algorithm"]["desired_kl"] / 2:
             self.learning_rate = min(1e-2, self.learning_rate * 1.5)
           for param_group in self.optimizer.param_groups:
             param_group["lr"] = self.learning_rate
@@ -516,10 +516,10 @@ class Runner:
         mean_actor_loss += actor_loss.item()
         mean_bound_loss += bound_loss.item()
         mean_entropy += entropy.mean()
-      mean_value_loss /= self.cfg.algorithm.num_learning_epochs
-      mean_actor_loss /= self.cfg.algorithm.num_learning_epochs
-      mean_bound_loss /= self.cfg.algorithm.num_learning_epochs
-      mean_entropy /= self.cfg.algorithm.num_learning_epochs
+      mean_value_loss /= self.cfg["algorithm"]["num_learning_epochs"]
+      mean_actor_loss /= self.cfg["algorithm"]["num_learning_epochs"]
+      mean_bound_loss /= self.cfg["algorithm"]["num_learning_epochs"]
+      mean_entropy /= self.cfg["algorithm"]["num_learning_epochs"]
       self.recorder.record_statistics(
         {
           "value_loss": mean_value_loss,
@@ -528,10 +528,6 @@ class Runner:
           "entropy": mean_entropy,
           "kl_mean": kl_mean,
           "lr": self.learning_rate,
-          # "curriculum/mean_lin_vel_level": self.env.mean_lin_vel_level,
-          # "curriculum/mean_ang_vel_level": self.env.mean_ang_vel_level,
-          # "curriculum/max_lin_vel_level": self.env.max_lin_vel_level,
-          # "curriculum/max_ang_vel_level": self.env.max_ang_vel_level,
         },
         it,
       )
@@ -539,12 +535,11 @@ class Runner:
       if clip_min_std is not None:
         self.model.clip_std(min=clip_min_std)
 
-      if (it + 1) % self.cfg.runner.save_interval == 0:
+      if (it + 1) % self.cfg["runner"]["save_interval"] == 0:
         self.recorder.save(
           {
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
-            # "curriculum": self.env.curriculum_prob,
           },
           it + 1,
         )

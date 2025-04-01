@@ -23,6 +23,7 @@ class Config(dict):
     mapping = self._ensure_values(mapping)
     self._flat = mapping
     self._nested = self._nest(mapping)
+    self._cache = {}  # Add cache dictionary
     # Need to assign the values to the base class dictionary so that
     # conversion to dict does not lose the content.
     super().__init__(self._nested)
@@ -67,11 +68,22 @@ class Config(dict):
     if name.startswith('_'):
       return super().__getattr__(name)
     try:
-      return self[name]
+      # Check cache first
+      if name in self._cache:
+        return self._cache[name]
+      
+      # If not in cache, compute and cache the result
+      result = self[name]
+      self._cache[name] = result
+      return result
     except KeyError:
       raise AttributeError(name)
 
   def __getitem__(self, name):
+    # Check cache first
+    if name in self._cache:
+      return self._cache[name]
+    
     result = self._nested
     for part in name.split(self.SEP):
       try:
@@ -80,6 +92,9 @@ class Config(dict):
         raise KeyError
     if isinstance(result, dict):
       result = type(self)(result)
+    
+    # Cache the result
+    self._cache[name] = result
     return result
 
   def __setattr__(self, key, value):
@@ -197,6 +212,10 @@ class Config(dict):
       assert len(value) > 0, value
       return self._format_type(value[0]) + 's'
     return str(type(value).__name__)
+
+  def clear_cache(self):
+    """Clear the cache when the underlying data changes"""
+    self._cache.clear()
 
 def from_yaml(filepath):
   cfg = yaml.YAML(typ='safe').load(path.Path(filepath).read())

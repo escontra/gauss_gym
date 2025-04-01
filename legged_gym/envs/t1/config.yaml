@@ -1,8 +1,8 @@
 seed: -1
 task: "t1"
 print_config: False
-rl_device: "cuda"
-sim_device: "cuda"
+rl_device: "cuda:0"
+sim_device: "cuda:0"
 headless: False
 logdir: "default"
 
@@ -271,6 +271,7 @@ commands:
     heading: [-3.14, 3.14]
 
 normalization:
+  filter_weight: 0.1
   clip_actions: 1.0
   clip_actions_method: "normal"
 
@@ -278,9 +279,10 @@ viewer:
   ref_env: 0
   pos: [10., 0., 6.]
   lookat: [11., 5., 3.]
+  record_video: False
 
 sim:
-  physics_engine: "SIM_PHYSX" # or "SIM_PHYSX"
+  physics_engine: "SIM_PHYSX" # or "SIM_FLEX"
   dt: 0.002
   substeps: 1
   gravity: [0.0, 0.0, -9.81]

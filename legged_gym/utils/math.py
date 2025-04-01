@@ -220,7 +220,7 @@ def quat_rotate_inverse(q, v):
             shape[0], 3, 1)).squeeze(-1) * 2.0
     return a - b + c
 
-def apply_randomization(tensor, params: Optional[Dict[str, Any]] = None, return_noise: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+def apply_randomization(tensor: Union[torch.Tensor, float], params: Optional[Dict[str, Any]] = None, return_noise: bool = False) -> Union[torch.Tensor, float]:
     if params is None:
         return tensor
 

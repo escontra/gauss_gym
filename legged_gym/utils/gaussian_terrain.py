@@ -71,7 +71,7 @@ class GaussianTerrain:
   def __init__(self, cfg: Dict, num_robots) -> None:
     self.cfg = cfg
     self.num_robots = num_robots
-    self.scene_root = pathlib.Path(self.cfg.terrain.scene_root.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
+    self.scene_root = pathlib.Path(self.cfg["terrain"]["scene_root"].format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -142,7 +142,7 @@ class GaussianTerrain:
 
     for filepath, raw_mesh in self._mesh_dict.items():
       # Compute orientations from camera translations.
-      if self.cfg.terrain.cams_yaw_only:
+      if self.cfg["terrain"]["cams_yaw_only"]:
         delta_xy = raw_mesh.cam_trans[1:, :2] - raw_mesh.cam_trans[:-1, :2]
         delta_xyz = np.concatenate(
           [delta_xy, np.zeros_like(delta_xy[:, :-1])], axis=-1
@@ -275,15 +275,15 @@ class GaussianSceneManager:
     self.heading_geom = None
 
     self.local_offset = torch.tensor(
-        np.array(self._env.cfg.env.camera_params.cam_xyz_offset)[None].repeat(self._env.num_envs, 0),
+        np.array(self._env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self._env.num_envs, 0),
         dtype=torch.float, device=self._env.device, requires_grad=False
     )
 
     self.cam_rpy_offset = quat_mul(
       quat_mul(
-        quat_from_x_rot(self._env.cfg.env.camera_params.cam_rpy_offset[0], 1, self._env.device),
-        quat_from_y_rot(self._env.cfg.env.camera_params.cam_rpy_offset[1], 1, self._env.device)),
-        quat_from_z_rot(self._env.cfg.env.camera_params.cam_rpy_offset[2], 1, self._env.device)).detach()
+        quat_from_x_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][0], 1, self._env.device),
+        quat_from_y_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][1], 1, self._env.device)),
+        quat_from_z_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][2], 1, self._env.device)).detach()
 
     self.robot_frame_transform = quat_mul(
       quat_from_z_rot(np.pi / 2, 1, self._env.device),
@@ -302,14 +302,14 @@ class GaussianSceneManager:
 
     for i, (scene, mesh) in enumerate(self._terrain.mesh_keys):
       if i > 0 and i % num_rows == 0:
-        curr_x_offset += self._env.cfg.env.env_spacing
+        curr_x_offset += self._env.cfg["env"]["env_spacing"]
         curr_y_offset = 0.0
       else:
-        curr_y_offset += self._env.cfg.env.env_spacing
+        curr_y_offset += self._env.cfg["env"]["env_spacing"]
 
-      if self._env.cfg.sim.up_axis == 1:
+      if self._env.cfg["sim"]["up_axis"] == 1:
         env_origin = [curr_x_offset, curr_y_offset, 0.0]
-      elif self._env.cfg.sim.up_axis == 0:
+      elif self._env.cfg["sim"]["up_axis"] == 0:
         env_origin = [curr_x_offset, 0.0, curr_y_offset]
       else:
         raise ValueError
@@ -319,9 +319,9 @@ class GaussianSceneManager:
       mesh = self._terrain.get_mesh(scene, mesh)
       vertices = env_origin[None] + mesh.vertices
       mesh_params = gymapi.TriangleMeshParams()
-      mesh_params.static_friction = self._env.cfg.terrain.static_friction
-      mesh_params.dynamic_friction = self._env.cfg.terrain.dynamic_friction
-      mesh_params.restitution = self._env.cfg.terrain.restitution
+      mesh_params.static_friction = self._env.cfg["terrain"]["static_friction"]
+      mesh_params.dynamic_friction = self._env.cfg["terrain"]["dynamic_friction"]
+      mesh_params.restitution = self._env.cfg["terrain"]["restitution"]
       mesh_params.nb_vertices = vertices.shape[0]
       mesh_params.nb_triangles = mesh.triangles.shape[0]
       self._env.gym.add_triangle_mesh(
@@ -541,15 +541,15 @@ class GaussianSceneManager:
     yaw_exceeded = past_end.clone()
 
     distance = torch.norm((curr_cam_link_trans - nearest_cam_trans)[:, :2], dim=-1)
-    distance_exceeded |= distance > self._env.cfg.terrain.max_traj_pos_distance
+    distance_exceeded |= distance > self._env.cfg["terrain"]["max_traj_pos_distance"]
 
     quat_difference = quat_mul(curr_cam_link_quat, quat_conjugate(nearest_robot_quat))
     _, _, yaw = get_euler_xyz(quat_difference)
     yaw_distance = torch.abs(wrap_to_pi(yaw))
-    yaw_exceeded |= yaw_distance > self._env.cfg.terrain.max_traj_yaw_distance_rad
+    yaw_exceeded |= yaw_distance > self._env.cfg["terrain"]["max_traj_yaw_distance_rad"]
     return distance_exceeded, yaw_exceeded
 
-  def sample_commands(self, env_ids):
+  def sample_commands(self, env_ids, still_env_mask=None):
     """Randommly select commands of some environments
 
     Args:
@@ -593,6 +593,8 @@ class GaussianSceneManager:
       torch.norm(pos_delta_norm[:, :2], dim=1, keepdim=True) > 0.1
     )  # Zero out small commands.
     self.velocity_command = pos_delta_norm
+    if still_env_mask is not None:
+      self.velocity_command[still_env_mask] = 0.0
 
     return self.heading_command, self.velocity_command
 

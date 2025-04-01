@@ -607,7 +607,7 @@ class RayCaster():
 
 class FootContactSensor():
     def __init__(self, env):        
-        self.feet_edge_pos = env.cfg.asset.feet_edge_pos
+        self.feet_edge_pos = env.cfg["asset"]["feet_edge_pos"]
         self.attach_yaw_only = True
         self.pattern_cfg = BaseHeightLocomotionCfg()
         self.default_hit_value = 10
@@ -623,7 +623,7 @@ class FootContactSensor():
 
         self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
         self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
-        feet_edge_relative_pos = to_torch(env.cfg.asset.feet_edge_pos, device=env.device, requires_grad=False)
+        feet_edge_relative_pos = to_torch(env.cfg["asset"]["feet_edge_pos"], device=env.device, requires_grad=False)
         self.num_edge_points = feet_edge_relative_pos.shape[0]
         self.feet_edge_relative_pos = (
             feet_edge_relative_pos.unsqueeze(0).unsqueeze(0)
@@ -652,7 +652,7 @@ class FootContactSensor():
         nearest_points = nearest_point(feet_edge_pos, self.terrain_mesh)
         dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
         self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
-        self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg.asset.feet_contact_radius
+        self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg["asset"]["feet_contact_radius"]
 
     def get_data(self):
         foot_contact = torch.any(self.feet_contact, dim=-1)
@@ -661,7 +661,7 @@ class FootContactSensor():
     def debug_vis(self, env):
         if self.sphere_geom is None:
             self.sphere_geom = BatchWireframeSphereGeometry(
-                self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg.asset.feet_contact_radius, 16, 16, None, color=(1, 1, 0)
+                self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg["asset"]["feet_contact_radius"], 16, 16, None, color=(1, 1, 0)
             )
         feet_edge_pos = self.feet_edge_pos.view(-1, 3)
         feet_contact = self.feet_contact.view(-1)
@@ -718,19 +718,19 @@ class GaussianSplattingRenderer():
             renderer_gpus=[self.device],
             # renderer_gpus=[1],
             output_gpu=self.device
-
         )
 
         self.fig, self.process_image_fn, self.im = None, None, None
         self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
         self.env = env
-        self.renders = torch.zeros(self.num_envs, self.env.cfg.env.camera_params.cam_height, self.env.cfg.env.camera_params.cam_width, 3, device=self.device, dtype=torch.uint8)
+        self.renders = torch.zeros(self.num_envs, self.env.cfg["env"]["camera_params"]["cam_height"], self.env.cfg["env"]["camera_params"]["cam_width"], 3, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
 
         self.local_offset = torch.tensor(
-            np.array(self.env.cfg.env.camera_params.cam_xyz_offset)[None].repeat(self.num_envs, 0), dtype=torch.float, device=self.device, requires_grad=False
+            np.array(self.env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self.num_envs, 0),
+            dtype=torch.float, device=self.device, requires_grad=False
         )
 
     def update(self, dt, env_ids=...):
@@ -792,9 +792,9 @@ class GaussianSplattingRenderer():
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
-            focal=self.env.cfg.env.camera_params.focal_length,
-            h=self.env.cfg.env.camera_params.cam_height,
-            w=self.env.cfg.env.camera_params.cam_width,
+            focal=self.env.cfg["env"]["camera_params"]["focal_length"],
+            h=self.env.cfg["env"]["camera_params"]["cam_height"],
+            w=self.env.cfg["env"]["camera_params"]["cam_width"],
             camera_linear_velocity=scene_linear_velocities,
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
@@ -813,9 +813,9 @@ class GaussianSplattingRenderer():
                 self.num_envs,
                 0.1,
                 0.2,
-                self.env.cfg.env.camera_params.cam_width,
-                self.env.cfg.env.camera_params.cam_height,
-                self.env.cfg.env.camera_params.focal_length,
+                self.env.cfg["env"]["camera_params"]["cam_width"],
+                self.env.cfg["env"]["camera_params"]["cam_height"],
+                self.env.cfg["env"]["camera_params"]["focal_length"],
                 0.005,
                 32)
             self.axis_geom = BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
@@ -831,9 +831,9 @@ class GaussianSplattingRenderer():
             self.process_image_fn = process_image_fn
 
             if self.env.selected_environment >= 0:
-                self.im = ax.imshow(np.zeros((self.env.cfg.env.camera_params.cam_height, self.env.cfg.env.camera_params.cam_width, 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.env.cfg["env"]["camera_params"]["cam_height"], self.env.cfg["env"]["camera_params"]["cam_width"], 3), dtype=np.uint8))
             else:
-                self.im = ax.imshow(np.zeros((self.env.cfg.env.camera_params.cam_height * n, self.env.cfg.env.camera_params.cam_width * n, 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.env.cfg["env"]["camera_params"]["cam_height"] * n, self.env.cfg["env"]["camera_params"]["cam_width"] * n, 3), dtype=np.uint8))
             plt.show(block=False)
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)

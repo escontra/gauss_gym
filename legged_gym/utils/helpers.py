@@ -74,30 +74,6 @@ def set_seed(seed):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def parse_sim_params(cfg):
-    # code from Isaac Gym Preview 2
-    # initialize sim params
-    sim_params = gymapi.SimParams()
-
-    physics_engine = getattr(gymapi, cfg.sim.physics_engine)
-
-    # set some values from args
-    if physics_engine == gymapi.SIM_FLEX:
-        if cfg.device != "cpu":
-            print("WARNING: Using Flex with GPU instead of PHYSX!")
-    elif physics_engine == gymapi.SIM_PHYSX:
-        sim_params.physx.use_gpu = cfg.sim_device != "cpu"
-        sim_params.physx.num_subscenes = cfg.sim.physx.num_subscenes
-    else:
-        raise ValueError("Invalid physics engine: {}".format(cfg.sim.physics_engine))
-    sim_params.use_gpu_pipeline = cfg.sim_device != "cpu"
-
-    # if sim options are provided in cfg, parse them and update/override above:
-    gymutil.parse_sim_config(dict(cfg.sim), sim_params)
-    sim_params.physx.num_threads = cfg.sim.physx.num_threads
-
-    return physics_engine, sim_params
-
 def get_load_path(root, load_run=-1, checkpoint=-1):
     try:
         runs = os.listdir(root)
