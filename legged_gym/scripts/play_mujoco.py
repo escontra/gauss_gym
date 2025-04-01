@@ -177,9 +177,9 @@ if __name__ == "__main__":
             quat = mj_data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.float32)
             base_ang_vel = mj_data.sensor("angular-velocity").data.astype(np.float32)
             projected_gravity = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0]))
-            forward = tu.quat_apply(torch.tensor(quat).unsqueeze(0), torch.tensor([1.0, 0.0, 0.0]).unsqueeze(0))
-            heading = torch.atan2(forward[:, 1], forward[:, 0])
-            ang_vel_yaw = torch.clip(0.5*wrap_to_pi(ang_vel_yaw - heading), -1., 1.)
+            # forward = tu.quat_apply(torch.tensor(quat).unsqueeze(0), torch.tensor([1.0, 0.0, 0.0]).unsqueeze(0))
+            # heading = torch.atan2(forward[:, 1], forward[:, 0])
+            # ang_vel_yaw = torch.clip(0.5*wrap_to_pi(ang_vel_yaw - heading), -1., 1.)
             if it % env_cfg.control.decimation == 0:
                 obs = compute_observation(env_cfg, observation_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos, actions)
                 dist = mujoco_runner.act(obs['student_observations'])

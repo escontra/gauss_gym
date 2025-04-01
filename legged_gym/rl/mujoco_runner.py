@@ -13,48 +13,48 @@ from torch.utils.tensorboard import SummaryWriter
 
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.envs.base.legged_robot_config import LeggedRobotCfgPPO
-from legged_gym.utils.helpers import class_to_dict
+from legged_gym.utils import config
 
 class MuJoCoRunner:
-  def __init__(self, env, train_cfg: LeggedRobotCfgPPO, log_dir: pathlib.Path, device="cpu"):
+  def __init__(self, env: vec_env.VecEnv, cfg: config.Config, log_dir: pathlib.Path, device="cpu"):
     self.test = True
     self.env = env
     self.device = device
     self.log_dir = log_dir
-    self.cfg = self.env.cfg
-    self.train_cfg = train_cfg
+    self.cfg = cfg
     self._set_seed()
     self.obs_group_sizes = {
       'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
       'student_observations': self.env.obs_group_size_per_name("student_observations"),
     }
-    self.model = getattr(models, self.train_cfg.runner.policy_class_name)(
+    self.model = getattr(models, self.cfg.runner.policy_class_name)(
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
-      self.train_cfg.policy.init_noise_std,
-      self.train_cfg.policy.mu_activation,
+      self.cfg.policy.init_noise_std,
+      self.cfg.policy.mu_activation,
     ).to(self.device)
 
   def _set_seed(self):
-    if self.train_cfg.seed == -1:
-      self.train_cfg.seed = np.random.randint(0, 10000)
-    print("Setting seed: {}".format(self.train_cfg.seed))
 
-    random.seed(self.train_cfg.seed)
-    np.random.seed(self.train_cfg.seed)
-    torch.manual_seed(self.train_cfg.seed)
-    os.environ["PYTHONHASHSEED"] = str(self.train_cfg.seed)
-    torch.cuda.manual_seed(self.train_cfg.seed)
-    torch.cuda.manual_seed_all(self.train_cfg.seed)
+    seed = self.cfg.seed
+    if seed == -1:
+      seed = np.random.randint(0, 10000)
+    print("Setting RL seed: {}".format(seed))
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
   def load(self, resume_root: pathlib.Path):
-    if not self.train_cfg.runner.resume:
+    if not self.cfg.runner.resume:
       return
 
-    load_run = self.train_cfg.runner.load_run
-    checkpoint = self.train_cfg.runner.checkpoint
+    load_run = self.cfg.runner.load_run
+    checkpoint = self.cfg.runner.checkpoint
     if (load_run == "-1") or (load_run == -1):
       resume_path = sorted(
         [item for item in resume_root.iterdir() if item.is_dir()],
