@@ -5,7 +5,7 @@ import math
 class T1RoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env):
         num_envs = 4096
-        num_actions = 14
+        num_actions = 12
         num_observations = 48
         env_spacing = 8.0
 
@@ -42,8 +42,8 @@ class T1RoughCfg( LeggedRobotCfg ):
         pos = [0.0, 0.0, 0.86] # x,y,z [m]
 
         default_joint_angles = { # = target angles [rad] when action = 0.0
-            'AAHead_yaw': 0.,
-            'Head_pitch': 0.,
+            # 'AAHead_yaw': 0.,
+            # 'Head_pitch': 0.,
             'Left_Hip_Pitch': -0.2,
             'Left_Hip_Roll': 0.,
             'Left_Hip_Yaw': 0.,
@@ -61,12 +61,16 @@ class T1RoughCfg( LeggedRobotCfg ):
 
     class control( LeggedRobotCfg.control ):
         # PD Drive parameters:
-        stiffness = {   'Head': 50.0,
+        stiffness = {   
+                        # 'Head': 50.0,
                         'Hip': 200.0, 
                         'Knee': 200.0,
                         'Ankle': 50.0}  # [N*m/rad]
-        damping = { 'Head': 1.0, 'Hip': 5.0, 'Knee': 5.0,
-                    'Ankle': 1.0}  # [N*m*s/rad]     # [N*m*s/rad]
+        damping = { 
+                        # 'Head': 1.0, 
+                        'Hip': 5.0, 
+                        'Knee': 5.0,
+                        'Ankle': 1.0}  # [N*m*s/rad]     # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
         action_scale = 1.0
         # decimation: Number of control action updates @ sim DT per policy DT
@@ -79,6 +83,7 @@ class T1RoughCfg( LeggedRobotCfg ):
         camera_link_name = "H2"
         foot_name = 'foot_link'
         base_link_name = "Trunk"
+        collapse_fixed_joints = False # merge bodies connected by fixed joints. Specific fixed joints can be kept by adding " <... dont_collapse="true">
         penalize_contacts_on = ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
         terminate_after_contacts_on = []
         # terminate_after_contacts_on = ['Waist']
@@ -143,6 +148,7 @@ class T1RoughCfg( LeggedRobotCfg ):
             feet_distance = -1.
             feet_swing = 3.
             feet_air_time = 0.
+            stand_still = -0.
 
     class normalization( LeggedRobotCfg.normalization ):
         clip_actions = 1.

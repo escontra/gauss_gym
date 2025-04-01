@@ -8,6 +8,9 @@ from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.helpers import get_args
 from legged_gym.teacher import observation_groups
+from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
+
+from isaacgym import torch_utils as tu
 
 import torch
 import mujoco, mujoco.viewer
@@ -156,10 +159,11 @@ if __name__ == "__main__":
                     parts = sys.stdin.readline().strip().split()
                     if len(parts) == 3:
                         lin_vel_x, lin_vel_y, ang_vel_yaw = map(float, parts)
-                        if lin_vel_x == 0 and lin_vel_y == 0 and ang_vel_yaw == 0:
-                            gait_frequency = 0
-                        else:
-                            gait_frequency = np.average(env_cfg.commands.gait_frequency)
+
+                        # if lin_vel_x == 0 and lin_vel_y == 0 and ang_vel_yaw == 0:
+                            # gait_frequency = 0
+                        # else:
+                        gait_frequency = np.average(env_cfg.commands.gait_frequency)
                         print(
                             f"Updated command to: x={lin_vel_x}, y={lin_vel_y}, yaw={ang_vel_yaw}\nSet command (x, y, yaw): ",
                             end="",
@@ -173,6 +177,9 @@ if __name__ == "__main__":
             quat = mj_data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.float32)
             base_ang_vel = mj_data.sensor("angular-velocity").data.astype(np.float32)
             projected_gravity = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0]))
+            forward = tu.quat_apply(torch.tensor(quat).unsqueeze(0), torch.tensor([1.0, 0.0, 0.0]).unsqueeze(0))
+            heading = torch.atan2(forward[:, 1], forward[:, 0])
+            ang_vel_yaw = torch.clip(0.5*wrap_to_pi(ang_vel_yaw - heading), -1., 1.)
             if it % env_cfg.control.decimation == 0:
                 obs = compute_observation(env_cfg, observation_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos, actions)
                 dist = mujoco_runner.act(obs['student_observations'])
