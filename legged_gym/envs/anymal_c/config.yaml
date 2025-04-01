@@ -239,7 +239,7 @@ commands:
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
   ranges:
-    lin_vel: [0.0, 1.0]
+    lin_vel: [0.1, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
@@ -302,6 +302,7 @@ runner:
   class_name: "Runner"
   policy_class_name: "ActorCriticRecurrent"
   use_wandb: False
+  description: ""
   save_interval: 50
   run_name: ""
   resume: False

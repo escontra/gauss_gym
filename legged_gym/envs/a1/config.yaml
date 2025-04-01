@@ -215,8 +215,8 @@ rewards:
   base_height_target: 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.4
-  feet_air_time_max_time: 0.6
+  feet_air_time_min_time: 0.5
+  feet_air_time_max_time: 0.75
   scales:
     tracking_lin_vel_x: 2.0
     tracking_lin_vel_y: 2.0
@@ -237,7 +237,7 @@ commands:
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
   ranges:
-    lin_vel: [0.0, 1.0]
+    lin_vel: [0.1, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
@@ -323,6 +323,7 @@ runner:
   class_name: "Runner"
   policy_class_name: "ActorCriticRecurrent"
   use_wandb: False
+  description: ""
   save_interval: 50
   run_name: ""
   resume: False
