@@ -259,10 +259,11 @@ rewards:
     feet_swing: 3.
 
 commands:
+  still_proportion: 0.1
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
-  gait_frequency: [1.4, 2.0]
+  gait_frequency: [1.0, 2.0]
   ranges:
     lin_vel: [0.0, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
@@ -286,7 +287,7 @@ sim:
   up_axis: 1
 
   physx:
-    subscenes: 0
+    num_subscenes: 0
     num_threads: 4
     solver_type: 1
     num_position_iterations: 4

@@ -58,10 +58,11 @@ class T1(LeggedRobot):
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
 
     def _resample_commands(self, env_ids):
-        super()._resample_commands(env_ids)
+        still_envs = super()._resample_commands(env_ids)
         self.gait_frequency[env_ids] = tu.torch_rand_float(
             *self.cfg.commands.gait_frequency, (len(env_ids), 1), device=self.device
         ).squeeze(1)
+        self.gait_frequency[still_envs] = 0.0
 
     def _reward_feet_roll(self):
         roll, _, _ = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))

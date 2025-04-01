@@ -36,8 +36,6 @@ import random
 from isaacgym import gymapi
 from isaacgym import gymutil
 
-from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
-
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):
         return obj
@@ -89,7 +87,9 @@ def parse_sim_params(cfg):
             print("WARNING: Using Flex with GPU instead of PHYSX!")
     elif physics_engine == gymapi.SIM_PHYSX:
         sim_params.physx.use_gpu = cfg.sim_device != "cpu"
-        sim_params.physx.num_subscenes = cfg.sim.physx.subscenes
+        sim_params.physx.num_subscenes = cfg.sim.physx.num_subscenes
+    else:
+        raise ValueError("Invalid physics engine: {}".format(cfg.sim.physics_engine))
     sim_params.use_gpu_pipeline = cfg.sim_device != "cpu"
 
     # if sim options are provided in cfg, parse them and update/override above:

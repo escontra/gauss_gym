@@ -143,9 +143,7 @@ class ActorCriticRecurrent(torch.nn.Module):
       torch.nn.ELU(),
       torch.nn.Linear(128, num_act),
     ]
-    if mu_activation is not None:
-      actor_layers.append(get_activation(mu_activation))
-      print('APPLYING TANH ACTIVATION')
+    actor_layers.append(get_activation(mu_activation))
     self.actor = torch.nn.Sequential(*actor_layers)
     if self.cnn_keys_a:
       self.cnn_a = resnet.NatureCNN(3, IMAGE_EMBEDDING_DIM)

@@ -234,6 +234,7 @@ rewards:
     stand_still: -0.
 
 commands:
+  still_proportion: 0.1
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
@@ -260,7 +261,7 @@ sim:
   up_axis: 1
 
   physx:
-    subscenes: 0
+    num_subscenes: 0
     num_threads: 10
     solver_type: 1
     num_position_iterations: 4

@@ -437,16 +437,11 @@ class LeggedRobot(BaseTask):
         """ Callback called before computing terminations, rewards, and observations
             Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
         """
-        # 
-        resample_command_env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
 
         # Resample command scales. Commands are updated every timestep to guide
         # the robot along the camera trajectory.
+        resample_command_env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
         self._resample_commands(resample_command_env_ids)
-        if self.cfg.commands.heading_command:
-            forward = tu.quat_apply(self.base_quat, self.forward_vec)
-            heading = torch.atan2(forward[:, 1], forward[:, 0])
-            self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
         self._update_physics_curriculum()
 
@@ -478,6 +473,16 @@ class LeggedRobot(BaseTask):
         else:
             raise NotImplementedError()
         self.commands[:, :2] = velocity_command
+        if self.cfg.commands.heading_command:
+            forward = tu.quat_apply(self.base_quat, self.forward_vec)
+            heading = torch.atan2(forward[:, 1], forward[:, 0])
+            self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+
+        still_mask = torch.rand(len(env_ids), device=self.device) < self.cfg.commands.still_proportion
+        still_envs = env_ids[still_mask]
+        self.commands[still_envs, :] = 0.0
+
+        return still_envs
 
     def _compute_torques_original(self, actions):
         """ Compute torques from actions.
