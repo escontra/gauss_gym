@@ -39,7 +39,7 @@ class T1(LeggedRobot):
 
     def _init_buffers(self):
         super()._init_buffers()
-        self.gait_frequency = torch.ones(self.num_envs, dtype=torch.float, device=self.device)*self.cfg.commands.gait_frequency
+        self.gait_frequency = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         self.gait_process = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
 
     def step(self, actions):
@@ -56,6 +56,12 @@ class T1(LeggedRobot):
             self.dof_pos_limits[:, 1] - self.dof_pos_limits[:, 0]
         )
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
+
+    def _resample_commands(self, env_ids):
+        super()._resample_commands(env_ids)
+        self.gait_frequency[env_ids] = tu.torch_rand_float(
+            *self.cfg.commands.gait_frequency, (len(env_ids), 1), device=self.device
+        ).squeeze(1)
 
     def _reward_feet_roll(self):
         roll, _, _ = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))

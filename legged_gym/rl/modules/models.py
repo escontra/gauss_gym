@@ -110,6 +110,13 @@ class ActorCriticRecurrent(torch.nn.Module):
     latent_c_dim = self.num_mlp_obs_c + len(self.cnn_keys_c) * IMAGE_EMBEDDING_DIM
     latent_a_dim = self.num_mlp_obs_a + len(self.cnn_keys_a) * IMAGE_EMBEDDING_DIM
 
+    print(f'Actor MLP Keys: {self.mlp_keys_a}')
+    print(f'Actor MLP Num Obs: {self.num_mlp_obs_a}')
+    print(f'Actor CNN Keys: {self.cnn_keys_a}')
+    print(f'Critic MLP Keys: {self.mlp_keys_c}')
+    print(f'Critic MLP Num Obs: {self.num_mlp_obs_c}')
+    print(f'Critic CNN Keys: {self.cnn_keys_c}')
+
     self.memory_c = Memory(latent_c_dim, type='lstm', num_layers=1, hidden_size=256)
     self.critic = torch.nn.Sequential(
       torch.nn.Linear(256, 256),

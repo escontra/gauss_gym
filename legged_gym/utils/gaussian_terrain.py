@@ -1,8 +1,9 @@
 import numpy as np
 import os
 import pickle
-from typing import List, Union
-from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg
+import pathlib
+from typing import List, Union, Dict
+from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.utils.math import (
   wrap_to_pi,
   matrix_to_quaternion,
@@ -67,10 +68,10 @@ class Mesh(RawMesh):
 
 
 class GaussianTerrain:
-  def __init__(self, cfg: LeggedRobotCfg, num_robots) -> None:
+  def __init__(self, cfg: Dict, num_robots) -> None:
     self.cfg = cfg
     self.num_robots = num_robots
-    self.type = self.cfg.terrain.mesh_type
+    self.scene_root = pathlib.Path(self.cfg.terrain.scene_root.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -105,9 +106,7 @@ class GaussianTerrain:
     return values
 
   def _load_mesh(self, scene: str, filename: str):
-    filepath = os.path.join(
-      self.cfg.terrain.scene_root, scene, "meshes", filename
-    )
+    filepath = self.scene_root / scene / "meshes" / filename
     with open(filepath, "rb") as f:
       mesh_dict = pickle.load(f)
 
@@ -116,7 +115,7 @@ class GaussianTerrain:
     triangles = np.array(mesh_dict["triangles"]).astype(np.uint32)
     curr_cam_trans = np.array(mesh_dict["cam_trans"]).astype(np.float32)
     curr_cam_trans = self.smooth_path(
-      curr_cam_trans, smoothing_factor=9,
+      curr_cam_trans, smoothing_factor=10,
       resample_num_points=20)
 
     return RawMesh(
@@ -130,10 +129,10 @@ class GaussianTerrain:
     )
 
   def _load_meshes(self):
-    for scene_name in os.listdir(os.path.join(self.cfg.terrain.scene_root)):
-      for filename in os.listdir(
-        os.path.join(self.cfg.terrain.scene_root, scene_name, "meshes")
-      ):
+    for scene_name in self.scene_root.iterdir():
+      scene_name = scene_name.name
+      for filename in (self.scene_root / scene_name / "meshes").iterdir():
+        filename = filename.name
         self._mesh_dict[os.path.join(scene_name, filename)] = self._load_mesh(
           scene_name, filename
         )
@@ -239,7 +238,7 @@ class GaussianTerrain:
     
     # Create interpolation splines for each dimension
     splines = [
-        scipy.interpolate.splrep(t, smoothed_poses[:, i], k=3) 
+        scipy.interpolate.splrep(t, smoothed_poses[:, i], k=3, s=1)
         for i in range(smoothed_poses.shape[1])
     ]
     
@@ -276,15 +275,15 @@ class GaussianSceneManager:
     self.heading_geom = None
 
     self.local_offset = torch.tensor(
-        np.array(self._env.cfg.env.cam_xyz_offset)[None].repeat(self._env.num_envs, 0),
+        np.array(self._env.cfg.env.camera_params.cam_xyz_offset)[None].repeat(self._env.num_envs, 0),
         dtype=torch.float, device=self._env.device, requires_grad=False
     )
 
     self.cam_rpy_offset = quat_mul(
       quat_mul(
-        quat_from_x_rot(self._env.cfg.env.cam_rpy_offset[0], 1, self._env.device),
-        quat_from_y_rot(self._env.cfg.env.cam_rpy_offset[1], 1, self._env.device)),
-        quat_from_z_rot(self._env.cfg.env.cam_rpy_offset[2], 1, self._env.device)).detach()
+        quat_from_x_rot(self._env.cfg.env.camera_params.cam_rpy_offset[0], 1, self._env.device),
+        quat_from_y_rot(self._env.cfg.env.camera_params.cam_rpy_offset[1], 1, self._env.device)),
+        quat_from_z_rot(self._env.cfg.env.camera_params.cam_rpy_offset[2], 1, self._env.device)).detach()
 
     self.robot_frame_transform = quat_mul(
       quat_from_z_rot(np.pi / 2, 1, self._env.device),
@@ -500,11 +499,12 @@ class GaussianSceneManager:
     cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
     rand = torch.rand((len(env_ids),), device=self._env.device)
     low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
-    high = (
-      torch.ones((len(env_ids),), device=self._env.device)
-      * cam_trans_subs.shape[1]
-      - 6
-    )
+    high = self.valid_pose_start_idxs[env_ids].to(torch.float32) + 2
+    # high = (
+    #   torch.ones((len(env_ids),), device=self._env.device)
+    #   * cam_trans_subs.shape[1]
+    #   - 6
+    # )
     state_idx = (rand * (high - low) + low).to(torch.int64)
 
     trans_idx = (
@@ -541,12 +541,12 @@ class GaussianSceneManager:
     yaw_exceeded = past_end.clone()
 
     distance = torch.norm((curr_cam_link_trans - nearest_cam_trans)[:, :2], dim=-1)
-    distance_exceeded |= distance > self._env.cfg.env.max_traj_pos_distance
+    distance_exceeded |= distance > self._env.cfg.terrain.max_traj_pos_distance
 
     quat_difference = quat_mul(curr_cam_link_quat, quat_conjugate(nearest_robot_quat))
     _, _, yaw = get_euler_xyz(quat_difference)
     yaw_distance = torch.abs(wrap_to_pi(yaw))
-    yaw_exceeded |= yaw_distance > self._env.cfg.env.max_traj_yaw_distance_rad
+    yaw_exceeded |= yaw_distance > self._env.cfg.terrain.max_traj_yaw_distance_rad
     return distance_exceeded, yaw_exceeded
 
   def sample_commands(self, env_ids):

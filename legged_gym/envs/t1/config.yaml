@@ -1,0 +1,334 @@
+seed: -1
+task: "t1"
+print_config: False
+rl_device: "cuda"
+sim_device: "cuda"
+headless: False
+logdir: "default"
+
+env:
+  num_envs: 4096
+  env_spacing: 8.0
+  send_timeouts: True  # For value bootstrap.
+  episode_length_s: 20
+
+  camera_params:
+    focal_length: 100
+    cam_height: 48
+    cam_width: 48
+    cam_xyz_offset: [0., 0., 0.]
+    cam_rpy_offset: [1.571, 1.571, 3.142]
+
+observations:
+  observation_groups:
+    - "TEACHER_OBSERVATION_GROUP_T1"
+    - "STUDENT_OBSERVATION_GROUP_T1_PROPRIO"
+  latency_resampling_time: 2.0
+
+terrain:
+  scene_root: "{LEGGED_GYM_ROOT_DIR}/scenes"
+  cams_yaw_only: True
+  max_traj_pos_distance: 1.0
+  max_traj_yaw_distance_rad: 1.571
+  static_friction: 1.0
+  dynamic_friction: 1.0
+  restitution: 0.
+
+
+init_state:
+  pos: [0.0, 0.0, 0.82]
+  rot: [0.0, 0.0, 0.0, 1.0]
+  lin_vel: [0.0, 0.0, 0.0]
+  ang_vel: [0.0, 0.0, 0.0]
+  default_joint_angles: { # = target angles [rad] when action = 0.0
+    'AAHead_yaw': 0.,
+    'Head_pitch': 0.,
+    'Left_Hip_Pitch': -0.2,
+    'Left_Hip_Roll': 0.,
+    'Left_Hip_Yaw': 0.,
+    'Left_Knee_Pitch': 0.4,
+    'Left_Ankle_Pitch': -0.25,
+    'Left_Ankle_Roll': 0.0,
+    'Right_Hip_Pitch': -0.2,
+    'Right_Hip_Roll': 0.,
+    'Right_Hip_Yaw': 0.,
+    'Right_Knee_Pitch': 0.4,
+    'Right_Ankle_Pitch': -0.25,
+    'Right_Ankle_Roll': 0.0
+  }
+
+control:
+  control_type: "P"
+  stiffness: {
+    'Head': 50.0,
+    'Hip': 200.0, 
+    'Knee': 200.0,
+    'Ankle': 50.0
+  }  # [N*m/rad]
+  damping: {
+    'Head': 1.0,
+    'Hip': 5.0, 
+    'Knee': 5.0,
+    'Ankle': 1.0
+  }
+  action_scale: 1.0
+  decimation: 10
+  computer_clip_torque: False
+  motor_clip_torque: False
+
+asset:
+  file: "{LEGGED_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf"
+  name: "t1"
+  base_link_name: "Trunk"
+  camera_link_name: "H2"
+  foot_name: "foot_link"
+  hip_link_names: ["Hip_Pitch_Left", "Hip_Pitch_Right"]
+  front_hip_names: ["Left_Hip_Pitch", "Right_Hip_Pitch"]
+  rear_hip_names: ["Left_Hip_Pitch", "Right_Hip_Pitch"]
+  penalize_contacts_on: ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
+  terminate_after_contacts_on: ["Trunk"]
+  feet_edge_pos: [[ 0.1215,  0.05, -0.03],
+                  [ 0.1215, -0.05, -0.03],
+                  [-0.1015,  0.05, -0.03],
+                  [-0.1015, -0.05, -0.03]] # x,y,z [m]
+  feet_contact_radius: 0.01
+
+  disable_gravity: False
+  collapse_fixed_joints: True
+  fix_base_link: False
+  default_dof_drive_mode: 3
+  self_collisions: 0
+  replace_cylinder_with_capsule: True
+  flip_visual_attachments: False
+
+  density: 0.001
+  angular_damping: 0.
+  linear_damping: 0.
+  max_angular_velocity: 1000.
+  max_linear_velocity: 1000.
+  armature: 0.
+  thickness: 0.01
+
+domain_rand:
+  init_dof_pos:
+    apply: True
+    range: [0.0, 0.05]
+    operation: "additive"
+    distribution: "gaussian"
+  init_base_lin_vel_xy:
+    apply: True
+    range: [0.0, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+
+  base_com_x:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+  base_com_y:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+  base_com_z:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+  base_mass:
+    apply: True
+    range: [0.8, 1.2]
+    operation: "scaling"
+    distribution: "uniform"
+  other_com:
+    apply: True
+    range: [-0.005, 0.005]
+    operation: "additive"
+    distribution: "uniform"
+  other_mass:
+    apply: True
+    range: [0.98, 1.02]
+    operation: "scaling"
+    distribution: "uniform"
+
+  dof_stiffness:
+    apply: True
+    range: [0.95, 1.05]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_damping:
+    apply: True
+    range: [0.95, 1.05]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_friction:
+    apply: False
+    range: [0.0, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  dof_friction_curriculum:
+    apply: False
+    steps: 240000
+    update_every: 200
+    start: 0.20
+    end: 0.0
+    sample_type: "uniform"
+
+  foot_friction:
+    apply: True
+    range: [0.3, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  foot_compliance:
+    apply: True
+    range: [0.5, 1.5]
+    operation: "additive"
+    distribution: "uniform"
+  foot_restitution:
+    apply: True
+    range: [0.1, 0.9]
+    operation: "additive"
+    distribution: "uniform"
+
+  kick_interval_s: 2.
+  kick_lin_vel:
+    apply: True
+    range: [0.0, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  kick_ang_vel:
+    apply: True
+    range: [0.0, 0.02]
+    operation: "additive"
+    distribution: "gaussian"
+
+  push_interval_s: 5.0
+  push_duration_s: 1.0
+  push_force:
+    apply: True
+    range: [0.0, 10.0]
+    operation: "additive"
+    distribution: "gaussian"
+  push_torque:
+    apply: True
+    range: [0.0, 2.]
+    operation: "additive"
+    distribution: "gaussian"
+
+rewards:
+  only_positive_rewards: True
+  tracking_sigma: 0.25
+  soft_dof_pos_limit: 1.0
+  soft_dof_vel_limit: 1.0
+  soft_torque_limit: 1.0
+  base_height_target: 0.68
+  max_contact_force: 500.0
+  terminate_height: 0.45
+  feet_air_time_min_time: 0.5
+  feet_air_time_max_time: 1.0
+  swing_period: 0.2
+  feet_distance_ref: 0.2
+  scales:
+    survival: 0.25
+    tracking_lin_vel: 0.
+    tracking_lin_vel_x: 2.0
+    tracking_lin_vel_y: 2.0
+    tracking_ang_vel: 1.0
+    base_height: -20.  # Play with this.
+    orientation: -5.
+    torques: -2.e-4
+    torque_tiredness: -1.e-2
+    power: -2.e-3
+    lin_vel_z: -2.
+    ang_vel_xy: -0.2
+    dof_vel: -1.e-4
+    dof_acc: -1.e-7
+    root_acc: -1.e-4
+    action_rate: -1.
+    dof_pos_limits: -1.
+    dof_vel_limits: -0.
+    torque_limits: -0.
+    collision: -1.
+    feet_slip: -0.1
+    feet_vel_z: -0.
+    feet_yaw_diff: -1.
+    feet_yaw_mean: -1.
+    feet_roll: -0.1
+    feet_distance: -1.
+    feet_swing: 3.
+
+commands:
+  heading_command: True
+  num_commands: 4
+  resampling_time: 10. # time before command are changed[s]
+  gait_frequency: [1.4, 2.0]
+  ranges:
+    lin_vel: [0.0, 1.0]
+    lin_vel_yaw: [-1.0, 1.0]
+    ang_vel_yaw: [-1, 1]
+    heading: [-3.14, 3.14]
+
+normalization:
+  clip_actions: 1.0
+  clip_actions_method: "normal"
+
+viewer:
+  ref_env: 0
+  pos: [10., 0., 6.]
+  lookat: [11., 5., 3.]
+
+sim:
+  physics_engine: "SIM_PHYSX" # or "SIM_PHYSX"
+  dt: 0.002
+  substeps: 1
+  gravity: [0.0, 0.0, -9.81]
+  up_axis: 1
+
+  physx:
+    subscenes: 0
+    num_threads: 4
+    solver_type: 1
+    num_position_iterations: 4
+    num_velocity_iterations: 1
+    contact_offset: 0.02
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 1.0
+    max_gpu_contact_pairs: 8_388_608 # 2^23
+    default_buffer_size_multiplier: 5.0
+    contact_collection: 2
+
+policy:
+  init_noise_std: 0.13
+  mu_activation: "identity"
+  activations: "elu"
+  actor_hidden_dims: [512, 256, 128]
+  critic_hidden_dims: [512, 256, 128]
+
+algorithm:
+  learning_rate: 1.e-5
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: -0.01
+  symmetric_coef: 10.0
+  num_learning_epochs: 20
+  clip_min_std: 0.02
+  value_loss_coef: 1.0
+  use_clipped_value_loss: True
+  clip_param: 0.2
+  bound_coef: 1.0
+  desired_kl: 0.01
+
+runner:
+  num_steps_per_env: 24
+  class_name: "Runner"
+  policy_class_name: "ActorCriticRecurrent"
+  use_wandb: False
+  save_interval: 50
+  run_name: ""
+  resume: False
+  load_run: ""
+  checkpoint: -1
+  resume_path: ""
+  max_iterations: 10000

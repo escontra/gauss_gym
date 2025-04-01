@@ -1,0 +1,308 @@
+seed: -1
+task: "anymal_c"
+print_config: False
+rl_device: "cuda"
+sim_device: "cuda"
+headless: False
+logdir: "default"
+
+env:
+  num_envs: 4096
+  env_spacing: 8.0
+  send_timeouts: True  # For value bootstrap.
+  episode_length_s: 20
+
+  camera_params:
+    focal_length: 40
+    cam_height: 64
+    cam_width: 64
+    cam_xyz_offset: [0.44665475921048414, 0.009719827812061002, 0.17764090819492523] # Local frame: [x, y, z] meters.
+    cam_rpy_offset: [1.571, 1.571, 3.142]
+
+observations:
+  observation_groups:
+    - "TEACHER_OBSERVATION_GROUP"
+    - "STUDENT_OBSERVATION_GROUP"
+  latency_resampling_time: 2.0
+
+terrain:
+  scene_root: "{LEGGED_GYM_ROOT_DIR}/scenes"
+  cams_yaw_only: False
+  max_traj_pos_distance: 1.0
+  max_traj_yaw_distance_rad: 1.0
+  static_friction: 1.0
+  dynamic_friction: 1.0
+  restitution: 0.
+
+
+init_state:
+  pos: [0.0, 0.0, 0.7]
+  rot: [0.0, 0.0, 0.0, 1.0]
+  lin_vel: [0.0, 0.0, 0.0]
+  ang_vel: [0.0, 0.0, 0.0]
+  default_joint_angles: {
+    "LF_HAA": 0.0,
+    "LH_HAA": 0.0,
+    "RF_HAA": -0.0,
+    "RH_HAA": -0.0,
+    "LF_HFE": 0.4,
+    "LH_HFE": -0.4,
+    "RF_HFE": 0.4,
+    "RH_HFE": -0.4,
+    "LF_KFE": -0.8,
+    "LH_KFE": 0.8,
+    "RF_KFE": -0.8,
+    "RH_KFE": 0.8,
+  }
+
+control:
+  control_type: "P"
+  stiffness: {'HAA': 80., 'HFE': 80., 'KFE': 80.}  # [N*m/rad]
+  damping: {'HAA': 2., 'HFE': 2., 'KFE': 2.}     # [N*m*s/rad]
+  action_scale: 0.5
+  decimation: 4
+  use_actuator_network: True
+  actuator_net_file: "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+  computer_clip_torque: False
+  motor_clip_torque: False
+
+asset:
+  file: "{LEGGED_GYM_ROOT_DIR}/resources/robots/anymal_c/urdf/anymal_c.urdf"
+  name: "anymal_c"
+  base_link_name: "base"
+  camera_link_name: "base"
+  foot_name: "FOOT"
+  hip_link_names: ["RF_HAA", "LF_HAA", "RH_HAA", "LH_HAA"]
+  front_hip_names: ["base_RF_HAA", "base_LF_HAA"]
+  rear_hip_names: ["base_RH_HAA", "base_LH_HAA"]
+  penalize_contacts_on: ["SHANK", "THIGH"]
+  terminate_after_contacts_on: ["base"]
+  feet_edge_pos: [[0.0, 0.0, 0.0225]]
+  feet_contact_radius: 0.031
+
+  disable_gravity: False
+  collapse_fixed_joints: True
+  fix_base_link: False
+  default_dof_drive_mode: 3
+  self_collisions: 1
+  replace_cylinder_with_capsule: True
+  flip_visual_attachments: True
+
+  density: 0.001
+  angular_damping: 0.
+  linear_damping: 0.
+  max_angular_velocity: 1000.
+  max_linear_velocity: 1000.
+  armature: 0.
+  thickness: 0.01
+
+domain_rand:
+  init_dof_pos:
+    apply: True
+    range: [0.0, 0.05]
+    operation: "additive"
+    distribution: "gaussian"
+  init_base_lin_vel_xy:
+    apply: True
+    range: [0.0, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+
+  base_com_x:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+  base_com_y:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+  base_com_z:
+    apply: True
+    range: [-0.05, 0.05]
+    operation: "additive"
+    distribution: "uniform"
+  base_mass:
+    apply: True
+    range: [0.8, 1.2]
+    operation: "scaling"
+    distribution: "uniform"
+  other_com:
+    apply: True
+    range: [-0.005, 0.005]
+    operation: "additive"
+    distribution: "uniform"
+  other_mass:
+    apply: True
+    range: [0.98, 1.02]
+    operation: "scaling"
+    distribution: "uniform"
+
+  dof_stiffness:
+    apply: True
+    range: [0.9, 1.1]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_damping:
+    apply: True
+    range: [0.95, 1.05]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_friction:
+    apply: False
+    range: [0.0, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  dof_friction_curriculum:
+    apply: False
+    steps: 240000
+    update_every: 200
+    start: 0.20
+    end: 0.03
+    sample_type: "uniform"
+
+  foot_friction:
+    apply: True
+    range: [0.3, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  foot_compliance:
+    apply: True
+    range: [0.5, 1.5]
+    operation: "additive"
+    distribution: "uniform"
+  foot_restitution:
+    apply: True
+    range: [0.1, 0.9]
+    operation: "additive"
+    distribution: "uniform"
+
+  kick_interval_s: 4.0
+  kick_lin_vel:
+    apply: True
+    range: [0.0, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  kick_ang_vel:
+    apply: True
+    range: [0.0, 0.02]
+    operation: "additive"
+    distribution: "gaussian"
+
+  push_interval_s: 5.0
+  push_duration_s: 1.0
+  push_force:
+    apply: True
+    range: [0.0, 6.0]
+    operation: "additive"
+    distribution: "gaussian"
+  push_torque:
+    apply: True
+    range: [0.0, 1.5]
+    operation: "additive"
+    distribution: "gaussian"
+
+rewards:
+  only_positive_rewards: True
+  tracking_sigma: 0.25
+  soft_dof_pos_limit: 1.0
+  soft_dof_vel_limit: 1.0
+  soft_torque_limit: 1.0
+  base_height_target: 0.5
+  max_contact_force: 500.0
+  terminate_height: 0.08
+  feet_air_time_min_time: 0.5
+  feet_air_time_max_time: 1.5
+  scales:
+    termination: -0.
+    tracking_lin_vel: 0.0
+    tracking_lin_vel_x: 1.0
+    tracking_lin_vel_y: 1.0
+    tracking_ang_vel: 0.5
+    lin_vel_z: -0.5
+    ang_vel_xy: -0.05
+    orientation: -0.
+    torques: -0.00001
+    dof_vel: -0.
+    dof_acc: -2.5e-7
+    base_height: -0. 
+    feet_air_time:  1.0
+    collision: -1.
+    feet_stumble: -0.0 
+    action_rate: -0.01
+    stand_still: -0.
+
+commands:
+  heading_command: True
+  num_commands: 4
+  resampling_time: 10. # time before command are changed[s]
+  ranges:
+    lin_vel: [0.0, 1.0]
+    lin_vel_yaw: [-1.0, 1.0]
+    ang_vel_yaw: [-1, 1]
+    heading: [-3.14, 3.14]
+
+normalization:
+  clip_actions: 100.0
+  clip_actions_method: "normal"
+
+viewer:
+  ref_env: 0
+  pos: [10., 0., 6.]
+  lookat: [11., 5., 3.]
+
+sim:
+  physics_engine: "SIM_PHYSX" # or "SIM_PHYSX"
+  dt: 0.005
+  substeps: 1
+  gravity: [0.0, 0.0, -9.81]
+  up_axis: 1
+
+  physx:
+    subscenes: 0
+    num_threads: 10
+    solver_type: 1
+    num_position_iterations: 4
+    num_velocity_iterations: 0
+    contact_offset: 0.01
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.5
+    max_depenetration_velocity: 1.0
+    max_gpu_contact_pairs: 8_388_608 # 2^23
+    default_buffer_size_multiplier: 5
+    contact_collection: 2
+
+policy:
+  init_noise_std: 0.5
+  mu_activation: "identity"
+  activations: "elu"
+  actor_hidden_dims: [512, 256, 128]
+  critic_hidden_dims: [512, 256, 128]
+
+algorithm:
+  learning_rate: 1.e-5
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: -0.01
+  symmetric_coef: 10.0
+  num_learning_epochs: 20
+  clip_min_std: 0.2
+  value_loss_coef: 1.0
+  use_clipped_value_loss: True
+  clip_param: 0.2
+  bound_coef: 1.0
+  desired_kl: 0.01
+
+runner:
+  num_steps_per_env: 24
+  class_name: "Runner"
+  policy_class_name: "ActorCriticRecurrent"
+  use_wandb: False
+  save_interval: 50
+  run_name: ""
+  resume: False
+  load_run: ""
+  checkpoint: -1
+  resume_path: ""
+  max_iterations: 10000

@@ -139,7 +139,9 @@ class ActorCritic(nn.Module):
         return value
 
 def get_activation(act_name):
-    if act_name == "elu":
+    if act_name == "identity":
+        return nn.Identity()
+    elif act_name == "elu":
         return nn.ELU()
     elif act_name == "selu":
         return nn.SELU()

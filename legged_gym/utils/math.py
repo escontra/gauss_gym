@@ -29,10 +29,9 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 import torch
-from torch import Tensor
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple, Union
+from typing import Union, Optional, Dict, Any, Tuple
 
 @torch.jit.script
 def normalize(x, eps: float = 1e-9):
@@ -220,3 +219,30 @@ def quat_rotate_inverse(q, v):
         torch.bmm(q_vec.view(shape[0], 1, 3), v.view(
             shape[0], 3, 1)).squeeze(-1) * 2.0
     return a - b + c
+
+def apply_randomization(tensor, params: Optional[Dict[str, Any]] = None, return_noise: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    if params is None:
+        return tensor
+
+    if params["distribution"] == "gaussian":
+        mu, var = params["range"]
+        noise = torch.randn_like(tensor) if isinstance(tensor, torch.Tensor) else np.random.randn()
+        noise_val = mu + var * noise
+    elif params["distribution"] == "uniform":
+        lower, upper = params["range"]
+        noise = torch.rand_like(tensor) if isinstance(tensor, torch.Tensor) else np.random.rand()
+        noise_val = lower + (upper - lower) * noise
+    else:
+        raise ValueError(f"Invalid randomization distribution: {params['distribution']}")
+
+    if params["operation"] == "additive":
+        result = tensor + noise_val
+    elif params["operation"] == "scaling":
+        result = tensor * noise_val
+    else:
+        raise ValueError(f"Invalid randomization operation: {params['operation']}")
+
+    if return_noise:
+        return result, noise
+    else:
+        return result

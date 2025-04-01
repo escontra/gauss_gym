@@ -28,23 +28,17 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from time import time
-import numpy as np
-import os
-
 from isaacgym.torch_utils import *
 from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
-# from torch.tensor import Tensor
-from typing import Tuple, Dict
 
 from legged_gym.envs import LeggedRobot
 from legged_gym import LEGGED_GYM_ROOT_DIR
-from .mixed_terrains.anymal_c_rough_config import AnymalCRoughCfg
+from legged_gym.utils import config
 
 class Anymal(LeggedRobot):
-    cfg : AnymalCRoughCfg
+    cfg : config.Config
     def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
 
@@ -68,7 +62,7 @@ class Anymal(LeggedRobot):
         self.sea_hidden_state_per_env = self.sea_hidden_state.view(2, self.num_envs, self.num_actions, 8)
         self.sea_cell_state_per_env = self.sea_cell_state.view(2, self.num_envs, self.num_actions, 8)
 
-    def _compute_torques(self, actions):
+    def _compute_torques(self, actions, actions_scaled_clipped):
         # Choose between pd controller and actuator network
         if self.cfg.control.use_actuator_network:
             with torch.inference_mode():
@@ -78,4 +72,4 @@ class Anymal(LeggedRobot):
             return torques
         else:
             # pd controller
-            return super()._compute_torques(actions)    
+            return super()._compute_torques(actions, actions_scaled_clipped)    

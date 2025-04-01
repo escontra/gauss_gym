@@ -724,13 +724,13 @@ class GaussianSplattingRenderer():
         self.fig, self.process_image_fn, self.im = None, None, None
         self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
-        self.renders = torch.zeros(self.num_envs, env.cfg.env.cam_height, env.cfg.env.cam_width, 3, device=self.device, dtype=torch.uint8)
         self.env = env
+        self.renders = torch.zeros(self.num_envs, self.env.cfg.env.camera_params.cam_height, self.env.cfg.env.camera_params.cam_width, 3, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
 
         self.local_offset = torch.tensor(
-            np.array(self.env.cfg.env.cam_xyz_offset)[None].repeat(self.num_envs, 0), dtype=torch.float, device=self.device, requires_grad=False
+            np.array(self.env.cfg.env.camera_params.cam_xyz_offset)[None].repeat(self.num_envs, 0), dtype=torch.float, device=self.device, requires_grad=False
         )
 
     def update(self, dt, env_ids=...):
@@ -792,9 +792,9 @@ class GaussianSplattingRenderer():
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
-            focal=self.env.cfg.env.focal_length,
-            h=self.env.cfg.env.cam_height,
-            w=self.env.cfg.env.cam_width,
+            focal=self.env.cfg.env.camera_params.focal_length,
+            h=self.env.cfg.env.camera_params.cam_height,
+            w=self.env.cfg.env.camera_params.cam_width,
             camera_linear_velocity=scene_linear_velocities,
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
@@ -813,9 +813,9 @@ class GaussianSplattingRenderer():
                 self.num_envs,
                 0.1,
                 0.2,
-                self.env.cfg.env.cam_width,
-                self.env.cfg.env.cam_height,
-                self.env.cfg.env.focal_length,
+                self.env.cfg.env.camera_params.cam_width,
+                self.env.cfg.env.camera_params.cam_height,
+                self.env.cfg.env.camera_params.focal_length,
                 0.005,
                 32)
             self.axis_geom = BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
@@ -831,9 +831,9 @@ class GaussianSplattingRenderer():
             self.process_image_fn = process_image_fn
 
             if self.env.selected_environment >= 0:
-                self.im = ax.imshow(np.zeros((self.env.cfg.env.cam_height, self.env.cfg.env.cam_width, 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.env.cfg.env.camera_params.cam_height, self.env.cfg.env.camera_params.cam_width, 3), dtype=np.uint8))
             else:
-                self.im = ax.imshow(np.zeros((self.env.cfg.env.cam_height * n, self.env.cfg.env.cam_width * n, 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.env.cfg.env.camera_params.cam_height * n, self.env.cfg.env.camera_params.cam_width * n, 3), dtype=np.uint8))
             plt.show(block=False)
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
@@ -876,3 +876,66 @@ class RayCasterBaseHeight(RayCaster):
             )
         self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
         
+class LinkHeightSensor():
+    def __init__(self, env, link_names, color=(1, 0, 0), attach_yaw_only=True):        
+        self.attachement_pos =(0.0, 0.0, 20.0)
+        self.attachement_quat = (0.0, 0.0, 0.0, 1.0)
+        direction = (0.0, 0.0, -1.0)
+        self.attach_yaw_only = attach_yaw_only
+        self.link_names = link_names
+        self.link_indices = [env.gym.find_asset_rigid_body_index(env.robot_asset, name) for name in link_names]
+        self.color = color
+
+        self.default_hit_value = 10
+        self.terrain_mesh = env.scene_manager.terrain_mesh
+        self.num_envs = env.num_envs
+        self.device = env.device
+
+        self.ray_starts = torch.zeros(len(self.link_indices), 3, device=self.device)
+        self.ray_directions = torch.zeros_like(self.ray_starts)
+        self.ray_directions[..., :] = torch.tensor(list(direction), device=self.device)
+        self.num_rays = len(self.ray_directions)
+
+        offset_pos = torch.tensor(list(self.attachement_pos), device=self.device)
+        offset_quat = torch.tensor(list(self.attachement_quat), device=env.device)
+        self.ray_directions = quat_apply(offset_quat.repeat(len(self.ray_directions), 1), self.ray_directions)
+        self.ray_starts += offset_pos
+
+        self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
+        self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
+
+        self.ray_hits_world = torch.zeros(self.num_envs, self.num_rays, 3, device=self.device)
+        self.env = env
+        self.sphere_geom = None
+
+    def update(self, dt, env_ids=...):
+        """Perform raycasting on the terrain.
+
+        Args:
+            env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
+        """
+        pos = self.env.rigid_body_state.view(self.num_envs, self.env.num_bodies, 13)[env_ids, self.link_indices, 0:3]
+        quats = self.env.rigid_body_state.view(self.num_envs, self.env.num_bodies, 13)[env_ids, self.link_indices, 3:7]
+
+        if self.attach_yaw_only:
+            ray_starts_world = quat_apply_yaw(quats, self.ray_starts[env_ids]) + pos
+            ray_directions_world = self.ray_directions[env_ids]
+        else:
+            ray_starts_world = quat_apply(quats, self.ray_starts[env_ids]) + pos
+            ray_directions_world = quat_apply(quats, self.ray_directions[env_ids])
+
+        self.ray_hits_world[env_ids] = ray_cast(ray_starts_world, ray_directions_world, self.terrain_mesh)
+
+    def get_data(self):
+        return torch.nan_to_num(self.ray_hits_world, posinf=self.default_hit_value)
+    
+    def debug_vis(self, env):
+        if self.sphere_geom is None:
+            self.sphere_geom = BatchWireframeSphereGeometry(
+                self.num_envs * self.num_rays, 0.02, 20, 20, None, color=self.color
+            )
+        if self.env.selected_environment >= 0:
+          only_render_selected_range = [self.env.selected_environment * self.num_rays, (self.env.selected_environment + 1) * self.num_rays]
+          self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0], only_render_selected=only_render_selected_range)
+        else:
+          self.sphere_geom.draw(self.ray_hits_world, env.gym, env.viewer, env.envs[0])

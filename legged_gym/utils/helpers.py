@@ -76,29 +76,27 @@ def set_seed(seed):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def parse_sim_params(args, cfg):
+def parse_sim_params(cfg):
     # code from Isaac Gym Preview 2
     # initialize sim params
     sim_params = gymapi.SimParams()
 
+    physics_engine = getattr(gymapi, cfg.sim.physics_engine)
+
     # set some values from args
-    if args.physics_engine == gymapi.SIM_FLEX:
-        if args.device != "cpu":
+    if physics_engine == gymapi.SIM_FLEX:
+        if cfg.device != "cpu":
             print("WARNING: Using Flex with GPU instead of PHYSX!")
-    elif args.physics_engine == gymapi.SIM_PHYSX:
-        sim_params.physx.use_gpu = args.use_gpu
-        sim_params.physx.num_subscenes = args.subscenes
-    sim_params.use_gpu_pipeline = args.use_gpu_pipeline
+    elif physics_engine == gymapi.SIM_PHYSX:
+        sim_params.physx.use_gpu = cfg.sim_device != "cpu"
+        sim_params.physx.num_subscenes = cfg.sim.physx.subscenes
+    sim_params.use_gpu_pipeline = cfg.sim_device != "cpu"
 
     # if sim options are provided in cfg, parse them and update/override above:
-    if "sim" in cfg:
-        gymutil.parse_sim_config(cfg["sim"], sim_params)
+    gymutil.parse_sim_config(dict(cfg.sim), sim_params)
+    sim_params.physx.num_threads = cfg.sim.physx.num_threads
 
-    # Override num_threads if passed on the command line
-    if args.physics_engine == gymapi.SIM_PHYSX and args.num_threads > 0:
-        sim_params.physx.num_threads = args.num_threads
-
-    return sim_params
+    return physics_engine, sim_params
 
 def get_load_path(root, load_run=-1, checkpoint=-1):
     try:
@@ -123,58 +121,6 @@ def get_load_path(root, load_run=-1, checkpoint=-1):
 
     load_path = os.path.join(load_run, model)
     return load_path
-
-def update_cfg_from_args(env_cfg, cfg_train, args):
-    # seed
-    if env_cfg is not None:
-        # num envs
-        if args.num_envs is not None:
-            env_cfg.env.num_envs = args.num_envs
-    if cfg_train is not None:
-        if args.seed is not None:
-            cfg_train.seed = args.seed
-        # alg runner parameters
-        if args.max_iterations is not None:
-            cfg_train.runner.max_iterations = args.max_iterations
-        if args.load_run is not None:
-            cfg_train.runner.load_run = args.load_run
-        if args.resume:
-            cfg_train.runner.resume = args.resume
-        if args.run_name is not None:
-            cfg_train.runner.run_name = args.run_name
-        if args.load_run is not None:
-            cfg_train.runner.load_run = args.load_run
-        if args.checkpoint is not None:
-            cfg_train.runner.checkpoint = args.checkpoint
-
-    return env_cfg, cfg_train
-
-def get_args():
-    custom_parameters = [
-        {"name": "--task", "type": str, "default": None, "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
-        {"name": "--resume", "action": "store_true", "default": False,  "help": "Resume training from a checkpoint"},
-        {"name": "--run_name", "type": str,  "help": "Name of the run. Overrides config file if provided."},
-        {"name": "--load_run", "type": str,  "help": "Name of the run to load when resume=True. If -1: will load the last run. Overrides config file if provided."},
-        {"name": "--checkpoint", "type": int,  "help": "Saved model checkpoint number. If -1: will load the last checkpoint. Overrides config file if provided."},
-        
-        {"name": "--headless", "action": "store_true", "default": False, "help": "Force display off at all times"},
-        {"name": "--horovod", "action": "store_true", "default": False, "help": "Use horovod for multi-gpu training"},
-        {"name": "--rl_device", "type": str, "default": "cuda:0", "help": 'Device used by the RL algorithm, (cpu, gpu, cuda:0, cuda:1 etc..)'},
-        {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
-        {"name": "--seed", "type": int, "help": "Random seed. Overrides config file if provided."},
-        {"name": "--max_iterations", "type": int, "help": "Maximum number of training iterations. Overrides config file if provided."},
-    ]
-    # parse arguments
-    args = gymutil.parse_arguments(
-        description="RL Policy",
-        custom_parameters=custom_parameters)
-
-    # name allignment
-    args.sim_device_id = args.compute_device_id
-    args.sim_device = args.sim_device_type
-    if args.sim_device=='cuda':
-        args.sim_device += f":{args.sim_device_id}"
-    return args
 
 def export_policy_as_jit(actor_critic, path):
     if hasattr(actor_critic, 'memory_a'):

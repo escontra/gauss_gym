@@ -145,7 +145,7 @@ class UnitreeA1Real:
                 elif event.axis == 1:
                   self.command_buf[0, 0] = -1 * event.value
                 elif event.axis == 3:
-                  self.command_buf[0, 2] = event.value
+                  self.command_buf[0, 2] = -1 * event.value
             elif event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 0:
                   self.start_pressed = True

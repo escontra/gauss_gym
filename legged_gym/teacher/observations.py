@@ -17,6 +17,18 @@ def projected_gravity(env: "LeggedEnv", params, is_real=False):
     else:
       return env.projected_gravity
 
+def pushing_forces(env: "LeggedEnv", params, is_real=False):
+    return env.pushing_forces[:, env.base_link_index, :]
+
+def pushing_torques(env: "LeggedEnv", params, is_real=False):
+    return env.pushing_torques[:, env.base_link_index, :]
+
+def base_mass_scaled(env: "LeggedEnv", params, is_real=False):
+    return env.base_mass_scaled
+
+def dof_friction_curriculum_values(env: "LeggedEnv", params, is_real=False):
+    return env.dof_friction_curriculum_values
+
 def gait_progress(env: "LeggedEnv", params):
     return torch.cat((
       (torch.cos(2 * torch.pi * env.gait_process) * (env.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
