@@ -26,7 +26,7 @@ observations:
   latency_resampling_time: 2.0
 
 terrain:
-  scene_root: "{LEGGED_GYM_ROOT_DIR}/scenes"
+  scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
   cams_yaw_only: False
   max_traj_pos_distance: 1.0
   max_traj_yaw_distance_rad: 1.0
@@ -70,7 +70,7 @@ control:
   motor_clip_torque: False
 
 asset:
-  file: "{LEGGED_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf"
+  file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf"
   name: "a1"
   base_link_name: "base"
   camera_link_name: "base"
@@ -101,19 +101,19 @@ asset:
 
 domain_rand:
   init_dof_pos:
-    apply: True
+    apply: False
     range: [0.0, 0.05]
     operation: "additive"
     distribution: "gaussian"
   init_base_lin_vel_xy:
-    apply: True
+    apply: False
     range: [0.0, 0.1]
     operation: "additive"
     distribution: "gaussian"
 
   base_com_x:
     apply: True
-    range: [-0.1, 0.1]
+    range: [-0.15, 0.15]
     operation: "additive"
     distribution: "uniform"
   base_com_y:
@@ -161,13 +161,13 @@ domain_rand:
     apply: True
     steps: 240000
     update_every: 200
-    start: 0.20
-    end: 0.0
+    start: 0.2
+    end: 0.03
     sample_type: "uniform"
 
   foot_friction:
     apply: True
-    range: [0.3, 2.0]
+    range: [0.5, 1.25]
     operation: "additive"
     distribution: "uniform"
   foot_compliance:
@@ -216,7 +216,7 @@ rewards:
   max_contact_force: 100.0
   terminate_height: 0.08
   feet_air_time_min_time: 0.5
-  feet_air_time_max_time: 0.75
+  feet_air_time_max_time: 2.0
   scales:
     tracking_lin_vel_x: 2.0
     tracking_lin_vel_y: 2.0
@@ -300,9 +300,7 @@ sim:
 policy:
   init_noise_std: 0.5
   mu_activation: "identity"
-  activations: "elu"
-  actor_hidden_dims: [512, 256, 128]
-  critic_hidden_dims: [512, 256, 128]
+  layer_activation: "elu"
 
 algorithm:
   learning_rate: 1.e-5

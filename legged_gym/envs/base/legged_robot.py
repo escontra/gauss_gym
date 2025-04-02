@@ -29,7 +29,6 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 # from tkinter import Image
-from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from warnings import WarningMessage
 import numpy as np
 import os
@@ -39,17 +38,19 @@ from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
-from legged_gym.envs.base.base_task import BaseTask
-from legged_gym.utils.gaussian_terrain import GaussianSceneManager
-from legged_gym.utils.math import wrap_to_pi, apply_randomization
-from legged_gym.teacher import sensors
-from legged_gym.teacher import observation_groups
-from legged_gym.teacher.observation_manager import ObsManager
-from legged_gym.utils import config
+import legged_gym
+from legged_gym.envs.base import base_task
+from legged_gym.utils import (
+  sensors,
+  observation_groups,
+  observation_manager,
+  config,
+  gaussian_terrain,
+  math,
+)
 
 
-class LeggedRobot(BaseTask):
+class LeggedRobot(base_task.BaseTask):
     def __init__(self, cfg: config.Config):
         """ Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
@@ -83,7 +84,7 @@ class LeggedRobot(BaseTask):
             "base_height_raycaster": sensors.LinkHeightSensor(self, [self.cfg["asset"]["base_link_name"]], color=(0.5, 0.0, 0.5)),
             "hip_height_raycaster": sensors.LinkHeightSensor(self, self.cfg["asset"]["hip_link_names"], color=(1.0, 0.41, 0.71)),
             "foot_contact_sensor": sensors.FootContactSensor(self)}
-        self.obs_manager = ObsManager(self, [getattr(observation_groups, group) for group in self.cfg["observations"]["observation_groups"]])
+        self.obs_manager = observation_manager.ObsManager(self, [getattr(observation_groups, group) for group in self.cfg["observations"]["observation_groups"]])
 
     def obs_group_size(self, group_name):
         return self.obs_manager.obs_dims_per_group[group_name]
@@ -386,7 +387,7 @@ class LeggedRobot(BaseTask):
             raise ValueError(f"Invalid physics engine backend: {sim_cfg['physics_engine']}")
 
         self.sim = self.gym.create_sim(self.sim_device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
-        self.scene_manager = GaussianSceneManager(self)
+        self.scene_manager = gaussian_terrain.GaussianSceneManager(self)
         self.scene_manager.spawn_meshes()
         self._create_envs()
 
@@ -412,11 +413,11 @@ class LeggedRobot(BaseTask):
         """
         for s in self.feet_shape_indices:
             if self.cfg["domain_rand"]["foot_friction"]["apply"]:
-              props[s].friction = apply_randomization(0.0, self.cfg["domain_rand"]["foot_friction"])
+              props[s].friction = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_friction"])
             if self.cfg["domain_rand"]["foot_compliance"]["apply"]:
-              props[s].compliance = apply_randomization(0.0, self.cfg["domain_rand"]["foot_compliance"])
+              props[s].compliance = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_compliance"])
             if self.cfg["domain_rand"]["foot_restitution"]["apply"]:
-              props[s].restitution = apply_randomization(0.0, self.cfg["domain_rand"]["foot_restitution"])
+              props[s].restitution = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_restitution"])
 
         return props
 
@@ -460,29 +461,29 @@ class LeggedRobot(BaseTask):
         for j in range(self.num_bodies):
             if j == self.base_link_index:
                 if self.cfg["domain_rand"]["base_com_x"]["apply"]:
-                    props[j].com.x, self.base_mass_scaled[env_id, 0] = apply_randomization(
+                    props[j].com.x, self.base_mass_scaled[env_id, 0] = math.apply_randomization(
                         props[j].com.x, self.cfg["domain_rand"]["base_com_x"], return_noise=True
                     )
                 if self.cfg["domain_rand"]["base_com_y"]["apply"]:
-                    props[j].com.y, self.base_mass_scaled[env_id, 1] = apply_randomization(
+                    props[j].com.y, self.base_mass_scaled[env_id, 1] = math.apply_randomization(
                         props[j].com.y, self.cfg["domain_rand"]["base_com_y"], return_noise=True
                     )
                 if self.cfg["domain_rand"]["base_com_z"]["apply"]:
-                    props[j].com.z, self.base_mass_scaled[env_id, 2] = apply_randomization(
+                    props[j].com.z, self.base_mass_scaled[env_id, 2] = math.apply_randomization(
                         props[j].com.z, self.cfg["domain_rand"]["base_com_z"], return_noise=True
                     )
                 if self.cfg["domain_rand"]["base_mass"]["apply"]:
-                    props[j].mass, self.base_mass_scaled[env_id, 3] = apply_randomization(
+                    props[j].mass, self.base_mass_scaled[env_id, 3] = math.apply_randomization(
                         props[j].mass, self.cfg["domain_rand"]["base_mass"], return_noise=True
                     )
                     props[j].invMass = 1.0 / props[j].mass
             else:
                 if self.cfg["domain_rand"]["other_com"]["apply"]:
-                    props[j].com.x = apply_randomization(props[j].com.x, self.cfg["domain_rand"]["other_com"])
-                    props[j].com.y = apply_randomization(props[j].com.y, self.cfg["domain_rand"]["other_com"])
-                    props[j].com.z = apply_randomization(props[j].com.z, self.cfg["domain_rand"]["other_com"])
+                    props[j].com.x = math.apply_randomization(props[j].com.x, self.cfg["domain_rand"]["other_com"])
+                    props[j].com.y = math.apply_randomization(props[j].com.y, self.cfg["domain_rand"]["other_com"])
+                    props[j].com.z = math.apply_randomization(props[j].com.z, self.cfg["domain_rand"]["other_com"])
                 if self.cfg["domain_rand"]["other_mass"]["apply"]:
-                    props[j].mass = apply_randomization(props[j].mass, self.cfg["domain_rand"]["other_mass"])
+                    props[j].mass = math.apply_randomization(props[j].mass, self.cfg["domain_rand"]["other_mass"])
                     props[j].invMass = 1.0 / props[j].mass
         return props
     
@@ -530,7 +531,7 @@ class LeggedRobot(BaseTask):
         if self.cfg["commands"]["heading_command"]:
             forward = tu.quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
-            self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+            self.commands[:, 2] = torch.clip(0.5*math.wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
             self.commands[self.still_envs, 2] = 0.0
 
     def _compute_torques_original(self, actions):
@@ -602,7 +603,7 @@ class LeggedRobot(BaseTask):
         """
 
         if self.cfg["domain_rand"]["init_dof_pos"]["apply"]:
-          self.dof_pos[env_ids] = apply_randomization(
+          self.dof_pos[env_ids] = math.apply_randomization(
               self.default_dof_pos.expand(len(env_ids), -1),
               self.cfg["domain_rand"]["init_dof_pos"]
           )
@@ -631,7 +632,7 @@ class LeggedRobot(BaseTask):
         self.root_states[env_ids, 3:7] = cam_quat
         # Linear velocity is 7:10, angular velocity is 10:13.
         if self.cfg["domain_rand"]["init_base_lin_vel_xy"]["apply"]:
-          self.root_states[env_ids, 7:9] = apply_randomization(
+          self.root_states[env_ids, 7:9] = math.apply_randomization(
               torch.zeros(len(env_ids), 2, dtype=torch.float, device=self.device),
               self.cfg["domain_rand"]["init_base_lin_vel_xy"]
           )
@@ -647,9 +648,9 @@ class LeggedRobot(BaseTask):
         """ Random kick the robots. Emulates an impulse by setting a randomized base velocity. """
         if self.common_step_counter % np.ceil(self.cfg["domain_rand"]["kick_interval_s"] / self.dt) == 0:
             if self.cfg["domain_rand"]["kick_lin_vel"]["apply"]:
-              self.root_states[:, 7:10] = apply_randomization(self.root_states[:, 7:10], self.cfg["domain_rand"]["kick_lin_vel"])
+              self.root_states[:, 7:10] = math.apply_randomization(self.root_states[:, 7:10], self.cfg["domain_rand"]["kick_lin_vel"])
             if self.cfg["domain_rand"]["kick_ang_vel"]["apply"]:
-              self.root_states[:, 10:13] = apply_randomization(self.root_states[:, 10:13], self.cfg["domain_rand"]["kick_ang_vel"])
+              self.root_states[:, 10:13] = math.apply_randomization(self.root_states[:, 10:13], self.cfg["domain_rand"]["kick_ang_vel"])
             self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def _push_robots(self):
@@ -657,12 +658,12 @@ class LeggedRobot(BaseTask):
         """
         if self.common_step_counter % np.ceil(self.cfg["domain_rand"]["push_interval_s"] / self.dt) == 0:
             if self.cfg["domain_rand"]["push_force"]["apply"]:
-              self.pushing_forces[:, self.base_link_index, :] = apply_randomization(
+              self.pushing_forces[:, self.base_link_index, :] = math.apply_randomization(
                   torch.zeros_like(self.pushing_forces[:, 0, :]),
                   self.cfg["domain_rand"]["push_force"],
               )
             if self.cfg["domain_rand"]["push_torque"]["apply"]:
-              self.pushing_torques[:, self.base_link_index, :] = apply_randomization(
+              self.pushing_torques[:, self.base_link_index, :] = math.apply_randomization(
                   torch.zeros_like(self.pushing_torques[:, 0, :]),
                   self.cfg["domain_rand"]["push_torque"],
               )
@@ -795,7 +796,7 @@ class LeggedRobot(BaseTask):
                 2.3 create actor with these properties and add them to the env
              3. Store indices of different bodies of the robot
         """
-        asset_path = self.cfg["asset"]["file"].format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
+        asset_path = self.cfg["asset"]["file"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
         asset_root = os.path.dirname(asset_path)
         asset_file = os.path.basename(asset_path)
 
@@ -926,11 +927,11 @@ class LeggedRobot(BaseTask):
             self.clip_actions_low = torch.tensor(clip_actions_low, device=self.device)
             self.clip_actions_high = torch.tensor(clip_actions_high, device=self.device)
         if self.cfg["domain_rand"]["dof_stiffness"]["apply"]:
-            self.dof_stiffness = apply_randomization(self.dof_stiffness, self.cfg["domain_rand"]["dof_stiffness"])
+            self.dof_stiffness = math.apply_randomization(self.dof_stiffness, self.cfg["domain_rand"]["dof_stiffness"])
         if self.cfg["domain_rand"]["dof_damping"]["apply"]:
-            self.dof_damping = apply_randomization(self.dof_damping, self.cfg["domain_rand"]["dof_damping"])
+            self.dof_damping = math.apply_randomization(self.dof_damping, self.cfg["domain_rand"]["dof_damping"])
         if self.cfg["domain_rand"]["dof_friction"]["apply"]:
-            self.dof_friction = apply_randomization(self.dof_friction, self.cfg["domain_rand"]["dof_friction"])
+            self.dof_friction = math.apply_randomization(self.dof_friction, self.cfg["domain_rand"]["dof_friction"])
 
         self._get_env_origins()
         env_lower = gymapi.Vec3(0., 0., 0.)

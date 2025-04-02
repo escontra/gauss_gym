@@ -2,34 +2,16 @@ import numpy as np
 import os
 import pickle
 import pathlib
-from typing import List, Union, Dict
-from legged_gym import LEGGED_GYM_ROOT_DIR
-from legged_gym.utils.math import (
-  wrap_to_pi,
-  matrix_to_quaternion,
-  quat_apply,
-  quat_from_x_rot,
-  quat_from_y_rot,
-  quat_from_z_rot,
-  quat_rotate_inverse,
-)
-from isaacgym.torch_utils import (
-  to_torch,
-  quat_mul,
-  get_euler_xyz,
-  quat_from_euler_xyz,
-  quat_conjugate,
-  torch_rand_float,
-)
-from isaacgym import gymapi
-import torch
-from legged_gym.teacher.sensors import (
-  BatchWireframeAxisGeometry,
-  GaussianSplattingRenderer,
-)
-from legged_gym.teacher import sensors
 import dataclasses
+from isaacgym import gymapi
+from typing import Union, Dict
+import torch
 import warp as wp
+
+import legged_gym
+from legged_gym.utils import sensors, math
+
+
 wp.init()
 
 
@@ -71,7 +53,7 @@ class GaussianTerrain:
   def __init__(self, cfg: Dict, num_robots) -> None:
     self.cfg = cfg
     self.num_robots = num_robots
-    self.scene_root = pathlib.Path(self.cfg["terrain"]["scene_root"].format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
+    self.scene_root = pathlib.Path(self.cfg["terrain"]["scene_root"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR))
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -159,11 +141,11 @@ class GaussianTerrain:
         y_component, axis=-1, keepdims=True
       )
 
-      cam_rot = matrix_to_quaternion(torch.tensor(np.stack([x_component, y_component, z_component], axis=2)))
-      y_rot = quat_from_y_rot(np.pi / 2, cam_rot.shape[0])
-      z_rot = quat_from_z_rot(-np.pi / 2, cam_rot.shape[0])
-      to_opencv = quat_mul(y_rot, z_rot)
-      cam_quat_xyzw = quat_mul(cam_rot, to_opencv.detach())
+      cam_rot = math.matrix_to_quaternion(torch.tensor(np.stack([x_component, y_component, z_component], axis=2)))
+      y_rot = math.quat_from_y_rot(np.pi / 2, cam_rot.shape[0])
+      z_rot = math.quat_from_z_rot(-np.pi / 2, cam_rot.shape[0])
+      to_opencv = math.quat_mul(y_rot, z_rot)
+      cam_quat_xyzw = math.quat_mul(cam_rot, to_opencv.detach())
 
       # Compute valid poses to sample along camera trajectory.
       valid_pose_start_idxs = max_length - raw_mesh.cam_trans.shape[0]
@@ -259,7 +241,7 @@ class GaussianSceneManager:
     self._env = env
     self._terrain = GaussianTerrain(env.cfg, env.num_envs)
 
-    self.renderer = GaussianSplattingRenderer(self._env, self)
+    self.renderer = sensors.GaussianSplattingRenderer(self._env, self)
 
     self.command_scale = torch.zeros(
       self._env.num_envs, 1, device=self._env.device, dtype=torch.float32
@@ -279,15 +261,15 @@ class GaussianSceneManager:
         dtype=torch.float, device=self._env.device, requires_grad=False
     )
 
-    self.cam_rpy_offset = quat_mul(
-      quat_mul(
-        quat_from_x_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][0], 1, self._env.device),
-        quat_from_y_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][1], 1, self._env.device)),
-        quat_from_z_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][2], 1, self._env.device)).detach()
+    self.cam_rpy_offset = math.quat_mul(
+      math.quat_mul(
+        math.quat_from_x_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][0], 1, self._env.device),
+        math.quat_from_y_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][1], 1, self._env.device)),
+        math.quat_from_z_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][2], 1, self._env.device)).detach()
 
-    self.robot_frame_transform = quat_mul(
-      quat_from_z_rot(np.pi / 2, 1, self._env.device),
-      quat_from_y_rot(-np.pi / 2, 1, self._env.device)
+    self.robot_frame_transform = math.quat_mul(
+      math.quat_from_z_rot(np.pi / 2, 1, self._env.device),
+      math.quat_from_y_rot(-np.pi / 2, 1, self._env.device)
     ).detach()
 
   def spawn_meshes(self):
@@ -362,46 +344,46 @@ class GaussianSceneManager:
 
     # Use warp to get ground position at each camera.
     directions = np.array([0, 0, -1])[None, None].repeat(cam_trans_orig.shape[0], axis=0).repeat(cam_trans_orig.shape[1], axis=1)
-    directions_torch = to_torch(directions, device=self._env.device, requires_grad=False)
-    cam_trans_orig_torch = to_torch(cam_trans_orig, device=self._env.device, requires_grad=False)
+    directions_torch = math.to_torch(directions, device=self._env.device, requires_grad=False)
+    cam_trans_orig_torch = math.to_torch(cam_trans_orig, device=self._env.device, requires_grad=False)
     ground_positions_world_frame = sensors.ray_cast(cam_trans_orig_torch.view(-1, 3), directions_torch.reshape(-1, 3), self.terrain_mesh)
     ground_positions_world_frame = ground_positions_world_frame.view(*cam_trans_orig_torch.shape).cpu().numpy()
     ground_positions_world_frame = ground_positions_world_frame - env_origins_z0[:, None, :]
-    self.ground_positions = to_torch(
+    self.ground_positions = math.to_torch(
       repeat(ground_positions_world_frame),
       device=self._env.device,
       requires_grad=False,
     )
 
-    self.cam_trans_viz = to_torch(
+    self.cam_trans_viz = math.to_torch(
       cam_trans_orig, device=self._env.device, requires_grad=False
     )
-    self.cam_quat_xyzw_viz = to_torch(
+    self.cam_quat_xyzw_viz = math.to_torch(
       cam_quat_xyzw_orig, device=self._env.device, requires_grad=False
     )
 
     self.scenes = repeat(list(self._terrain.get_value("scene_name").values()))
-    self.cam_trans = to_torch(
+    self.cam_trans = math.to_torch(
       repeat(list(self._terrain.get_value("cam_trans").values())),
       device=self._env.device,
       requires_grad=False,
     )
-    self.cam_quat_xyzw = to_torch(
+    self.cam_quat_xyzw = math.to_torch(
       repeat(list(self._terrain.get_value("cam_quat_xyzw").values())),
       device=self._env.device,
       requires_grad=False,
     )
-    self.cam_offset = to_torch(
+    self.cam_offset = math.to_torch(
       repeat(list(self._terrain.get_value("cam_offset").values())),
       device=self._env.device,
       requires_grad=False,
     )
-    self.valid_pose_start_idxs = to_torch(
+    self.valid_pose_start_idxs = math.to_torch(
       repeat(list(self._terrain.get_value("valid_pose_start_idxs").values())),
       device=self._env.device,
       requires_grad=False,
     )
-    self.env_origins = to_torch(
+    self.env_origins = math.to_torch(
       repeat(self.env_origins),
       device=self._env.device,
       requires_grad=False,
@@ -419,8 +401,8 @@ class GaussianSceneManager:
   def get_cam_pose_world_frame(self):
     cam_link_trans, cam_link_quat = self.get_cam_link_pose_world_frame()
     # Apply xyz offset in the local robot frame.
-    cam_trans = cam_link_trans + quat_apply(cam_link_quat, self.local_offset)
-    cam_quat = quat_mul(cam_link_quat, self.cam_rpy_offset.expand(cam_link_quat.shape[0], -1))
+    cam_trans = cam_link_trans + math.quat_apply(cam_link_quat, self.local_offset)
+    cam_quat = math.quat_mul(cam_link_quat, self.cam_rpy_offset.expand(cam_link_quat.shape[0], -1))
     return cam_trans, cam_quat
 
   def get_cam_velocity_world_frame(self):
@@ -433,7 +415,7 @@ class GaussianSceneManager:
     # Linear velocity needs to account for the offset
     # v = v_link + ω × r, where r is the offset vector in world frame
     # Using cross product of angular velocity with position offset
-    offset_world = quat_apply(cam_link_quat, self.local_offset)
+    offset_world = math.quat_apply(cam_link_quat, self.local_offset)
     velocity_from_rotation = torch.cross(cam_link_ang_vel, offset_world)
     cam_lin_vel = cam_link_lin_vel + velocity_from_rotation
     return cam_lin_vel, cam_ang_vel
@@ -488,7 +470,7 @@ class GaussianSceneManager:
     #     \
     #      \
     #       +X (forward)
-    return quat_mul(cam_quat, self.robot_frame_transform.expand(cam_quat.shape[0], -1))
+    return math.quat_mul(cam_quat, self.robot_frame_transform.expand(cam_quat.shape[0], -1))
 
   def sample_cam_pose(self, env_ids, use_ground_positions=False):
     # Sample a random camera position and orientation from the camera trajectories.
@@ -543,9 +525,9 @@ class GaussianSceneManager:
     distance = torch.norm((curr_cam_link_trans - nearest_cam_trans)[:, :2], dim=-1)
     distance_exceeded |= distance > self._env.cfg["terrain"]["max_traj_pos_distance"]
 
-    quat_difference = quat_mul(curr_cam_link_quat, quat_conjugate(nearest_robot_quat))
-    _, _, yaw = get_euler_xyz(quat_difference)
-    yaw_distance = torch.abs(wrap_to_pi(yaw))
+    quat_difference = math.quat_mul(curr_cam_link_quat, math.quat_conjugate(nearest_robot_quat))
+    _, _, yaw = math.get_euler_xyz(quat_difference)
+    yaw_distance = torch.abs(math.wrap_to_pi(yaw))
     yaw_exceeded |= yaw_distance > self._env.cfg["terrain"]["max_traj_yaw_distance_rad"]
     return distance_exceeded, yaw_exceeded
 
@@ -557,8 +539,8 @@ class GaussianSceneManager:
     """
     _, nearest_cam_quat, nearest_idx = self._get_nearest_traj_pose()
     nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
-    _, _, yaw = get_euler_xyz(nearest_robot_quat)
-    self.heading_command = wrap_to_pi(
+    _, _, yaw = math.get_euler_xyz(nearest_robot_quat)
+    self.heading_command = math.wrap_to_pi(
       yaw
     )  # Match the orientation of the nearest camera.
 
@@ -576,13 +558,13 @@ class GaussianSceneManager:
     curr_cam_link_trans, _ = self.get_cam_link_pose_local_frame()
     pos_delta = target_traj_trans - curr_cam_link_trans
 
-    pos_delta_local = quat_rotate_inverse(
+    pos_delta_local = math.quat_rotate_inverse(
       self._env.root_states[:, 3:7], pos_delta
     )[:, :2]
     pos_delta_norm = pos_delta_local / torch.norm(
       pos_delta_local, dim=-1, keepdim=True
     )
-    self.command_scale[env_ids] = torch_rand_float(
+    self.command_scale[env_ids] = math.torch_rand_float(
       self._env.command_ranges["lin_vel"][0],
       self._env.command_ranges["lin_vel"][1],
       (len(env_ids), 1),
@@ -600,11 +582,11 @@ class GaussianSceneManager:
 
   def debug_vis(self, env):
     if self.axis_geom is None:
-      self.axis_geom = BatchWireframeAxisGeometry(
+      self.axis_geom = sensors.BatchWireframeAxisGeometry(
         np.prod(self.cam_trans_viz.shape[:2]), 0.25, 0.005, 16
       )
     if self.velocity_geom is None:
-      self.velocity_geom = BatchWireframeAxisGeometry(
+      self.velocity_geom = sensors.BatchWireframeAxisGeometry(
         self._env.num_envs,
         0.3,
         0.01,
@@ -614,7 +596,7 @@ class GaussianSceneManager:
         color_z=(0, 0, 0),
       )
     if self.heading_geom is None:
-      self.heading_geom = BatchWireframeAxisGeometry(
+      self.heading_geom = sensors.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.2, 0.01, 32, color_x=(1, 1, 0)
       )
 
@@ -644,7 +626,7 @@ class GaussianSceneManager:
 
     # Draw velocity command.
     velocity_quat = self._env.root_states[:, 3:7]
-    velocity_trans = self._env.root_states[:, :3] + quat_apply(
+    velocity_trans = self._env.root_states[:, :3] + math.quat_apply(
       velocity_quat,
       torch.tensor([0, 0, 0.25], device=self._env.device)[None].repeat(
         self._env.num_envs, 1
@@ -657,7 +639,7 @@ class GaussianSceneManager:
     axis_scales = np.pad(
       axis_scales, ((0, 0), (0, 1)), mode="constant", constant_values=0
     )
-    axis_scales = to_torch(
+    axis_scales = math.to_torch(
       axis_scales, device=self._env.device, requires_grad=False
     )
     self.velocity_geom.draw(
@@ -671,18 +653,18 @@ class GaussianSceneManager:
     )
 
     # Draw heading command.
-    heading_trans = self._env.root_states[:, :3] + quat_apply(
+    heading_trans = self._env.root_states[:, :3] + math.quat_apply(
       self._env.root_states[:, 3:7],
       torch.tensor([0, 0, 0.2], device=self._env.device)[None].repeat(
         self._env.num_envs, 1
       ),
     )
-    heading_quat = quat_from_euler_xyz(
+    heading_quat = math.quat_from_euler_xyz(
       torch.zeros_like(self.heading_command),
       torch.zeros_like(self.heading_command),
       self.heading_command,
     )
-    axis_scales = to_torch(
+    axis_scales = math.to_torch(
       np.array([1, 0, 0])[None].repeat(self._env.num_envs, axis=0),
       device=self._env.device,
       requires_grad=False,

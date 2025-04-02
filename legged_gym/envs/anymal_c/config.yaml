@@ -26,7 +26,7 @@ observations:
   latency_resampling_time: 2.0
 
 terrain:
-  scene_root: "{LEGGED_GYM_ROOT_DIR}/scenes"
+  scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
   cams_yaw_only: False
   max_traj_pos_distance: 1.0
   max_traj_yaw_distance_rad: 1.0
@@ -62,12 +62,12 @@ control:
   action_scale: 0.5
   decimation: 4
   use_actuator_network: True
-  actuator_net_file: "{LEGGED_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
+  actuator_net_file: "{GAUSS_GYM_ROOT_DIR}/resources/actuator_nets/anydrive_v3_lstm.pt"
   computer_clip_torque: False
   motor_clip_torque: False
 
 asset:
-  file: "{LEGGED_GYM_ROOT_DIR}/resources/robots/anymal_c/urdf/anymal_c.urdf"
+  file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/anymal_c/urdf/anymal_c.urdf"
   name: "anymal_c"
   base_link_name: "base"
   camera_link_name: "base"
@@ -279,9 +279,7 @@ sim:
 policy:
   init_noise_std: 0.5
   mu_activation: "identity"
-  activations: "elu"
-  actor_hidden_dims: [512, 256, 128]
-  critic_hidden_dims: [512, 256, 128]
+  layer_activation: "elu"
 
 algorithm:
   learning_rate: 1.e-5

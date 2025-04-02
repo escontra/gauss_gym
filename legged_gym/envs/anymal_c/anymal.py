@@ -33,8 +33,8 @@ from isaacgym import gymtorch, gymapi, gymutil
 
 import torch
 
+import legged_gym
 from legged_gym.envs import LeggedRobot
-from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.utils import config
 
 class Anymal(LeggedRobot):
@@ -44,7 +44,7 @@ class Anymal(LeggedRobot):
 
         # load actuator network
         if self.cfg.control.use_actuator_network:
-            actuator_network_path = self.cfg.control.actuator_net_file.format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR)
+            actuator_network_path = self.cfg.control.actuator_net_file.format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
             self.actuator_network = torch.jit.load(actuator_network_path).to(self.device)
     
     def reset_idx(self, env_ids):

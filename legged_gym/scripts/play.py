@@ -58,6 +58,7 @@ def main(argv = None):
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
     cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'headless': False})
 
     cfg = cfg.update({'env.num_envs': 50})
     # Disable domain randomization.
