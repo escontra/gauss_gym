@@ -103,7 +103,7 @@ class ActorCritic(torch.nn.Module):
 
 class ActorCriticRecurrent(torch.nn.Module):
   is_recurrent = True
-  def __init__(self, num_act, num_obs, num_privileged_obs, init_std, mu_activation=None):
+  def __init__(self, num_act, num_obs, num_privileged_obs, init_std, layer_activation="elu", mu_activation="identity"):
     super().__init__()
     self.mlp_keys_c, self.cnn_keys_c, self.num_mlp_obs_c = get_mlp_cnn_keys(num_privileged_obs)
     self.mlp_keys_a, self.cnn_keys_a, self.num_mlp_obs_a = get_mlp_cnn_keys(num_obs)
@@ -120,11 +120,11 @@ class ActorCriticRecurrent(torch.nn.Module):
     self.memory_c = Memory(latent_c_dim, type='lstm', num_layers=1, hidden_size=256)
     self.critic = torch.nn.Sequential(
       torch.nn.Linear(256, 256),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(256, 256),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(256, 128),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(128, 1),
     )
     if self.cnn_keys_c:
@@ -136,11 +136,11 @@ class ActorCriticRecurrent(torch.nn.Module):
     self.memory_a = Memory(latent_a_dim, type='lstm', num_layers=1, hidden_size=256)
     actor_layers = [
       torch.nn.Linear(256, 256),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(256, 128),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(128, 128),
-      torch.nn.ELU(),
+      get_activation(layer_activation),
       torch.nn.Linear(128, num_act),
     ]
     actor_layers.append(get_activation(mu_activation))

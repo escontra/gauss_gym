@@ -2,7 +2,7 @@ from setuptools import find_packages
 from distutils.core import setup
 
 setup(
-    name='legged_gym',
+    name='gauss_gym',
     version='1.0.0',
     author='Alejandro Escontrela',
     license="BSD-3-Clause",

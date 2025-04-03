@@ -29,12 +29,10 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 import os
-import warnings
 import pathlib
-import pickle
 
 import isaacgym
-from legged_gym import LEGGED_GYM_ROOT_DIR
+import legged_gym
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import flags, config
@@ -42,7 +40,7 @@ from legged_gym.utils import helpers
 
 
 def main(argv = None):
-    log_root = pathlib.Path(os.path.join(LEGGED_GYM_ROOT_DIR, 'logs'))
+    log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
     parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
     if parsed.load_run != '':
@@ -58,6 +56,7 @@ def main(argv = None):
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
     cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'headless': False})
 
     cfg = cfg.update({'env.num_envs': 50})
     # Disable domain randomization.

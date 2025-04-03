@@ -1,5 +1,5 @@
 import dataclasses
-import legged_gym.teacher.observations as O
+from legged_gym.utils import observations as O
 from typing import Callable, Union, Tuple, List
 import copy
 

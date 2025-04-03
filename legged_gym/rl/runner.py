@@ -239,7 +239,8 @@ class Runner:
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
       self.cfg["policy"]["init_noise_std"],
-      self.cfg["policy"]["mu_activation"],
+      layer_activation=self.cfg["policy"]["layer_activation"],
+      mu_activation=self.cfg["policy"]["mu_activation"],
     ).to(self.device)
     self.optimizer = torch.optim.Adam(
       self.model.parameters(), lr=self.learning_rate

@@ -1,11 +1,11 @@
 import torch
-from legged_gym.teacher.observation_groups import ObservationGroup, Observation
+from legged_gym.utils import observation_groups
 from typing import List
 from isaacgym.torch_utils import torch_rand_float
 
 
 class ObsManager:
-    def __init__(self, env, obs_groups_cfg: List[ObservationGroup]):
+    def __init__(self, env, obs_groups_cfg: List[observation_groups.ObservationGroup]):
         self.env = env
         self.device = env.device
         self.obs_per_group = {}
@@ -28,7 +28,7 @@ class ObsManager:
             self.latency_buffers_per_group[obs_group.name] = {}
             self.delayed_frames_per_group[obs_group.name] = {}
             for obs in obs_group.observations:
-                if not isinstance(obs, Observation):
+                if not isinstance(obs, observation_groups.Observation):
                   raise ValueError(f"Observation {obs} is not an instance of Observation")
                 if not obs_group.add_noise:  # turn off all noise
                   obs.noise = None
