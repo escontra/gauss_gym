@@ -27,17 +27,16 @@ class MuJoCoRunner:
       'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
       'student_observations': self.env.obs_group_size_per_name("student_observations"),
     }
-    self.model = getattr(models, self.cfg.runner.policy_class_name)(
+    self.model = getattr(models, self.cfg["runner"]["policy_class_name"])(
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
-      self.cfg.policy.init_noise_std,
-      self.cfg.policy.mu_activation,
+      self.cfg["policy"]["init_noise_std"],
+      self.cfg["policy"]["mu_activation"],
     ).to(self.device)
 
   def _set_seed(self):
-
-    seed = self.cfg.seed
+    seed = self.cfg["seed"]
     if seed == -1:
       seed = np.random.randint(0, 10000)
     print("Setting RL seed: {}".format(seed))
@@ -50,11 +49,11 @@ class MuJoCoRunner:
     torch.cuda.manual_seed_all(seed)
 
   def load(self, resume_root: pathlib.Path):
-    if not self.cfg.runner.resume:
+    if not self.cfg["runner"]["resume"]:
       return
 
-    load_run = self.cfg.runner.load_run
-    checkpoint = self.cfg.runner.checkpoint
+    load_run = self.cfg["runner"]["load_run"]
+    checkpoint = self.cfg["runner"]["checkpoint"]
     if (load_run == "-1") or (load_run == -1):
       resume_path = sorted(
         [item for item in resume_root.iterdir() if item.is_dir()],

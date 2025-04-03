@@ -6,9 +6,10 @@ import numpy as np
 from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
-from legged_gym.utils.helpers import get_args
-from legged_gym.teacher import observation_groups
+from legged_gym.teacher import observation_groups as observation_groups_teacher
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
+from legged_gym.utils import helpers
+from legged_gym.utils import flags, config
 
 from isaacgym import torch_utils as tu
 
@@ -69,12 +70,12 @@ def compute_observation(env_cfg, observation_groups, mj_data, command, gait_freq
     return obs_dict
 
 
-if __name__ == "__main__":
-    args = get_args()
+def main(argv=None):
     log_root = pathlib.Path(os.path.join(LEGGED_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
-    if args.load_run is not None:
-      load_run_path = log_root / args.load_run
+    parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
+    if parsed.load_run != '':
+      load_run_path = log_root / parsed.load_run
     else:
       load_run_path = sorted(
         [item for item in log_root.iterdir() if item.is_dir()],
@@ -82,36 +83,35 @@ if __name__ == "__main__":
       )[-1]
 
     print(f'Loading run from: {load_run_path}...')
+    cfg = config.Config.load(load_run_path / 'config.yaml')
+    cfg = cfg.update({'runner.load_run': load_run_path.name})
+    cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
+    cfg = cfg.update({'runner.resume': True})
 
-    with open(load_run_path / 'train_config.pkl', 'rb') as f:
-      train_cfg = pickle.load(f)
+    
+    print(f'\tTask name: {cfg["task"]}')
 
-    with open(load_run_path / 'env_config.pkl', 'rb') as f:
-      env_cfg = pickle.load(f)
-
-    if args.task is not None:
-      if args.task != env_cfg.task_name:
-         warnings.warn(f'Args and cfg task name mismatch: {args.task} != {env_cfg.task_name}. Overriding...')
-      env_cfg.task_name = args.task
-
-    print(f'\tTask name: {env_cfg.task_name}')
-
-    for attr_name in dir(env_cfg.domain_rand):
-       if isinstance(getattr(env_cfg.domain_rand, attr_name), bool):
-          setattr(env_cfg.domain_rand, attr_name, False)
+    for attr_name in dir(cfg.domain_rand):
+       if isinstance(getattr(cfg.domain_rand, attr_name), bool):
+          setattr(cfg.domain_rand, attr_name, False)
 
     # TODO: can we get rid of the env?
-    env, _ = task_registry.make_env(name=env_cfg.task_name, args=args, env_cfg=env_cfg)
-    train_cfg.runner.resume = True
-    train_cfg.runner_class_name = "MuJoCoRunner"
-    mujoco_runner, train_cfg = task_registry.make_alg_runner(env, name=env_cfg.task_name, args=args, train_cfg=train_cfg)
+    cfg = flags.Flags(cfg).parse(other)
+    print(cfg)
+    cfg = dict(cfg)
+    task_class = task_registry.get_task_class(cfg["task"])
+    helpers.set_seed(cfg["seed"])
+    env = task_class(cfg=cfg)
+    cfg["runner"]["resume"] = True
+    cfg["runner"]["class_name"] = "MuJoCoRunner"
+    mujoco_runner = task_registry.make_alg_runner(env, cfg=cfg)
 
-    observation_groups = [getattr(observation_groups, name) for name in env_cfg.observations.observation_groups]
+    observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
 
     print("Starting MuJoCo viewer...")
 
-    mj_model = mujoco.MjModel.from_xml_path(env_cfg.asset.mujoco_file)
-    mj_model.opt.timestep = env_cfg.sim.dt
+    mj_model = mujoco.MjModel.from_xml_path(cfg["asset"]["mujoco_file"].format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
+    mj_model.opt.timestep = cfg["sim"]["dt"]
     mj_data = mujoco.MjData(mj_model)
     mujoco.mj_resetData(mj_model, mj_data)
     default_dof_pos = np.zeros(mj_model.nu, dtype=np.float32)
@@ -119,31 +119,31 @@ if __name__ == "__main__":
     dof_damping = np.zeros(mj_model.nu, dtype=np.float32)
     for i in range(mj_model.nu):
         found = False
-        for name in env_cfg.init_state.default_joint_angles.keys():
+        for name in cfg["init_state"]["default_joint_angles"].keys():
             if name in mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i):
-                default_dof_pos[i] = env_cfg.init_state.default_joint_angles[name]
+                default_dof_pos[i] = cfg["init_state"]["default_joint_angles"][name]
                 found = True
         if not found:
-            default_dof_pos[i] = env_cfg.init_state.default_joint_angles["default"]
+            default_dof_pos[i] = cfg["init_state"]["default_joint_angles"]["default"]
 
         found = False
-        for name in env_cfg.control.stiffness.keys():
+        for name in cfg["control"]["stiffness"].keys():
             if name in mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i):
-                dof_stiffness[i] = env_cfg.control.stiffness[name]
-                dof_damping[i] = env_cfg.control.damping[name]
+                dof_stiffness[i] = cfg["control"]["stiffness"][name]
+                dof_damping[i] = cfg["control"]["damping"][name]
                 found = True
         if not found:
             raise ValueError(f"PD gain of joint {mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)} were not defined")
     mj_data.qpos = np.concatenate(
         [
-            np.array(env_cfg.init_state.pos, dtype=np.float32),
-            np.array(env_cfg.init_state.rot[3:4] + env_cfg.init_state.rot[0:3], dtype=np.float32),
+            np.array(cfg["init_state"]["pos"], dtype=np.float32),
+            np.array(cfg["init_state"]["rot"][3:4] + cfg["init_state"]["rot"][0:3], dtype=np.float32),
             default_dof_pos,
         ]
     )
     mujoco.mj_forward(mj_model, mj_data)
 
-    actions = np.zeros((env_cfg.env.num_actions), dtype=np.float32)
+    actions = np.zeros(12, dtype=np.float32) # TODO: get from env
     dof_targets = np.zeros(default_dof_pos.shape, dtype=np.float32)
     gait_frequency = gait_process = 0.0
     lin_vel_x = lin_vel_y = ang_vel_yaw = 0.0
@@ -160,10 +160,10 @@ if __name__ == "__main__":
                     if len(parts) == 3:
                         lin_vel_x, lin_vel_y, ang_vel_yaw = map(float, parts)
 
-                        # if lin_vel_x == 0 and lin_vel_y == 0 and ang_vel_yaw == 0:
-                            # gait_frequency = 0
-                        # else:
-                        gait_frequency = np.average(env_cfg.commands.gait_frequency)
+                        if lin_vel_x == 0 and lin_vel_y == 0 and ang_vel_yaw == 0:
+                            gait_frequency = 0
+                        else:
+                            gait_frequency = np.average(cfg["commands"]["gait_frequency"])
                         print(
                             f"Updated command to: x={lin_vel_x}, y={lin_vel_y}, yaw={ang_vel_yaw}\nSet command (x, y, yaw): ",
                             end="",
@@ -174,19 +174,15 @@ if __name__ == "__main__":
                     print("Invalid input. Enter three numeric values.\nSet command (x, y, yaw): ", end="")
             dof_pos = mj_data.qpos.astype(np.float32)[7:]
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
-            quat = mj_data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.float32)
-            base_ang_vel = mj_data.sensor("angular-velocity").data.astype(np.float32)
-            projected_gravity = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0]))
             # forward = tu.quat_apply(torch.tensor(quat).unsqueeze(0), torch.tensor([1.0, 0.0, 0.0]).unsqueeze(0))
             # heading = torch.atan2(forward[:, 1], forward[:, 0])
             # ang_vel_yaw = torch.clip(0.5*wrap_to_pi(ang_vel_yaw - heading), -1., 1.)
-            if it % env_cfg.control.decimation == 0:
-                obs = compute_observation(env_cfg, observation_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos, actions)
+            if it % cfg["control"]["decimation"] == 0:
+                obs = compute_observation(cfg, observation_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos, actions)
                 dist = mujoco_runner.act(obs['student_observations'])
                 actions[:] = dist.detach().cpu().numpy()
-                actions[:] = np.clip(actions, -env_cfg.normalization.clip_actions, env_cfg.normalization.clip_actions)
-                # actions[:2] = 0
-                dof_targets[:] = default_dof_pos + env_cfg.control.action_scale * actions
+                actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
+                dof_targets[:] = default_dof_pos + cfg["control"]["action_scale"] * actions
             mj_data.ctrl = np.clip(
                 dof_stiffness * (dof_targets - dof_pos) - dof_damping * dof_vel,
                 mj_model.actuator_ctrlrange[:, 0],
@@ -196,4 +192,9 @@ if __name__ == "__main__":
             viewer.cam.lookat[:] = mj_data.qpos.astype(np.float32)[0:3]
             viewer.sync()
             it += 1
-            gait_process = float(np.fmod(gait_process + env_cfg.sim.dt * gait_frequency, 1.0))
+            gait_process = float(np.fmod(gait_process + cfg["sim"]["dt"] * gait_frequency, 1.0))
+
+
+
+if __name__ == '__main__':
+    main()
