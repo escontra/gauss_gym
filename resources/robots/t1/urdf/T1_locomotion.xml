@@ -1,7 +1,22 @@
 <mujoco model="T1">
-    <compiler angle="radian" meshdir="meshes/" />
+    <compiler angle="radian" meshdir="../meshes/" />
     <size njmax="500" nconmax="100" />
+    <default>
+    <joint limited="true" damping="0.01" armature="0.01" frictionloss="0.0" />
+    <equality solref="0.001 2" />
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" density="0"/>
+    </default>
+      <default class="collision">
+        <geom group="3" material="transparent" priority="1" friction="1. 0.01 0.005"/>
+    </default>
+  </default>
     <asset>
+        <material name="metal" rgba=".9 .95 .95 1"/>
+        <material name="black" rgba="0 0 0 1"/>
+        <material name="white" rgba="1 1 1 1"/>
+        <material name="gray" rgba="0.4 0.4 0.4 1"/>
+        <material name="transparent" rgba="0.5 0.5 0.5 1"/>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
         <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>
         <material name="matplane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true"/>
@@ -51,17 +66,17 @@
             <geom pos="0.0460173 -0.16655 0.161096" quat="0.776807 0.621775 0.0779406 -0.0623856" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="AR3" />
             <geom pos="0.0175025 -0.198766 0.0204279" quat="0.768092 0.621729 -0.078312 0.131739" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="right_hand_link" />
             <geom pos="0.0625 0 -0.1155" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="Waist" />
-            <body name="H1" pos="0.0625 0 0.243">
-              <inertial pos="-0.000508 -0.001403 0.057432" quat="0.763881 -0.0132172 0.00173419 0.645219" mass="0.44391" diaginertia="0.000241549 0.00022351 0.000149941"/>
-              <joint name="AAHead_yaw" pos="0 0 0" axis="0 0 1" limited="true" range="-1.57 1.57" />
-              <geom class="visual" material="gray" mesh="H1"/>
-              <body name="H2" pos="0 0 0.06185">
-                <inertial pos="0.007802 0.001262 0.098631" quat="0.988453 0.106172 -0.0745686 -0.0782786" mass="0.631019" diaginertia="0.00203553 0.00192467 0.00172381"/>
-                <joint name="Head_pitch" pos="0 0 0" axis="0 1 0" limited="true" range="-0.35 1.22" />
-                <geom class="visual" material="gray" mesh="H2"/>
-                <geom size="0.08" pos="0.01 0 0.11" class="collision" name="head"/>
-              </body>
-            </body>
+            <!-- <body name="H1" pos="0.0625 0 0.243"> -->
+              <!-- <inertial pos="-0.000508 -0.001403 0.057432" quat="0.763881 -0.0132172 0.00173419 0.645219" mass="0.44391" diaginertia="0.000241549 0.00022351 0.000149941"/> -->
+              <!-- <joint name="AAHead_yaw" pos="0 0 0" axis="0 0 1" limited="true" range="-1.57 1.57" /> -->
+              <!-- <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H1" /> -->
+              <!-- <body name="H2" pos="0 0 0.06185"> -->
+                <!-- <inertial pos="0.007802 0.001262 0.098631" quat="0.988453 0.106172 -0.0745686 -0.0782786" mass="0.631019" diaginertia="0.00203553 0.00192467 0.00172381"/> -->
+                <!-- <joint name="Head_pitch" pos="0 0 0" axis="0 1 0" limited="true" range="-0.35 1.22" /> -->
+                <!-- <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.4 0.4 0.4 1.0" mesh="H2" /> -->
+                <!-- <geom size="0.08" pos="0.01 0 0.11" class="collision" name="head"/> -->
+              <!-- </body> -->
+            <!-- </body> -->
             <body name="Hip_Pitch_Left" pos="0.0625 0.106 -0.1155">
                 <inertial pos="0.000534 -0.007296 -0.018083" quat="0.975141 0.2211 0.0145808 0.0017406" mass="1.021" diaginertia="0.00180547 0.00145926 0.00125327" />
                 <joint name="Left_Hip_Pitch" pos="0 0 0" axis="0 1 0" limited="true" range="-1.8 1.57" />
@@ -131,8 +146,8 @@
         </body>
     </worldbody>
     <actuator>
-        <!-- <motor name="AAHead_yaw" joint="AAHead_yaw" ctrlrange="-45.0 45.0" ctrllimited="true" />
-        <motor name="Head_pitch" joint="Head_pitch" ctrllimited="true" ctrlrange="-7 7" gear="1" /> -->
+        <!-- <motor name="AAHead_yaw" joint="AAHead_yaw" ctrlrange="-45.0 45.0" ctrllimited="true" /> -->
+        <!-- <motor name="Head_pitch" joint="Head_pitch" ctrllimited="true" ctrlrange="-7 7" gear="1" /> -->
         <motor name="Left_Hip_Pitch" joint="Left_Hip_Pitch" ctrlrange="-45.0 45.0" ctrllimited="true" />
         <motor name="Left_Hip_Roll" joint="Left_Hip_Roll" ctrlrange="-45.0 45.0" ctrllimited="true" />
         <motor name="Left_Hip_Yaw" joint="Left_Hip_Yaw" ctrlrange="-30.0 30.0" ctrllimited="true" />

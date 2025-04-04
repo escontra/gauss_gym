@@ -130,7 +130,7 @@ STUDENT_OBSERVATION_GROUP = ObservationGroup(
     ),
   ],
   add_noise=True,
-  add_latency=True,
+  add_latency=False,
   is_recurrent=True,
 )
 
