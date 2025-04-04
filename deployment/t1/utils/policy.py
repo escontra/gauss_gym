@@ -3,7 +3,7 @@ import torch
 
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import helpers
-from legged_gym.teacher import observation_groups as observation_groups_teacher
+from legged_gym.utils import observation_groups as observation_groups_teacher
 
 def quat_rotate_inverse(q, v):
     q_w = q[-1]
