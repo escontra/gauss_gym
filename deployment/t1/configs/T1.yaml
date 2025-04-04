@@ -4,7 +4,7 @@ commands:
   num_commands: 4
   ranges:
     ang_vel_yaw: [-0.2, 0.2]
-    lin_vel_x: [-0.2, 1.0]
+    lin_vel_x: [-0.2, 0.5]
     lin_vel_y: [-0.2, 0.2]
   control_threshold: 0.1
   resampling_time: 10.0
