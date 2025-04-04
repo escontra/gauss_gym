@@ -3,10 +3,10 @@ import sys
 import select
 import numpy as np
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
+from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
-from legged_gym.teacher import observation_groups as observation_groups_teacher
+from legged_gym.utils import observation_groups as observation_groups_teacher
 from legged_gym.utils.math import quat_apply_yaw, wrap_to_pi
 from legged_gym.utils import helpers
 from legged_gym.utils import flags, config
@@ -57,6 +57,8 @@ def compute_observation(env_cfg, observation_groups, mj_data, command, gait_freq
                 ), dim = -1)
             elif observation.name == "actions":
                 obs = torch.tensor(actions)
+            else:
+                raise ValueError(f"Observation {observation.name} not found")
             obs = obs.unsqueeze(0)
             if observation.clip:
                 obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
@@ -71,7 +73,7 @@ def compute_observation(env_cfg, observation_groups, mj_data, command, gait_freq
 
 
 def main(argv=None):
-    log_root = pathlib.Path(os.path.join(LEGGED_GYM_ROOT_DIR, 'logs'))
+    log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
     parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
     if parsed.load_run != '':
@@ -95,22 +97,19 @@ def main(argv=None):
        if isinstance(getattr(cfg.domain_rand, attr_name), bool):
           setattr(cfg.domain_rand, attr_name, False)
 
-    # TODO: can we get rid of the env?
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
     cfg = dict(cfg)
-    task_class = task_registry.get_task_class(cfg["task"])
     helpers.set_seed(cfg["seed"])
-    env = task_class(cfg=cfg)
     cfg["runner"]["resume"] = True
     cfg["runner"]["class_name"] = "MuJoCoRunner"
-    mujoco_runner = task_registry.make_alg_runner(env, cfg=cfg)
+    mujoco_runner = task_registry.make_alg_runner(None, cfg=cfg)
 
     observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
 
     print("Starting MuJoCo viewer...")
 
-    mj_model = mujoco.MjModel.from_xml_path(cfg["asset"]["mujoco_file"].format(LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR))
+    mj_model = mujoco.MjModel.from_xml_path(cfg["asset"]["mujoco_file"].format(GAUSS_GYM_ROOT_DIR=GAUSS_GYM_ROOT_DIR))
     mj_model.opt.timestep = cfg["sim"]["dt"]
     mj_data = mujoco.MjData(mj_model)
     mujoco.mj_resetData(mj_model, mj_data)

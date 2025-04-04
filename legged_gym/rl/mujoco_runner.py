@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym.utils import config
+from legged_gym import GAUSS_GYM_ROOT_DIR
 
 class MuJoCoRunner:
   def __init__(self, env: vec_env.VecEnv, cfg: config.Config, log_dir: pathlib.Path, device="cpu"):
@@ -23,14 +24,23 @@ class MuJoCoRunner:
     self.log_dir = log_dir
     self.cfg = cfg
     self._set_seed()
-    self.obs_group_sizes = {
-      'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
-      'student_observations': self.env.obs_group_size_per_name("student_observations"),
-    }
+
+    log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
+    load_run = self.cfg["runner"]["load_run"]
+    checkpoint = self.cfg["runner"]["checkpoint"]
+    if (load_run == "-1") or (load_run == -1):
+      resume_path = sorted(
+        [item for item in log_root.iterdir() if item.is_dir()],
+        key=lambda path: path.stat().st_mtime,
+      )[-1]
+    else:
+      resume_path = log_root / load_run
+
+    self.obs_group_sizes = pickle.load(open(resume_path / "obs_group_sizes.pkl", "rb"))
     self.model = getattr(models, self.cfg["runner"]["policy_class_name"])(
-      self.env.num_actions,
-      self.env.obs_group_size_per_name("student_observations"),
-      self.env.obs_group_size_per_name("teacher_observations"),
+      12, # TODO: add to config
+      self.obs_group_sizes["student_observations"],
+      self.obs_group_sizes["teacher_observations"],
       self.cfg["policy"]["init_noise_std"],
       self.cfg["policy"]["mu_activation"],
     ).to(self.device)

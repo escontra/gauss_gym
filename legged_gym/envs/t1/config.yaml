@@ -78,6 +78,7 @@ control:
 
 asset:
   file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf"
+  mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.xml"
   name: "t1"
   base_link_name: "Trunk"
   camera_link_name: "H2"
