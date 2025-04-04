@@ -20,7 +20,8 @@ RUN apt-get update \
  git \
  libegl1 \
  xvfb \
- git-lfs
+ git-lfs \
+ tmux
 
 # Force gcc 8 to avoid CUDA 10 build issues on newer base OS.
 # RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
@@ -45,9 +46,11 @@ COPY --chown=gymuser . .
 
 # Install gym modules.
 ENV PATH="/home/gymuser/.local/bin:$PATH"
+# Set Cuda arch explicitly with output of `nvidia-smi --query-gpu=gpu_name,compute_cap --format=csv`.
+ENV TORCH_CUDA_ARCH_LIST="8.0"
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
 RUN pip install jaxtyping
-RUN pip install gsplat
 RUN cd isaacgym/python && pip install -q -e .
 RUN pip install -q -e .
 

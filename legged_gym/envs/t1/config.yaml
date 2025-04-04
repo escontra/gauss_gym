@@ -106,7 +106,7 @@ asset:
   feet_contact_radius: 0.01
 
   disable_gravity: False
-  collapse_fixed_joints: True
+  collapse_fixed_joints: False
   fix_base_link: False
   default_dof_drive_mode: 3
   self_collisions: 0
