@@ -246,7 +246,7 @@ def main(argv=None):
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/T1.yaml", type=str, help="Name of the configuration file.")
+    parser.add_argument("--config", default="T1.yaml", type=str, help="Name of the configuration file.")
     parser.add_argument("--net", type=str, default="127.0.0.1", help="Network interface for SDK communication.")
     args = parser.parse_args()
     cfg_file = os.path.join("configs", args.config)
