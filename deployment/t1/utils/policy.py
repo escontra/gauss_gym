@@ -48,7 +48,7 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
             if observation.scale is not None:
                 scale = observation.scale
                 if isinstance(scale, list):
-                    scale = torch.tensor(scale, device=obs.device)[None]
+                    scale = torch.tensor(scale, device=obs.device, dtype=torch.float32)[None]
                 obs = scale * obs
             obs_dict[group.name][observation.name] = obs
 
@@ -120,6 +120,8 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
+        for key in self.obs:
+            print(key, self.obs[key].dtype)
 
         dist = self.runner.act(self.obs['student_observations'])
         self.actions[:] = dist.detach().cpu().numpy()
