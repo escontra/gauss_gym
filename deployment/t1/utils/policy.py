@@ -128,6 +128,6 @@ class Policy:
         self.actions[:] = np.clip(self.actions, -self.cfg["normalization"]["clip_actions"], self.cfg["normalization"]["clip_actions"])
         
         self.dof_targets[:] = self.default_dof_pos
-        self.dof_targets[11:] += self.cfg["policy"]["control"]["action_scale"] * self.actions
+        self.dof_targets[11:] += self.cfg["control"]["action_scale"] * self.actions
 
         return self.dof_targets
