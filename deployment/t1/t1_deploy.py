@@ -161,7 +161,7 @@ class Controller:
             if self.remoteControlService.start_rl_gait():
                 break
             time.sleep(0.1)
-        create_first_frame_rl_cmd(self.low_cmd, self.cfg)
+        create_first_frame_rl_cmd(self.low_cmd, self.onboard_cfg)
         self._send_cmd(self.low_cmd)
         self.next_inference_time = self.timer.get_time()
         self.next_publish_time = self.timer.get_time()
