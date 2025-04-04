@@ -60,13 +60,10 @@ class Policy:
         self.onboard_cfg = onboard_cfg
 
         try:
-            # TODO: can we get rid of the env?
-            task_class = task_registry.get_task_class(cfg["task"])
             helpers.set_seed(cfg["seed"])
-            env = task_class(cfg=cfg)
             cfg["runner"]["resume"] = True
             cfg["runner"]["class_name"] = "MuJoCoRunner"
-            self.runner = task_registry.make_alg_runner(env, cfg=cfg)
+            self.runner = task_registry.make_alg_runner(None, cfg=cfg)
             self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
         except Exception as e:
             print(f"Failed to start runner: {e}")

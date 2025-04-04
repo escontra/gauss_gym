@@ -23,7 +23,6 @@ from utils.policy import Policy
 
 from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
-from legged_gym.envs import *
 import pathlib
 
 from legged_gym.utils import flags, config
