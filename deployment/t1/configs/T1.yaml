@@ -1,3 +1,15 @@
+commands:
+  gait_frequency: [1.0, 2.0]
+  heading_command: true
+  num_commands: 4
+  ranges:
+    ang_vel_yaw: [-0.2, 0.2]
+    lin_vel_x: [-0.2, 1.0]
+    lin_vel_y: [-0.2, 0.2]
+  control_threshold: 0.1
+  resampling_time: 10.0
+  still_proportion: 0.1
+
 common:
   dt: 0.002
   stiffness: [

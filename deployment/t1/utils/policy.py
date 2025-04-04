@@ -55,8 +55,9 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
     return obs_dict
 
 class Policy:
-    def __init__(self, cfg):
-
+    def __init__(self, cfg, onboard_cfg):
+        self.cfg = cfg
+        self.onboard_cfg = onboard_cfg
 
         try:
             # TODO: can we get rid of the env?
@@ -83,12 +84,12 @@ class Policy:
         self.commands = np.zeros(3, dtype=np.float32)
         self.smoothed_commands = np.zeros(3, dtype=np.float32)
 
-        self.gait_frequency = self.cfg["policy"]["gait_frequency"]
+        self.gait_frequency = np.average(self.onboard_cfg["commands"]["gait_frequency"])
         self.gait_process = 0.0
         self.dof_targets = np.copy(self.default_dof_pos)
-        self.obs = np.zeros(self.cfg["policy"]["num_observations"], dtype=np.float32)
-        self.actions = np.zeros(self.cfg["policy"]["num_actions"], dtype=np.float32)
-        self.policy_interval = self.cfg["common"]["dt"] * self.cfg["policy"]["control"]["decimation"]
+        self.obs = None
+        self.actions = np.zeros(12, dtype=np.float32) # TODO: get from cfg
+        self.policy_interval = self.cfg["common"]["dt"] * self.cfg["control"]["decimation"]
 
     def inference(self, time_now, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw):
         self.gait_process = np.fmod(time_now * self.gait_frequency, 1.0)
@@ -101,7 +102,7 @@ class Policy:
         if np.linalg.norm(self.smoothed_commands) < 1e-5:
             self.gait_frequency = 0.0
         else:
-            self.gait_frequency = self.cfg["policy"]["gait_frequency"]
+            self.gait_frequency = np.average(self.onboard_cfg["commands"]["gait_frequency"])
 
         # self.obs[0:3] = projected_gravity * self.cfg["policy"]["normalization"]["gravity"]
         # self.obs[3:6] = base_ang_vel * self.cfg["policy"]["normalization"]["ang_vel"]

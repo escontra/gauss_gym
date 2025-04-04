@@ -64,8 +64,8 @@ class Controller:
         self.cfg = cfg
 
         # Initialize components
-        self.remoteControlService = RemoteControlService()
-        self.policy = Policy(cfg=self.cfg)
+        self.remoteControlService = RemoteControlService(self.onboard_cfg["commands"])
+        self.policy = Policy(cfg=self.cfg, onboard_cfg=self.onboard_cfg)
 
         self._init_timer()
         self._init_low_state_values()
