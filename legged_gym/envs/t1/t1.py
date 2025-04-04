@@ -53,6 +53,7 @@ class T1(LeggedRobot):
             *self.cfg["commands"]["gait_frequency"], (len(env_ids), 1), device=self.device
         ).squeeze(1)
         self.gait_frequency[self.still_envs] = 0.0
+        self.gait_frequency[self.get_small_command_mask()] = 0.0
 
     def _reward_dof_pos_limits(self):
         # Penalize dof positions too close to the limit

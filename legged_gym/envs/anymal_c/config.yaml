@@ -20,10 +20,22 @@ env:
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
-  observation_groups:
-    - "TEACHER_OBSERVATION_GROUP"
-    - "STUDENT_OBSERVATION_GROUP"
-  latency_resampling_time: 2.0
+  teacher_observations:
+    observations: [
+      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY,
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
+      RAY_CAST, BASE_MASS_SCALED,
+      DOF_FRICTION_CURRICULUM_VALUES,
+      PUSHING_FORCES, PUSHING_TORQUES]
+  student_observations:
+    add_noise: True
+    add_latency: True
+    latency_resampling_interval_s: 2.0
+    observations: [
+      BASE_ANG_VEL, PROJECTED_GRAVITY,
+      VELOCITY_COMMANDS, DOF_POS,
+      DOF_VEL, ACTIONS
+    ]
 
 terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
@@ -96,7 +108,20 @@ asset:
   armature: 0.
   thickness: 0.01
 
+curriculum:
+  apply_curriculum: True
+
+  dof_friction:
+    apply: False
+    epochs: 10000
+    update_every: 10
+    start: 0.12
+    end: 0.02
+    sample_type: "uniform"
+
 domain_rand:
+  apply_domain_rand: True
+
   init_dof_pos:
     apply: True
     range: [0.0, 0.05]
@@ -154,13 +179,6 @@ domain_rand:
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "uniform"
-  dof_friction_curriculum:
-    apply: False
-    steps: 240000
-    update_every: 200
-    start: 0.20
-    end: 0.03
-    sample_type: "uniform"
 
   foot_friction:
     apply: True
@@ -238,6 +256,8 @@ commands:
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
+  small_lin_vel_threshold: 0.1
+  small_ang_vel_threshold: 0.1
   ranges:
     lin_vel: [0.1, 1.0]
     lin_vel_yaw: [-1.0, 1.0]

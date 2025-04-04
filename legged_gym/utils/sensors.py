@@ -905,6 +905,7 @@ class LinkHeightSensor():
         self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
 
         self.ray_hits_world = torch.zeros(self.num_envs, self.num_rays, 3, device=self.device)
+        self.link_heights = torch.zeros(self.num_envs, len(self.link_indices), device=self.device)
         self.env = env
         self.sphere_geom = None
 
@@ -925,9 +926,10 @@ class LinkHeightSensor():
             ray_directions_world = quat_apply(quats, self.ray_directions[env_ids])
 
         self.ray_hits_world[env_ids] = ray_cast(ray_starts_world, ray_directions_world, self.terrain_mesh)
+        self.link_heights[env_ids] = pos[..., 2] - self.ray_hits_world[..., 2]
 
     def get_data(self):
-        return torch.nan_to_num(self.ray_hits_world, posinf=self.default_hit_value)
+        return torch.nan_to_num(self.link_heights, posinf=self.default_hit_value, neginf=self.default_hit_value)
     
     def debug_vis(self, env):
         if self.sphere_geom is None:

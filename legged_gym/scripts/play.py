@@ -30,7 +30,7 @@
 
 import os
 import pathlib
-
+import types
 import isaacgym
 import legged_gym
 from legged_gym.envs import *
@@ -57,17 +57,13 @@ def main(argv = None):
     cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
     cfg = cfg.update({'runner.resume': True})
     cfg = cfg.update({'headless': False})
-
     cfg = cfg.update({'env.num_envs': 50})
-    # Disable domain randomization.
-    for attr_name in dict(cfg.domain_rand):
-      attr = getattr(cfg.domain_rand, attr_name)
-      if hasattr(attr, 'apply'):
-          print(f'{attr_name} = {attr.apply}')
-          cfg = cfg.update({f'domain_rand.{attr_name}.apply': False})
+    cfg = cfg.update({'domain_rand.apply_domain_rand': False})
+    cfg = cfg.update({'curriculum.apply_curriculum': False})
+
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
-    cfg = dict(cfg)
+    cfg = types.MappingProxyType(dict(cfg))
     task_class = task_registry.get_task_class(cfg["task"])
     helpers.set_seed(cfg["seed"])
     env = task_class(cfg=cfg)

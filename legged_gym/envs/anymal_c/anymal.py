@@ -39,12 +39,12 @@ from legged_gym.utils import config
 
 class Anymal(LeggedRobot):
     cfg : config.Config
-    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
-        super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
+    def __init__(self, cfg):
+        super().__init__(cfg)
 
         # load actuator network
-        if self.cfg.control.use_actuator_network:
-            actuator_network_path = self.cfg.control.actuator_net_file.format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
+        if self.cfg["control"]["use_actuator_network"]:
+            actuator_network_path = self.cfg["control"]["actuator_net_file"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
             self.actuator_network = torch.jit.load(actuator_network_path).to(self.device)
     
     def reset_idx(self, env_ids):
@@ -64,9 +64,9 @@ class Anymal(LeggedRobot):
 
     def _compute_torques(self, actions, actions_scaled_clipped):
         # Choose between pd controller and actuator network
-        if self.cfg.control.use_actuator_network:
+        if self.cfg["control"]["use_actuator_network"]:
             with torch.inference_mode():
-                self.sea_input[:, 0, 0] = (actions * self.cfg.control.action_scale + self.default_dof_pos - self.dof_pos).flatten()
+                self.sea_input[:, 0, 0] = (actions * self.cfg["control"]["action_scale"] + self.default_dof_pos - self.dof_pos).flatten()
                 self.sea_input[:, 0, 1] = self.dof_vel.flatten()
                 torques, (self.sea_hidden_state[:], self.sea_cell_state[:]) = self.actuator_network(self.sea_input, (self.sea_hidden_state, self.sea_cell_state))
             return torques

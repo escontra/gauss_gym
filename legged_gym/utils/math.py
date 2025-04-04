@@ -250,6 +250,20 @@ def quat_from_z_rot(angle_rad: Union[float, torch.Tensor], size: Union[None, int
     y_angle_rad = torch.zeros_like(angle_rad)
     return quat_from_euler_xyz(x_angle_rad, y_angle_rad, angle_rad)
 
+
+@torch.jit.script
+def quat_rotate(q, v):
+    shape = q.shape
+    q_w = q[:, -1]
+    q_vec = q[:, :3]
+    a = v * (2.0 * q_w ** 2 - 1.0).unsqueeze(-1)
+    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
+    c = q_vec * \
+        torch.bmm(q_vec.view(shape[0], 1, 3), v.view(
+            shape[0], 3, 1)).squeeze(-1) * 2.0
+    return a + b + c
+
+
 @torch.jit.script
 def quat_rotate_inverse(q, v):
     shape = q.shape

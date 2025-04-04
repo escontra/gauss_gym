@@ -20,10 +20,20 @@ env:
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
-  observation_groups:
-    - "TEACHER_OBSERVATION_GROUP"
-    - "STUDENT_OBSERVATION_GROUP"
-  latency_resampling_time: 2.0
+  teacher_observations:
+    observations: [
+      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
+      DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
+      HIP_HEIGHTS, BASE_HEIGHT]
+  student_observations:
+    add_noise: True
+    add_latency: True
+    latency_resampling_interval_s: 2.0
+    observations: [
+      BASE_ANG_VEL, PROJECTED_GRAVITY,
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS
+    ]
 
 terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
@@ -99,7 +109,20 @@ asset:
   armature: 0.
   thickness: 0.01
 
+curriculum:
+  apply_curriculum: True
+
+  dof_friction:
+    apply: True
+    epochs: 10000
+    update_every: 10
+    start: 0.2
+    end: 0.01
+    sample_type: "uniform"
+
 domain_rand:
+  apply_domain_rand: True
+
   init_dof_pos:
     apply: False
     range: [0.0, 0.05]
@@ -157,13 +180,6 @@ domain_rand:
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "uniform"
-  dof_friction_curriculum:
-    apply: True
-    steps: 240000
-    update_every: 200
-    start: 0.2
-    end: 0.03
-    sample_type: "uniform"
 
   foot_friction:
     apply: True
@@ -213,29 +229,35 @@ rewards:
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
   base_height_target: 0.25
+  hip_height_target: 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
   feet_air_time_min_time: 0.5
-  feet_air_time_max_time: 2.0
+  feet_air_time_max_time: 1.0
+  feet_contact_time_min_time: 0.2
+  feet_contact_time_max_time: 0.5
   scales:
-    tracking_lin_vel_x: 2.0
-    tracking_lin_vel_y: 2.0
-    tracking_ang_vel: 1.0
-    lin_vel_z: -2.0
+    tracking_lin_vel_x: 1.0
+    tracking_lin_vel_y: 1.0
+    tracking_ang_vel: 0.5
+    lin_vel_z: -0.5
     ang_vel_xy: -0.05
-    torques: -0.00001
+    torques: -0.000033 # -0.00005 # -0.000033 # -0.0001 # -0.00001
     dof_acc: -2.5e-7
     feet_air_time:  1.0
+    feet_contact_time: 1.0
     collision: -1.
     action_rate: -0.01
     hip_height: -1.0
     dof_pos_limits: -1.0
 
 commands:
-  still_proportion: 0.1
+  still_proportion: 0.0
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
+  small_lin_vel_threshold: 0.1
+  small_ang_vel_threshold: 0.1
   ranges:
     lin_vel: [0.1, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
@@ -243,7 +265,7 @@ commands:
     heading: [-3.14, 3.14]
 
 normalization:
-  filter_weight: 0.0
+  filter_weight: 0.2
   clip_actions: 100.0
   clip_actions_method: "normal"
   dof_pos_redundancy: 0.2

@@ -28,15 +28,11 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-import numpy as np
-import os
-from datetime import datetime
-import sys
+import types
 
 import isaacgym
 from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
-import torch
 from legged_gym.utils import flags
 
 from legged_gym.utils import helpers
@@ -49,7 +45,7 @@ def main(argv=None):
     cfg = task_registry.get_cfgs(parsed.task)
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
-    cfg = dict(cfg)
+    cfg = types.MappingProxyType(dict(cfg))
     task_class = task_registry.get_task_class(cfg["task"])
     helpers.set_seed(cfg["seed"])
     env = task_class(cfg=cfg)

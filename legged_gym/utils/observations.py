@@ -77,3 +77,11 @@ def ray_cast(env: "ANY_ENV", params, is_real=False):
 def gs_render(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     return sensor.get_data()
+
+def base_height(env: "ANY_ENV", params, is_real=False):
+    sensor = env.sensors[params.sensor]
+    return sensor.get_data()
+
+def hip_heights(env: "ANY_ENV", params, is_real=False):
+    sensor = env.sensors[params.sensor]
+    return sensor.get_data()
