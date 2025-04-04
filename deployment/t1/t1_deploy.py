@@ -144,7 +144,7 @@ class Controller:
                 break
             time.sleep(0.1)
         start_time = time.perf_counter()
-        create_prepare_cmd(self.low_cmd, self.cfg)
+        create_prepare_cmd(self.low_cmd, self.onboard_cfg)
         for i in range(B1JointCnt):
             self.dof_target[i] = self.low_cmd.motor_cmd[i].q
             self.filtered_dof_target[i] = self.low_cmd.motor_cmd[i].q
