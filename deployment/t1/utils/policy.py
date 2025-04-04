@@ -90,6 +90,7 @@ class Policy:
         self.policy_interval = self.onboard_cfg["common"]["dt"] * self.cfg["control"]["decimation"]
 
     def inference(self, time_now, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw):
+        print("vx", vx, "vy", vy, "vyaw", vyaw)
         self.gait_process = np.fmod(time_now * self.gait_frequency, 1.0)
         self.commands[0] = vx
         self.commands[1] = vy
