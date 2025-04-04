@@ -137,11 +137,14 @@ class MuJoCoRunner:
         actions = actor(input_a.squeeze(0))
         return actions
 
-
+    import time
+    start_time = time.time()
     with torch.no_grad():
       obs = self.filter_nans(obs)
       act = policy(obs, mlp_keys, cnn_keys)
-    
+    end_time = time.time()
+    print(f"Time taken: {end_time - start_time} seconds")
+    print(f"Frequency: {1 / (end_time - start_time)} Hz")
     return act
 
   def interrupt_handler(self, signal, frame):
