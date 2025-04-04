@@ -120,8 +120,8 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
-        for key in self.obs:
-            print(key, self.obs[key].dtype)
+        for key in self.obs['student_observations']:
+            print(key, self.obs['student_observations'][key].dtype)
 
         dist = self.runner.act(self.obs['student_observations'])
         self.actions[:] = dist.detach().cpu().numpy()
