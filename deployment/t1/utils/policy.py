@@ -63,6 +63,7 @@ class Policy:
             helpers.set_seed(cfg["seed"])
             cfg["runner"]["resume"] = True
             cfg["runner"]["class_name"] = "MuJoCoRunner"
+            cfg["rl_device"] = "cpu"
             self.runner = task_registry.make_alg_runner(None, cfg=cfg)
             self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
         except Exception as e:

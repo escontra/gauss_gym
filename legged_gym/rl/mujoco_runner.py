@@ -18,6 +18,7 @@ from legged_gym import GAUSS_GYM_ROOT_DIR
 
 class MuJoCoRunner:
   def __init__(self, env: vec_env.VecEnv, cfg: config.Config, log_dir: pathlib.Path, device="cpu"):
+    print("device", device)
     self.test = True
     self.env = env
     self.device = device
