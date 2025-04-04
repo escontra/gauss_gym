@@ -42,7 +42,8 @@ class MuJoCoRunner:
       self.obs_group_sizes["student_observations"],
       self.obs_group_sizes["teacher_observations"],
       self.cfg["policy"]["init_noise_std"],
-      self.cfg["policy"]["mu_activation"],
+      mu_activation=self.cfg["policy"]["mu_activation"],
+      layer_activation=self.cfg["policy"]["layer_activation"],
     ).to(self.device)
 
   def _set_seed(self):
