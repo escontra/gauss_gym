@@ -75,9 +75,9 @@ class Policy:
         return self.policy_interval
 
     def _init_inference_variables(self):
-        self.default_dof_pos = np.array(self.cfg["common"]["default_qpos"], dtype=np.float32)
-        self.stiffness = np.array(self.cfg["common"]["stiffness"], dtype=np.float32)
-        self.damping = np.array(self.cfg["common"]["damping"], dtype=np.float32)
+        self.default_dof_pos = np.array(self.onboard_cfg["common"]["default_qpos"], dtype=np.float32)
+        self.stiffness = np.array(self.onboard_cfg["common"]["stiffness"], dtype=np.float32)
+        self.damping = np.array(self.onboard_cfg["common"]["damping"], dtype=np.float32)
 
         self.commands = np.zeros(3, dtype=np.float32)
         self.smoothed_commands = np.zeros(3, dtype=np.float32)
@@ -87,7 +87,7 @@ class Policy:
         self.dof_targets = np.copy(self.default_dof_pos)
         self.obs = None
         self.actions = np.zeros(12, dtype=np.float32) # TODO: get from cfg
-        self.policy_interval = self.cfg["common"]["dt"] * self.cfg["control"]["decimation"]
+        self.policy_interval = self.onboard_cfg["common"]["dt"] * self.cfg["control"]["decimation"]
 
     def inference(self, time_now, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw):
         self.gait_process = np.fmod(time_now * self.gait_frequency, 1.0)
