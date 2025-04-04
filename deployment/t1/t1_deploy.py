@@ -186,9 +186,9 @@ class Controller:
             dof_vel=self.dof_vel,
             base_ang_vel=self.base_ang_vel,
             projected_gravity=self.projected_gravity,
-            vx=self.remoteControlService.get_vx_cmd(),
-            vy=self.remoteControlService.get_vy_cmd(),
-            vyaw=self.remoteControlService.get_vyaw_cmd(),
+            vx=np.clip(self.remoteControlService.get_vx_cmd(), self.onboard_cfg["commands"]["ranges"]["lin_vel_x"][0], self.onboard_cfg["commands"]["ranges"]["lin_vel_x"][1]),
+            vy=np.clip(self.remoteControlService.get_vy_cmd(), self.onboard_cfg["commands"]["ranges"]["lin_vel_y"][0], self.onboard_cfg["commands"]["ranges"]["lin_vel_y"][1]),
+            vyaw=np.clip(self.remoteControlService.get_vyaw_cmd(), self.onboard_cfg["commands"]["ranges"]["ang_vel_yaw"][0], self.onboard_cfg["commands"]["ranges"]["ang_vel_yaw"][1]),
         )
 
         inference_time = time.perf_counter()
