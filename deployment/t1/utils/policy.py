@@ -37,7 +37,7 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
                 obs = torch.cat((
                     (torch.cos(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
                     (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                ), dim = -1)
+                ), dim = -1).to(torch.float32)
             elif observation.name == "actions":
                 obs = torch.tensor(actions, dtype=torch.float32)
             else:
@@ -120,8 +120,8 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
-        for key in self.obs['student_observations']:
-            print(key, self.obs['student_observations'][key].dtype)
+        # for key in self.obs['student_observations']:
+            # print(key, self.obs['student_observations'][key].dtype)
 
         dist = self.runner.act(self.obs['student_observations'])
         self.actions[:] = dist.detach().cpu().numpy()
