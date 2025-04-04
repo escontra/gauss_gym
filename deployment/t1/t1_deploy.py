@@ -21,7 +21,7 @@ from utils.rotate import rotate_vector_inverse_rpy
 from utils.timer import TimerConfig, Timer
 from utils.policy import Policy
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
+from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
 import pathlib
 
@@ -40,7 +40,7 @@ class Controller:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
 
         # Load from file
-        log_root = pathlib.Path(os.path.join(LEGGED_GYM_ROOT_DIR, 'logs'))
+        log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
         load_run_path = None
         parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
         if parsed.load_run != '':
