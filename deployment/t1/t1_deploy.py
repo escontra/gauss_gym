@@ -42,7 +42,7 @@ class Controller:
         # Load from file
         log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
         load_run_path = None
-        parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
+        parsed, other = flags.Flags(load_run='', checkpoint=10000).parse_known(argv)
         if parsed.load_run != '':
             load_run_path = log_root / parsed.load_run
         else:
@@ -213,9 +213,9 @@ class Controller:
             for i in self.cfg["mech"]["parallel_mech_indexes"]:
                 self.low_cmd.motor_cmd[i].q = self.dof_pos_latest[i]
                 self.low_cmd.motor_cmd[i].tau = np.clip(
-                    (self.filtered_dof_target[i] - self.dof_pos_latest[i]) * self.cfg["common"]["stiffness"][i],
-                    -self.cfg["common"]["torque_limit"][i],
-                    self.cfg["common"]["torque_limit"][i],
+                    (self.filtered_dof_target[i] - self.dof_pos_latest[i]) * self.onboard_cfg["common"]["stiffness"][i],
+                    -self.onboard_cfg["common"]["torque_limit"][i],
+                    self.onboard_cfg["common"]["torque_limit"][i],
                 )
                 self.low_cmd.motor_cmd[i].kp = 0.0
 
