@@ -39,7 +39,7 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
                     (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
                 ), dim = -1)
             elif observation.name == "actions":
-                obs = torch.tensor(actions)
+                obs = torch.tensor(actions, dtype=torch.float32)
             else:
                 raise ValueError(f"Observation {observation.name} not found")
             obs = obs.unsqueeze(0)
