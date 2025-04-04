@@ -210,7 +210,7 @@ class Controller:
                 self.low_cmd.motor_cmd[i].q = self.filtered_dof_target[i]
 
             # Use series-parallel conversion for torque to avoid non-linearity
-            for i in self.cfg["mech"]["parallel_mech_indexes"]:
+            for i in self.onboard_cfg["mech"]["parallel_mech_indexes"]:
                 self.low_cmd.motor_cmd[i].q = self.dof_pos_latest[i]
                 self.low_cmd.motor_cmd[i].tau = np.clip(
                     (self.filtered_dof_target[i] - self.dof_pos_latest[i]) * self.onboard_cfg["common"]["stiffness"][i],
