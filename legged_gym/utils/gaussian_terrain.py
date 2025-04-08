@@ -481,13 +481,13 @@ class GaussianSceneManager:
     cam_quat_xyzw_subs = self.cam_quat_xyzw[env_ids]
     rand = torch.rand((len(env_ids),), device=self._env.device)
     low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
-    high = (self.valid_pose_start_idxs[env_ids].to(torch.float32) + cam_trans_subs.shape[1]) / 2
+    # high = (self.valid_pose_start_idxs[env_ids].to(torch.float32) + cam_trans_subs.shape[1]) / 2
     # high = self.valid_pose_start_idxs[env_ids].to(torch.float32) + 2
-    # high = (
-    #   torch.ones((len(env_ids),), device=self._env.device)
-    #   * cam_trans_subs.shape[1]
-    #   - 6
-    # )
+    high = (
+      torch.ones((len(env_ids),), device=self._env.device)
+      * cam_trans_subs.shape[1]
+      - 6
+    )
     state_idx = (rand * (high - low) + low).to(torch.int64)
 
     trans_idx = (

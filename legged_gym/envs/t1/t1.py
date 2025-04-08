@@ -66,17 +66,17 @@ class T1(LeggedRobot):
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
 
     def _reward_feet_roll(self):
-        roll, _, _ = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        roll, _, _ = tu.get_euler_xyz(self.get_feet_state()[1].reshape(-1, 4))
         roll = (roll.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
         return torch.sum(torch.square(roll), dim=-1)
 
     def _reward_feet_yaw_diff(self):
-        _, _, yaw = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        _, _, yaw = tu.get_euler_xyz(self.get_feet_state()[1].reshape(-1, 4))
         yaw = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
         return torch.square((yaw[:, 1] - yaw[:, 0] + torch.pi) % (2 * torch.pi) - torch.pi)
 
     def _reward_feet_yaw_mean(self):
-        _, _, yaw = tu.get_euler_xyz(self.get_feet_pos_quat()[1].reshape(-1, 4))
+        _, _, yaw = tu.get_euler_xyz(self.get_feet_state()[1].reshape(-1, 4))
         yaw = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
         feet_yaw_mean = yaw.mean(dim=-1) + torch.pi * (torch.abs(yaw[:, 1] - yaw[:, 0]) > torch.pi)
         return torch.square((tu.get_euler_xyz(self.base_quat)[2] - feet_yaw_mean + torch.pi) % (2 * torch.pi) - torch.pi)
@@ -84,8 +84,8 @@ class T1(LeggedRobot):
     def _reward_feet_distance(self):
         _, _, base_yaw = tu.get_euler_xyz(self.base_quat)
         feet_distance = torch.abs(
-            torch.cos(base_yaw) * (self.get_feet_pos_quat()[0][:, 1, 1] - self.get_feet_pos_quat()[0][:, 0, 1])
-            - torch.sin(base_yaw) * (self.get_feet_pos_quat()[0][:, 1, 0] - self.get_feet_pos_quat()[0][:, 0, 0])
+            torch.cos(base_yaw) * (self.get_feet_state()[0][:, 1, 1] - self.get_feet_state()[0][:, 0, 1])
+            - torch.sin(base_yaw) * (self.get_feet_state()[0][:, 1, 0] - self.get_feet_state()[0][:, 0, 0])
         )
         return torch.clip(self.cfg["rewards"]["feet_distance_ref"] - feet_distance, min=0.0, max=0.1)
 

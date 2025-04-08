@@ -32,6 +32,8 @@ import sys
 from isaacgym import gymapi
 import torch
 
+from legged_gym.utils import timer
+
 # Base class for RL tasks
 class BaseTask():
 
@@ -99,6 +101,7 @@ class BaseTask():
     def step(self, actions):
         raise NotImplementedError
 
+    @timer.section("render")
     def render(self, sync_frame_time=True):
         if self.viewer:
             # check for window closed

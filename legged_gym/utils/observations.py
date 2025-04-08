@@ -85,3 +85,12 @@ def base_height(env: "ANY_ENV", params, is_real=False):
 def hip_heights(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     return sensor.get_data()
+
+def feet_air_time(env: "ANY_ENV", params, is_real=False):
+    return env.feet_air_time
+
+def feet_contact_time(env: "ANY_ENV", params, is_real=False):
+    return env.feet_contact_time
+
+def feet_contact(env: "ANY_ENV", params, is_real=False):
+    return env.feet_contact

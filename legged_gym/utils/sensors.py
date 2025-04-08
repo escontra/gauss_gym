@@ -643,7 +643,7 @@ class FootContactSensor():
         Args:
             env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
         """
-        feet_pos, feet_quat = self.env.get_feet_pos_quat()
+        feet_pos, feet_quat, _ ,_ = self.env.get_feet_state()
         expanded_feet_pos = feet_pos.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
         expanded_feet_quat = feet_quat.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 4)
         feet_edge_pos = expanded_feet_pos.reshape(-1, 3) + quat_rotate(expanded_feet_quat.reshape(-1, 4), self.feet_edge_relative_pos.reshape(-1, 3))

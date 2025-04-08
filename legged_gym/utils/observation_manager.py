@@ -2,6 +2,7 @@ import torch
 from legged_gym.utils import observation_groups
 from typing import List
 from isaacgym.torch_utils import torch_rand_float
+from legged_gym.utils import timer
 
 
 class ObsManager:
@@ -92,6 +93,7 @@ class ObsManager:
                 self.obs_buffers_per_group[obs_group.name][obs.name][:, env_ids] = 0.
                 self.delayed_frames_per_group[obs_group.name][obs.name][env_ids] = 0
 
+    @timer.section("compute_obs")
     def compute_obs(self, env):
         self.obs_dict = {}
         for obs_group in self.obs_group_cfg:

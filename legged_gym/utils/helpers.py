@@ -33,8 +33,6 @@ import copy
 import torch
 import numpy as np
 import random
-from isaacgym import gymapi
-from isaacgym import gymutil
 
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):

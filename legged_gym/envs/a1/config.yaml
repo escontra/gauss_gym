@@ -25,10 +25,11 @@ observations:
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
-      HIP_HEIGHTS, BASE_HEIGHT]
+      # HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
+    ]
   student_observations:
-    add_noise: True
-    add_latency: True
+    add_noise: False
+    add_latency: False
     latency_resampling_interval_s: 2.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -68,10 +69,10 @@ init_state:
 control:
   control_type: "P"
   stiffness: {
-    "joint": 50.0
+    "joint": 35.0
   }
   damping: {
-    "joint": 1.0
+    "joint": 0.5
   }
   action_scale: 0.5
   decimation: 4
@@ -81,6 +82,7 @@ control:
 
 asset:
   file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf"
+  mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/xml/a1.xml"
   name: "a1"
   base_link_name: "base"
   camera_link_name: "base"
@@ -114,22 +116,23 @@ curriculum:
 
   dof_friction:
     apply: True
-    epochs: 10000
+    # epochs: 10000
+    epochs: 250
     update_every: 10
     start: 0.2
     end: 0.01
     sample_type: "uniform"
 
 domain_rand:
-  apply_domain_rand: True
+  apply_domain_rand: False
 
   init_dof_pos:
-    apply: False
+    apply: True
     range: [0.0, 0.05]
     operation: "additive"
     distribution: "gaussian"
   init_base_lin_vel_xy:
-    apply: False
+    apply: True
     range: [0.0, 0.1]
     operation: "additive"
     distribution: "gaussian"
@@ -175,8 +178,14 @@ domain_rand:
     range: [0.95, 1.05]
     operation: "scaling"
     distribution: "uniform"
-  dof_friction:
+  dof_damping_ankles:
     apply: False
+    ankle_names: ["Left_Ankle_Pitch", "Right_Ankle_Pitch", "Left_Ankle_Roll", "Right_Ankle_Roll"]
+    range: [-0.5, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  dof_friction:
+    apply: True
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "uniform"
@@ -197,28 +206,28 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 4.0
+  kick_interval_s: 5.0
   kick_lin_vel:
     apply: True
-    range: [0.0, 0.1]
+    range: [-1.0, 1.0]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [0.0, 0.02]
+    range: [-1.0, 1.0]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
 
   push_interval_s: 5.0
   push_duration_s: 1.0
   push_force:
-    apply: True
-    range: [0.0, 6.0]
+    apply: False
+    range: [0., 15.]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
-    apply: True
-    range: [0.0, 1.5]
+    apply: False
+    range: [0., 7.5]
     operation: "additive"
     distribution: "gaussian"
 
@@ -229,27 +238,65 @@ rewards:
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
   base_height_target: 0.25
-  hip_height_target: 0.25
+  hip_height_target: 0.30
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.5
-  feet_air_time_max_time: 1.0
-  feet_contact_time_min_time: 0.2
-  feet_contact_time_max_time: 0.5
+  feet_air_time_min_time: 0.2 # 0.5
+  feet_air_time_max_time: 0.3 # 1.0
   scales:
     tracking_lin_vel_x: 1.0
     tracking_lin_vel_y: 1.0
     tracking_ang_vel: 0.5
     lin_vel_z: -0.5
     ang_vel_xy: -0.05
-    torques: -0.000033 # -0.00005 # -0.000033 # -0.0001 # -0.00001
+    torques: -0.0002 # -0.00005 # -0.000033 # -0.0001 # -0.00001
     dof_acc: -2.5e-7
     feet_air_time:  1.0
-    feet_contact_time: 1.0
     collision: -1.
     action_rate: -0.01
     hip_height: -1.0
     dof_pos_limits: -1.0
+
+    energy: -0.0001 # TODO: helps? 
+
+    # Additional rewards.
+    # feet_slip: -0.1
+    # feet_clearance: -2.0
+    # feet_height: -0.2
+
+  # Playground scales.
+  # only_positive_rewards: True
+  # tracking_sigma: 0.25
+  # soft_dof_pos_limit: 0.95
+  # hip_height_target: 0.30
+  # terminate_height: 0.08
+  # feet_air_time_min_time: 0.1
+  # feet_air_time_max_time: -1
+  # max_foot_height: 0.2
+  # scales:
+  #   tracking_lin_vel_x: 3.0 #1.0
+  #   tracking_lin_vel_y: 3.0 # 1.0
+  #   tracking_ang_vel: 1.5 # 0.5
+  #   # Base.
+  #   lin_vel_z: -0.5
+  #   ang_vel_xy: -0.05
+  #   orientation: -1.0
+  #   # Other.
+  #   dof_pos_limits: -1.0
+  #   a1_pose: 0.5
+  #   # Regularization.
+  #   collision: -1.0
+  #   termination: -1.0
+  #   stand_still: -1.0
+  #   torques: -0.0002
+  #   action_rate: -0.01
+  #   energy: -0.001
+
+  #   # Feet.
+  #   feet_clearance: -2.0
+  #   feet_height: -0.2
+  #   feet_slip: -0.1
+  #   feet_air_time: 0.1
 
 commands:
   still_proportion: 0.0
@@ -320,31 +367,34 @@ sim:
     contact_collection: 2
 
 policy:
-  init_noise_std: 0.5
-  mu_activation: "identity"
   layer_activation: "elu"
+  policy_hidden_layer_sizes: [512, 256, 128]
+  value_hidden_layer_sizes: [512, 256, 128]
+  symlog_inputs: True
+  policy_head: {output_type: normal_logstdparam, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
+  value_head: {output_type: mse, outscale: 1.0}
 
 algorithm:
   learning_rate: 1.e-5
-  gamma: 0.99
+  gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
   symmetric_coef: 10.0
   num_learning_epochs: 20
-  clip_min_std: 0.2
   value_loss_coef: 1.0
   use_clipped_value_loss: True
   clip_param: 0.2
-  bound_coef: 1.0
+  bound_coef: 0.25
   desired_kl: 0.01
 
 runner:
   num_steps_per_env: 24
   class_name: "Runner"
   policy_class_name: "ActorCriticRecurrent"
-  use_wandb: False
+  use_wandb: True
   description: ""
-  save_interval: 50
+  log_every: 30.
+  save_every: 150.
   run_name: ""
   resume: False
   load_run: ""

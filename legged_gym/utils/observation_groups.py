@@ -60,7 +60,8 @@ PROJECTED_GRAVITY = Observation(
 )
 
 VELOCITY_COMMANDS = Observation(
-  name="velocity_commands", func=O.velocity_commands, scale=[2.0, 2.0, 0.25],
+  name="velocity_commands", func=O.velocity_commands,
+  scale=[2.0, 2.0, 0.25],
   latency_range=(0.04-0.0025, 0.04+0.0075),
 )
 
@@ -139,4 +140,19 @@ HIP_HEIGHTS = Observation(
   func=O.hip_heights,
   scale=1.0,
   sensor="hip_height_raycaster",
+)
+
+FEET_AIR_TIME = Observation(
+  name="feet_air_time",
+  func=O.feet_air_time,
+)
+
+FEET_CONTACT_TIME = Observation(
+  name="feet_contact_time",
+  func=O.feet_contact_time,
+)
+
+FEET_CONTACT = Observation(
+  name="feet_contact",
+  func=O.feet_contact,
 )

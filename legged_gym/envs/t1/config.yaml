@@ -90,6 +90,7 @@ control:
 
 asset:
   file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf"
+  mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.xml"
   name: "t1"
   base_link_name: "Trunk"
   camera_link_name: "H2"
@@ -187,6 +188,12 @@ domain_rand:
     range: [0.95, 1.05]
     operation: "scaling"
     distribution: "uniform"
+  dof_damping_ankles:
+    apply: True
+    ankle_names: ["Left_Ankle_Pitch", "Right_Ankle_Pitch", "Left_Ankle_Roll", "Right_Ankle_Roll"]
+    range: [-0.5, 2.0]
+    operation: "additive"
+    distribution: "uniform"
   dof_friction:
     apply: True
     range: [0.0, 2.0]
@@ -209,28 +216,30 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 2.
+  kick_interval_s: 5.0
   kick_lin_vel:
     apply: True
-    range: [0.0, 0.1]
+    range: [-1.0, 1.0]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [0.0, 0.02]
+    range: [-1.0, 1.0]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
 
   push_interval_s: 5.0
   push_duration_s: 1.0
   push_force:
     apply: True
-    range: [0.0, 10.0]
+    # range: [0., 30.]
+    range: [0., 10.]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
     apply: True
-    range: [0.0, 2.]
+    # range: [0., 15.]
+    range: [0., 2.]
     operation: "additive"
     distribution: "gaussian"
 
@@ -249,24 +258,21 @@ rewards:
   feet_distance_ref: 0.2
   scales:
     survival: 0.25
-    tracking_lin_vel: 0.
     tracking_lin_vel_x: 2.0
     tracking_lin_vel_y: 2.0
     tracking_ang_vel: 1.0
-    base_height: -2.0 # -20.  # Play with this.
-    orientation: -5.
-    torques: -2.e-4
-    torque_tiredness: -1.e-2
-    power: -2.e-3
     lin_vel_z: -0.5  # -2.
     ang_vel_xy: -0.2
-    dof_vel: -1.e-4
-    dof_acc: -1.e-7
-    root_acc: -1.e-4
+    orientation: -5.
+    base_height: -2.0 # -20.  # Play with this.
+    torques: -2.e-4
     action_rate: -1.
+    dof_acc: -1.e-7
+    dof_vel: -1.e-4
+    torque_tiredness: -1.e-2
+    power: -2.e-3
+    root_acc: -1.e-4
     dof_pos_limits: -1.
-    dof_vel_limits: -0.
-    torque_limits: -0.
     collision: -1.
     feet_slip: -0.1
     feet_vel_z: -0.
@@ -345,8 +351,9 @@ runner:
   num_steps_per_env: 24
   class_name: "Runner"
   policy_class_name: "ActorCriticRecurrent"
-  use_wandb: False
+  use_wandb: True
   description: ""
+  log_every: 30.  # seconds.
   save_interval: 50
   run_name: ""
   resume: False

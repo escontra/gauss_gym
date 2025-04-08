@@ -42,9 +42,9 @@ from legged_gym.utils import helpers
 def main(argv = None):
     log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
-    parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
-    if parsed.load_run != '':
-      load_run_path = log_root / parsed.load_run
+    parsed, other = flags.Flags({'runner': {'load_run': ''}}).parse_known(argv)
+    if parsed.runner.load_run != '':
+      load_run_path = log_root / parsed.runner.load_run
     else:
       load_run_path = sorted(
         [item for item in log_root.iterdir() if item.is_dir()],
@@ -54,12 +54,13 @@ def main(argv = None):
     print(f'Loading run from: {load_run_path}...')
     cfg = config.Config.load(load_run_path / 'config.yaml')
     cfg = cfg.update({'runner.load_run': load_run_path.name})
-    cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
     cfg = cfg.update({'runner.resume': True})
     cfg = cfg.update({'headless': False})
     cfg = cfg.update({'env.num_envs': 50})
     cfg = cfg.update({'domain_rand.apply_domain_rand': False})
     cfg = cfg.update({'curriculum.apply_curriculum': False})
+    cfg = cfg.update({'observations.student_observations.add_noise': False})
+    cfg = cfg.update({'observations.student_observations.add_latency': False})
 
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)

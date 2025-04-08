@@ -1,19 +1,17 @@
 import os
 import numpy as np
-from typing import Dict, List
+from typing import Any, Dict, List
 import random
 import time
 import torch
-import pickle
-import wandb
-import torch.nn.functional as F
 import torch.utils._pytree as pytree
 import pathlib
-from torch.utils.tensorboard import SummaryWriter
 
+from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils import config
+from legged_gym.utils import agg, timer, when, math
+
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
   advantages = torch.zeros_like(rewards)
@@ -45,184 +43,8 @@ def surrogate_loss(
   return surrogate_loss
 
 
-class Recorder:
-  def __init__(self, log_dir: pathlib.Path, cfg: config.Config, obs_group_sizes):
-    self.cfg = cfg
-    self.log_dir = log_dir
-    self.obs_group_sizes = obs_group_sizes
-    self.initialized = False
-
-  def maybe_init(self):
-    if self.initialized:
-      return
-    print(f"Recording to: {self.log_dir}")
-    self.log_dir.mkdir(parents=True, exist_ok=True)
-    self.model_dir = self.log_dir / "nn"
-    self.model_dir.mkdir(parents=True, exist_ok=True)
-    self.writer = SummaryWriter(self.log_dir / "summaries")
-    if self.cfg["runner"]["use_wandb"]:
-      wandb.init(
-        project=self.cfg["task"],
-        dir=self.log_dir,
-        name=self.log_dir.name,
-        notes=self.cfg["runner"]["description"],
-        config=self.cfg,
-      )
-
-    self.episode_statistics = {}
-    self.last_episode = {}
-    self.last_episode["steps"] = []
-    self.episode_steps = None
-
-    config.Config(self.cfg).save(self.log_dir / "config.yaml")
-    # self.cfg.save(self.log_dir / "config.yaml")
-
-    with open(self.log_dir / "obs_group_sizes.pkl", "wb") as file:
-      pickle.dump(self.obs_group_sizes, file)
-    self.initialized = True
-
-  def record_episode_statistics(self, done, ep_info, it, discount_factor_dict={}, write_record=False):
-    self.maybe_init()
-    if self.episode_steps is None:
-      self.episode_steps = torch.zeros_like(done, dtype=int)
-    else:
-      self.episode_steps += 1
-
-    for key, value in ep_info.items():
-      if self.episode_statistics.get(key) is None:
-        self.episode_statistics[key] = torch.zeros_like(value)
-      discount_factor = discount_factor_dict.get(key, 1.0)
-      discount_factor = discount_factor ** self.episode_steps
-      self.episode_statistics[key] += value * discount_factor
-      if self.last_episode.get(key) is None:
-        self.last_episode[key] = []
-      for done_value in self.episode_statistics[key][done]:
-        self.last_episode[key].append(done_value.item())
-      self.episode_statistics[key][done] = 0
-
-    for val in self.episode_steps[done]:
-      self.last_episode["steps"].append(val.item())
-    self.episode_steps[done] = 0
-
-    if write_record:
-      for key in self.last_episode.keys():
-        path = ("" if key == "steps" or key == "reward" else "episode/") + key
-        value = self._mean(self.last_episode[key])
-        self.writer.add_scalar(path, value, it)
-        if self.cfg["runner"]["use_wandb"]:
-          wandb.log({path: value}, step=it)
-        self.last_episode[key].clear()
-
-  def record_statistics(self, statistics, it):
-    self.maybe_init()
-    for key, value in statistics.items():
-      self.writer.add_scalar(key, float(value), it)
-      if self.cfg["runner"]["use_wandb"]:
-        wandb.log({key: float(value)}, step=it)
-
-  def save(self, model_dict, it):
-    self.maybe_init()
-    path = self.model_dir / f"model_{it}.pth"
-    print("Saving model to {}".format(path))
-    torch.save(model_dict, path)
-
-  def _mean(self, data):
-    if len(data) == 0:
-      return 0.0
-    else:
-      return sum(data) / len(data)
-
-
-class ExperienceBuffer:
-  def __init__(self, horizon_length, num_envs, device):
-    self.tensor_dict = {}
-    self.horizon_length = horizon_length
-    self.num_envs = num_envs
-    self.device = device
-
-  def add_buffer(self, name, shape, dtype=None):
-    if isinstance(shape, tuple):
-      self.tensor_dict[name] = torch.zeros(
-        self.horizon_length,
-        self.num_envs,
-        *shape,
-        dtype=dtype,
-        device=self.device,
-      )
-    elif isinstance(shape, dict):
-      self.tensor_dict[name] = {}
-      for obs_name, obs_group in shape.items():
-        self.tensor_dict[name][obs_name] = torch.zeros(
-          self.horizon_length,
-          self.num_envs,
-          *obs_group[0],
-          dtype=obs_group[1],
-          device=self.device,
-        )
-
-  def add_hidden_state_buffers(self, hidden_states):
-    if hidden_states is None or hidden_states == (None, None):
-      return
-    # make a tuple out of GRU hidden state sto match the LSTM format
-    hid_a = (
-      hidden_states[0]
-      if isinstance(hidden_states[0], tuple)
-      else (hidden_states[0],)
-    )
-    hid_c = (
-      hidden_states[1]
-      if isinstance(hidden_states[1], tuple)
-      else (hidden_states[1],)
-    )
-
-    self.tensor_dict["hid_a"] = [
-      torch.zeros(self.horizon_length, *hid_a[i].shape, device=self.device)
-      for i in range(len(hid_a))
-    ]
-    self.tensor_dict["hid_c"] = [
-      torch.zeros(self.horizon_length, *hid_c[i].shape, device=self.device)
-      for i in range(len(hid_c))
-    ]
-
-  def update_hidden_state_buffers(self, idx, hidden_states):
-    if hidden_states is None or hidden_states == (None, None):
-      return
-
-    # make a tuple out of GRU hidden state sto match the LSTM format
-    hid_a = (
-      hidden_states[0]
-      if isinstance(hidden_states[0], tuple)
-      else (hidden_states[0],)
-    )
-    hid_c = (
-      hidden_states[1]
-      if isinstance(hidden_states[1], tuple)
-      else (hidden_states[1],)
-    )
-
-    for i in range(len(hid_a)):
-      self.tensor_dict["hid_a"][i][idx].copy_(hid_a[i].clone().detach())
-      self.tensor_dict["hid_c"][i][idx].copy_(hid_c[i].clone().detach())
-
-  def update_data(self, name, idx, data):
-    if isinstance(data, dict):
-      for k, v in data.items():
-        self.tensor_dict[name][k][idx].copy_(v)
-    else:
-      self.tensor_dict[name][idx].copy_(data)
-
-  def __len__(self):
-    return len(self.tensor_dict)
-
-  def __getitem__(self, buf_name):
-    return self.tensor_dict[buf_name]
-
-  def keys(self):
-    return self.tensor_dict.keys()
-
-
 class Runner:
-  def __init__(self, env: vec_env.VecEnv, cfg: config.Config, log_dir: pathlib.Path, device="cpu"):
+  def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], log_dir: pathlib.Path, device="cpu"):
     self.test = True
     self.env = env
     self.device = device
@@ -238,15 +60,13 @@ class Runner:
       self.env.num_actions,
       self.env.obs_group_size_per_name("student_observations"),
       self.env.obs_group_size_per_name("teacher_observations"),
-      self.cfg["policy"]["init_noise_std"],
-      layer_activation=self.cfg["policy"]["layer_activation"],
-      mu_activation=self.cfg["policy"]["mu_activation"],
+      **self.cfg["policy"]
     ).to(self.device)
     self.optimizer = torch.optim.Adam(
       self.model.parameters(), lr=self.learning_rate
     )
 
-    self.buffer = ExperienceBuffer(
+    self.buffer = experience_buffer.ExperienceBuffer(
       self.cfg["runner"]["num_steps_per_env"],
       self.env.num_envs,
       self.device,
@@ -262,6 +82,12 @@ class Runner:
     self.buffer.add_buffer("rewards", ())
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
+
+    self.step_agg = agg.Agg()
+    self.episode_agg = agg.Agg()
+    self.learn_agg = agg.Agg()
+    self.should_log = when.Clock(self.cfg["runner"]["log_every"])
+    self.should_save = when.Clock(self.cfg["runner"]["save_every"])
 
   def _set_seed(self):
     seed = self.cfg["seed"]
@@ -325,17 +151,15 @@ class Runner:
     return obs
 
   def learn(self, num_learning_iterations, init_at_random_ep_len=False):
-    self.recorder = Recorder(self.log_dir, self.cfg, self.obs_group_sizes)
+    self.recorder = recorder.Recorder(self.log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
     obs, privileged_obs = self.env.reset()
     obs = self.to_device(obs)
     privileged_obs = self.to_device(privileged_obs)
 
-    if hasattr(self.cfg["algorithm"], "clip_min_std"):
-      clip_min_std = torch.tensor(
-        self.cfg["algorithm"]["clip_min_std"], device=self.device
-      )
-    else:
-      clip_min_std = None
+    if init_at_random_ep_len:
+        self.env.episode_length_buf = torch.randint_like(
+          self.env.episode_length_buf,
+          high=int(self.env.max_episode_length))
 
     # Needed to initialize hidden states.
     self.model.act(obs)
@@ -348,48 +172,78 @@ class Runner:
       start = time.time()
       # within horizon_length, env.step() is called with same act
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
-        self.buffer.update_data("obses", n, obs)
-        self.buffer.update_data("privileged_obses", n, privileged_obs)
-        if self.model.is_recurrent:
-          self.buffer.update_hidden_state_buffers(
-            n, self.model.get_hidden_states()
-          )
-        with torch.no_grad():
-          dist = self.model.act(obs)
-          value = self.model.est_value(privileged_obs)
-          act = dist.sample()
-        obs, privileged_obs, rew, done, infos = self.env.step(act)
-        obs, privileged_obs, rew, done = (
-          self.to_device(obs),
-          self.to_device(privileged_obs),
-          rew.to(self.device),
-          done.to(self.device),
-        )
+        with timer.section("buffer_add_obs"):
+          self.buffer.update_data("obses", n, obs)
+          self.buffer.update_data("privileged_obses", n, privileged_obs)
+          if self.model.is_recurrent:
+            self.buffer.update_hidden_state_buffers(
+              n, self.model.get_hidden_states()
+            )
+        with timer.section("model_act"):
+          with torch.no_grad():
+            dist = self.model.act(obs)
+            value = self.model.est_value(privileged_obs)
+            act = dist.sample()
+        with timer.section("env_step"):
+          obs, privileged_obs, rew, done, infos = self.env.step(act)
+          obs, privileged_obs, rew, done = self.to_device((obs, privileged_obs, rew, done))
         self.model.reset(done)
-        self.buffer.update_data("actions", n, act)
-        self.buffer.update_data("rewards", n, rew)
-        self.buffer.update_data("dones", n, done)
-        self.buffer.update_data(
-          "time_outs", n, infos["time_outs"].to(self.device)
-        )
-        bootstrapped_rew = torch.where(done, 0., rew)
-        bootstrapped_rew = torch.where(infos["time_outs"], value, bootstrapped_rew)
-        ep_info = {
-          "reward": rew,
-          "return": bootstrapped_rew,
-        }
+        with timer.section("buffer_update_data"):
+          self.buffer.update_data("actions", n, act)
+          self.buffer.update_data("rewards", n, rew)
+          self.buffer.update_data("dones", n, done)
+          self.buffer.update_data(
+            "time_outs", n, infos["time_outs"].to(self.device)
+          )
+        with timer.section("log_step"):
+          bootstrapped_rew = torch.where(done, 0., rew)
+          bootstrapped_rew = torch.where(infos["time_outs"], value.pred().squeeze(-1), bootstrapped_rew)
+          self.step_agg.add(infos["episode"])
+          self.episode_agg.add(self.recorder.record_episode_statistics(
+            done,
+            {"reward": rew, "return": bootstrapped_rew},
+            it,
+            discount_factor_dict={"return": self.cfg["algorithm"]["gamma"]},
+            write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
+          ))
+
+
+
+      learn_stats = self._learn(last_privileged_obs=privileged_obs)
+      self.learn_agg.add(learn_stats)
+
+      if self.should_log(it):
+        step_stats = {f"step/{k}": v for k, v in self.step_agg.result().items()}
+        learn_stats = {f"learn/{k}": v for k, v in self.learn_agg.result().items()}
+        timer_stats = {f"timer/{k}": v for k, v in timer.stats().items()}
+        episode_stats = {f"episode/{k}": v for k, v in self.episode_agg.result().items()}
         self.recorder.record_statistics(
-          {f"episode/{k}": v for k, v in infos["episode"].items()},
-          it,
-        )
-        self.recorder.record_episode_statistics(
-          done,
-          ep_info,
-          it,
-          discount_factor_dict={"return": self.cfg["algorithm"]["gamma"]},
-          write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
+          {
+            **step_stats,
+            **learn_stats,
+            **timer_stats,
+            **episode_stats},
+          it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs
         )
 
+
+      if self.should_save(it):
+        self.recorder.save(
+          {
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+          },
+          it + 1,
+        )
+      print(
+        "epoch: {}/{} - {}s.".format(
+          it + 1, num_learning_iterations, time.time() - start
+        )
+      )
+      start = time.time()
+
+  @timer.section("learn")
+  def _learn(self, last_privileged_obs):
       all_obses = self.buffer["obses"]
       all_privileged_obses = self.buffer["privileged_obses"]
       if self.model.is_recurrent:
@@ -438,7 +292,7 @@ class Runner:
         old_dist = self.model.act(
           all_obses, masks=traj_masks, hidden_states=hid_a
         )
-        old_actions_log_prob = old_dist.log_prob(self.buffer["actions"]).sum(
+        old_actions_log_prob = old_dist.logp(self.buffer["actions"]).sum(
           dim=-1
         )
 
@@ -451,33 +305,34 @@ class Runner:
           all_privileged_obses, masks=traj_masks, hidden_states=hid_c
         )
         with torch.no_grad():
-          last_values = self.model.est_value(privileged_obs, upd_state=False)
-          self.buffer["rewards"][self.buffer["time_outs"]] = values[
+          last_values = self.model.est_value(last_privileged_obs, upd_state=False)
+          self.buffer["rewards"][self.buffer["time_outs"]] = values.pred().squeeze(-1)[
             self.buffer["time_outs"]
           ]
           advantages = discount_values(
             self.buffer["rewards"],
             self.buffer["dones"] | self.buffer["time_outs"],
-            values,
-            last_values,
+            values.pred().squeeze(-1),
+            last_values.pred().squeeze(-1),
             self.cfg["algorithm"]["gamma"],
             self.cfg["algorithm"]["lam"],
           )
-          returns = values + advantages
+          returns = values.pred().squeeze(-1) + advantages
           advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-8
           )
-        value_loss = F.mse_loss(values, returns)
+        # value_loss = F.mse_loss(values, returns)
+        value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
 
         dist = self.model.act(all_obses, masks=traj_masks, hidden_states=hid_a)
-        actions_log_prob = dist.log_prob(self.buffer["actions"]).sum(dim=-1)
+        actions_log_prob = dist.logp(self.buffer["actions"]).sum(dim=-1)
         actor_loss = surrogate_loss(
           old_actions_log_prob, actions_log_prob, advantages
         )
 
-        bound_loss = (
-          torch.clip(dist.loc - 1.0, min=0.0).square().mean()
-          + torch.clip(dist.loc + 1.0, max=0.0).square().mean()
+        bound_loss = self.cfg["algorithm"]["bound_coef"] * (
+          torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
+          + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
         )
 
         entropy = dist.entropy().sum(dim=-1)
@@ -485,7 +340,7 @@ class Runner:
         loss = (
           value_loss
           + actor_loss
-          + self.cfg["algorithm"]["bound_coef"] * bound_loss
+          + bound_loss
           + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
         )
         self.optimizer.zero_grad()
@@ -494,21 +349,11 @@ class Runner:
         self.optimizer.step()
 
         with torch.no_grad():
-          kl = torch.sum(
-            torch.log(dist.scale / old_dist.scale)
-            + 0.5
-            * (
-              torch.square(old_dist.scale)
-              + torch.square(dist.loc - old_dist.loc)
-            )
-            / torch.square(dist.scale)
-            - 0.5,
-            axis=-1,
-          )
+          kl = torch.sum(dist.kl(old_dist), axis=-1)
           kl_mean = torch.mean(kl)
-          if kl_mean > self.cfg["algorithm"]["desired_kl"] * 2:
+          if kl_mean > self.cfg["algorithm"]["desired_kl"] * 2.0:
             self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-          elif kl_mean < self.cfg["algorithm"]["desired_kl"] / 2:
+          elif kl_mean < self.cfg["algorithm"]["desired_kl"] / 2.0 and kl_mean > 0.0:
             self.learning_rate = min(1e-2, self.learning_rate * 1.5)
           for param_group in self.optimizer.param_groups:
             param_group["lr"] = self.learning_rate
@@ -521,35 +366,14 @@ class Runner:
       mean_actor_loss /= self.cfg["algorithm"]["num_learning_epochs"]
       mean_bound_loss /= self.cfg["algorithm"]["num_learning_epochs"]
       mean_entropy /= self.cfg["algorithm"]["num_learning_epochs"]
-      self.recorder.record_statistics(
-        {
+      return {
           "value_loss": mean_value_loss,
           "actor_loss": mean_actor_loss,
           "bound_loss": mean_bound_loss,
-          "entropy": mean_entropy,
-          "kl_mean": kl_mean,
+          "entropy": mean_entropy.item(),
+          "kl_mean": kl_mean.item(),
           "lr": self.learning_rate,
-        },
-        it,
-      )
-
-      if clip_min_std is not None:
-        self.model.clip_std(min=clip_min_std)
-
-      if (it + 1) % self.cfg["runner"]["save_interval"] == 0:
-        self.recorder.save(
-          {
-            "model": self.model.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-          },
-          it + 1,
-        )
-      print(
-        "epoch: {}/{} - {}s.".format(
-          it + 1, num_learning_iterations, time.time() - start
-        )
-      )
-      start = time.time()
+      }
 
   def play(self):
     obs, _ = self.env.reset()
@@ -557,13 +381,17 @@ class Runner:
 
     memory_module = self.model.memory_a
     actor = self.model.actor
+    actor_head = self.model.actor_head.mean_net
     mlp_keys = self.model.mlp_keys_a
     cnn_keys = self.model.cnn_keys_a
     cnn_model = self.model.cnn_a
 
     @torch.jit.script
-    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
-        features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+        if symlog_inputs:
+          features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
+        else:
+          features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
         if cnn_keys:
           cnn_features = []
           for k in cnn_keys:
@@ -582,14 +410,15 @@ class Runner:
           cnn_features = torch.cat(cnn_features, dim=-1)
           features = torch.cat([features, cnn_features], dim=-1)
         input_a = memory_module(features, None, None)
-        actions = actor(input_a.squeeze(0))
-        return actions
+        dist = actor_head(actor(input_a.squeeze(0)))
+        return dist
+        # return dist.pred()
 
 
     while True:
       with torch.no_grad():
         obs = self.filter_nans(obs)
-        act = policy(obs, mlp_keys, cnn_keys)
+        act = policy(obs, mlp_keys, cnn_keys, symlog_inputs=self.cfg["policy"]["symlog_inputs"])
         obs, _, _, _, _ = self.env.step(act)
         obs = self.to_device(obs)
 

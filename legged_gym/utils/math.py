@@ -302,3 +302,10 @@ def apply_randomization(tensor: Union[torch.Tensor, float], params: Optional[Dic
         return result, noise
     else:
         return result
+
+def symlog(x):
+  return torch.sign(x) * torch.log1p(torch.abs(x))
+
+
+def symexp(x):
+  return torch.sign(x) * torch.expm1(torch.abs(x))
