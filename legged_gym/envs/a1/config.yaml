@@ -36,6 +36,17 @@ observations:
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS
     ]
 
+symmetries:
+  student_observations:
+    symmetries: [
+      BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS
+    ]
+  actions:
+    symmetries: [
+      A1_ACTIONS
+    ]
+
 terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
   cams_yaw_only: False
@@ -139,12 +150,12 @@ domain_rand:
 
   base_com_x:
     apply: True
-    range: [-0.15, 0.15]
+    range: [-0.2, 0.2]
     operation: "additive"
     distribution: "uniform"
   base_com_y:
     apply: True
-    range: [-0.1, 0.1]
+    range: [-0.15, 0.15]
     operation: "additive"
     distribution: "uniform"
   base_com_z:
@@ -154,7 +165,7 @@ domain_rand:
     distribution: "uniform"
   base_mass:
     apply: True
-    range: [0.8, 1.2]
+    range: [0.7, 1.3]
     operation: "scaling"
     distribution: "uniform"
   other_com:
@@ -185,14 +196,14 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
   dof_friction:
-    apply: True
+    apply: False
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "uniform"
 
   foot_friction:
     apply: True
-    range: [0.5, 1.25]
+    range: [0.3, 1.5]
     operation: "additive"
     distribution: "uniform"
   foot_compliance:
@@ -206,7 +217,7 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 5.0
+  kick_interval_s: 10.0
   kick_lin_vel:
     apply: True
     range: [-1.0, 1.0]
@@ -221,13 +232,13 @@ domain_rand:
   push_interval_s: 5.0
   push_duration_s: 1.0
   push_force:
-    apply: False
-    range: [0., 15.]
+    apply: True
+    range: [0., 10.]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
-    apply: False
-    range: [0., 7.5]
+    apply: True
+    range: [0., 2.]
     operation: "additive"
     distribution: "gaussian"
 
@@ -241,23 +252,23 @@ rewards:
   hip_height_target: 0.30
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.2 # 0.5
-  feet_air_time_max_time: 0.3 # 1.0
+  feet_air_time_min_time: 0.3 # 0.5
+  feet_air_time_max_time: 0.4 # 1.0
   scales:
-    tracking_lin_vel_x: 1.0
-    tracking_lin_vel_y: 1.0
-    tracking_ang_vel: 0.5
+    tracking_lin_vel_x: 2.0
+    tracking_lin_vel_y: 2.0
+    tracking_ang_vel: 1.0
     lin_vel_z: -0.5
     ang_vel_xy: -0.05
-    torques: -0.0002 # -0.00005 # -0.000033 # -0.0001 # -0.00001
+    torques: -0.0001 # -0.0001 # -0.00005 # -0.000033 # -0.0001 # -0.00001
     dof_acc: -2.5e-7
     feet_air_time:  1.0
     collision: -1.
     action_rate: -0.01
-    hip_height: -1.0
+    # hip_height: -1.0
     dof_pos_limits: -1.0
 
-    energy: -0.0001 # TODO: helps? 
+    # energy: -0.0001 # TODO: helps? 
 
     # Additional rewards.
     # feet_slip: -0.1
@@ -379,13 +390,15 @@ algorithm:
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
-  symmetric_coef: 10.0
+  symmetry: True
+  symmetry_coef: 3.0
   num_learning_epochs: 20
   value_loss_coef: 1.0
-  use_clipped_value_loss: True
+  use_clipped_value_loss: False
   clip_param: 0.2
-  bound_coef: 0.25
+  bound_coef: 1.0
   desired_kl: 0.01
+  normalize_advantage_per_minibatch: True
 
 runner:
   num_steps_per_env: 24

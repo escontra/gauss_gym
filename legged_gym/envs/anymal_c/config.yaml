@@ -297,31 +297,34 @@ sim:
     contact_collection: 2
 
 policy:
-  init_noise_std: 0.5
-  mu_activation: "identity"
   layer_activation: "elu"
+  policy_hidden_layer_sizes: [512, 256, 128]
+  value_hidden_layer_sizes: [512, 256, 128]
+  symlog_inputs: True
+  policy_head: {output_type: normal_logstdparam, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
+  value_head: {output_type: mse, outscale: 1.0}
 
 algorithm:
   learning_rate: 1.e-5
-  gamma: 0.99
+  gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
-  symmetric_coef: 10.0
+  symmetric_coef: 3.0
   num_learning_epochs: 20
-  clip_min_std: 0.2
   value_loss_coef: 1.0
-  use_clipped_value_loss: True
+  use_clipped_value_loss: False
   clip_param: 0.2
   bound_coef: 1.0
   desired_kl: 0.01
-
+  normalize_advantage_per_minibatch: True
 runner:
   num_steps_per_env: 24
   class_name: "Runner"
   policy_class_name: "ActorCriticRecurrent"
   use_wandb: False
   description: ""
-  save_interval: 50
+  log_every: 30.
+  save_every: 150.
   run_name: ""
   resume: False
   load_run: ""

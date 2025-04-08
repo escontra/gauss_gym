@@ -1,41 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-# list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-# this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Copyright (c) 2021 ETH Zurich, Nikita Rudin
-
 import types
 
+import pathlib
+import time
 import isaacgym
+
 from legged_gym.envs import *
+import legged_gym
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import flags
-
 from legged_gym.utils import helpers
+
+from legged_gym.rl.runner import Runner
+
 
 def main(argv=None):
 
@@ -49,9 +25,31 @@ def main(argv=None):
     task_class = task_registry.get_task_class(cfg["task"])
     helpers.set_seed(cfg["seed"])
     env = task_class(cfg=cfg)
-    ppo_runner = task_registry.make_alg_runner(env=env, cfg=cfg)
-    ppo_runner.learn(num_learning_iterations=cfg["runner"]["max_iterations"],
-                     init_at_random_ep_len=True)
+
+    new_run_name = [f'{cfg["task"]}']
+    if cfg["runner"]["run_name"] != "":
+        new_run_name += [cfg["runner"]["run_name"]]
+    new_run_name += [time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())]
+    new_run_name = '_'.join(new_run_name)
+
+    if cfg["logdir"] == "default":
+        log_root = pathlib.Path(legged_gym.GAUSS_GYM_ROOT_DIR) / 'logs'
+        log_dir = pathlib.Path(log_root) / new_run_name
+    elif cfg["logdir"] != "":
+        log_root = pathlib.Path(cfg["logdir"])
+        log_dir = log_root / new_run_name
+    else:
+        raise ValueError("Must specify logdir as 'default' or a path.")
+    
+    runner = eval(cfg["runner"]["class_name"])(env, cfg, device=cfg["rl_device"])
+
+    if cfg["runner"]["resume"]:
+        assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
+        runner.load(log_root)
+
+    runner.learn(
+        num_learning_iterations=cfg["runner"]["max_iterations"],
+        log_dir=log_dir, init_at_random_ep_len=True)
 
 if __name__ == '__main__':
     main()

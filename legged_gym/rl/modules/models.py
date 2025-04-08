@@ -337,9 +337,9 @@ class Head(torch.nn.Module):
 
   def normal_logstdparam(self, x):
     mean = self.mean_net(x)
-    output = outs.Normal(mean, torch.exp(self.logstd))
     with torch.no_grad():
       log_min = np.log(self.minstd)
       log_max = np.log(self.maxstd)
       self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
+    output = outs.Normal(mean, torch.exp(self.logstd))
     return output

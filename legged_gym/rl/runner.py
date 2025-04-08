@@ -10,7 +10,7 @@ import pathlib
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils import agg, timer, when, math
+from legged_gym.utils import agg, symmetry_groups, timer, when, math
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -44,11 +44,10 @@ def surrogate_loss(
 
 
 class Runner:
-  def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], log_dir: pathlib.Path, device="cpu"):
+  def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
     self.test = True
     self.env = env
     self.device = device
-    self.log_dir = log_dir
     self.cfg = cfg
     self._set_seed()
     self.learning_rate = self.cfg["algorithm"]["learning_rate"]
@@ -66,12 +65,22 @@ class Runner:
       self.model.parameters(), lr=self.learning_rate
     )
 
+    if self.cfg["algorithm"]["symmetry"]:
+      assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
+      self.symmetry_groups = {}
+      for group_name in self.cfg["symmetries"]:
+        self.symmetry_groups[group_name] = {}
+        for symmetry in self.cfg["symmetries"][group_name]["symmetries"]:
+          symmetry_modifier = getattr(symmetry_groups, symmetry)
+          self.symmetry_groups[group_name][symmetry_modifier.observation.name] = symmetry_modifier
+      assert "student_observations" in self.symmetry_groups
+      assert "actions" in self.symmetry_groups
+
     self.buffer = experience_buffer.ExperienceBuffer(
       self.cfg["runner"]["num_steps_per_env"],
       self.env.num_envs,
       self.device,
     )
-    self.buffer.add_buffer("actions", (self.env.num_actions,))
     self.buffer.add_buffer(
       "obses", self.env.obs_group_size_per_name("student_observations")
     )
@@ -79,7 +88,9 @@ class Runner:
       "privileged_obses",
       self.env.obs_group_size_per_name("teacher_observations"),
     )
+    self.buffer.add_buffer("actions", (self.env.num_actions,))
     self.buffer.add_buffer("rewards", ())
+    self.buffer.add_buffer("values", (1,))
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
 
@@ -150,8 +161,8 @@ class Runner:
       obs = pytree.tree_map(lambda x: torch.nan_to_num(x, nan=0.0), obs)
     return obs
 
-  def learn(self, num_learning_iterations, init_at_random_ep_len=False):
-    self.recorder = recorder.Recorder(self.log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
+  def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
     obs, privileged_obs = self.env.reset()
     obs = self.to_device(obs)
     privileged_obs = self.to_device(privileged_obs)
@@ -300,6 +311,7 @@ class Runner:
       mean_actor_loss = 0
       mean_bound_loss = 0
       mean_entropy = 0
+      mean_symmetry_loss = 0
       for n in range(self.cfg["algorithm"]["num_learning_epochs"]):
         values = self.model.est_value(
           all_privileged_obses, masks=traj_masks, hidden_states=hid_c
@@ -318,19 +330,31 @@ class Runner:
             self.cfg["algorithm"]["lam"],
           )
           returns = values.pred().squeeze(-1) + advantages
-          advantages = (advantages - advantages.mean()) / (
-            advantages.std() + 1e-8
+          if self.cfg["algorithm"]["normalize_advantage_per_minibatch"]:
+            advantage_stats = (advantages.mean(), advantages.std())
+          elif n == 0:
+            advantage_stats = (advantages.mean(), advantages.std())
+
+          advantages = (advantages - advantage_stats[0]) / (advantage_stats[1] + 1e-8)
+
+        if self.cfg["algorithm"]["use_clipped_value_loss"]:
+          value_clipped = self.buffer["values"].detach() + (values.pred() - self.buffer["values"].detach()).clamp(
+              -self.cfg["algorithm"]["clip_param"], self.cfg["algorithm"]["clip_param"]
           )
-        # value_loss = F.mse_loss(values, returns)
-        value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
+          value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
+          value_losses_clipped = (value_clipped - returns.unsqueeze(-1)).pow(2)
+          value_loss = torch.max(value_losses, value_losses_clipped).mean()
+        else:
+          value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
 
         dist = self.model.act(all_obses, masks=traj_masks, hidden_states=hid_a)
         actions_log_prob = dist.logp(self.buffer["actions"]).sum(dim=-1)
         actor_loss = surrogate_loss(
-          old_actions_log_prob, actions_log_prob, advantages
+          old_actions_log_prob, actions_log_prob, advantages,
+          e_clip=self.cfg["algorithm"]["clip_param"]
         )
 
-        bound_loss = self.cfg["algorithm"]["bound_coef"] * (
+        bound_loss = (
           torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
           + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
         )
@@ -338,11 +362,26 @@ class Runner:
         entropy = dist.entropy().sum(dim=-1)
 
         loss = (
-          value_loss
+          self.cfg["algorithm"]["value_loss_coef"] * value_loss
           + actor_loss
-          + bound_loss
+          + self.cfg["algorithm"]["bound_coef"] * bound_loss
           + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
         )
+        if self.cfg["algorithm"]["symmetry"]:
+          all_obses_sym = {}
+          for key, value in all_obses.items():
+            assert key in self.symmetry_groups["student_observations"], f"{key} not in {self.symmetry_groups['student_observations']}"
+            all_obses_sym[key] = self.symmetry_groups["student_observations"][key](self.env, value).detach()
+
+          act_with_sym_obs = self.model.act(all_obses_sym, masks=traj_masks, hidden_states=hid_a).pred()
+          act_sym = self.symmetry_groups["actions"]["actions"](self.env, dist.pred())
+          mse_loss = torch.nn.MSELoss()
+          symmetry_loss = mse_loss(act_with_sym_obs, act_sym.detach())
+          if self.cfg["algorithm"]["symmetry_coef"] <= 0.0:
+            symmetry_loss = symmetry_loss.detach()
+          mean_symmetry_loss += symmetry_loss.item()
+          loss += self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -366,10 +405,12 @@ class Runner:
       mean_actor_loss /= self.cfg["algorithm"]["num_learning_epochs"]
       mean_bound_loss /= self.cfg["algorithm"]["num_learning_epochs"]
       mean_entropy /= self.cfg["algorithm"]["num_learning_epochs"]
+      mean_symmetry_loss /= self.cfg["algorithm"]["num_learning_epochs"]
       return {
           "value_loss": mean_value_loss,
           "actor_loss": mean_actor_loss,
           "bound_loss": mean_bound_loss,
+          "symmetry_loss": mean_symmetry_loss,
           "entropy": mean_entropy.item(),
           "kl_mean": kl_mean.item(),
           "lr": self.learning_rate,

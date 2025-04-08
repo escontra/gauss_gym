@@ -48,7 +48,7 @@ def velocity_commands(env: "LeggedEnv", params, is_real=False):
     if is_real:
       return env.command_buf
     else:
-      return env.commands[:, :3] # env.command_generator.get_command()
+      return env.commands[:, :3]
 
 def dof_pos(env: "ANY_ENV", params, is_real=False):
     if is_real:
