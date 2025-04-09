@@ -111,7 +111,7 @@ class LeggedRobot(base_task.BaseTask):
     @timer.section("pre_physics_step")
     def pre_physics_step(self, actions):
 
-        if getattr(self.cfg["normalization"], "clip_actions_delta", None) is not None:
+        if "clip_actions_delta" in self.cfg["normalization"]:
             actions = torch.clip(
                 actions,
                 self.last_actions - self.cfg["normalization"]["clip_actions_delta"],
@@ -487,7 +487,7 @@ class LeggedRobot(base_task.BaseTask):
                 self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg["rewards"]["soft_dof_pos_limit"]
                 self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg["rewards"]["soft_dof_pos_limit"]
             # allow config to override torque limits
-            if hasattr(self.cfg["control"], "torque_limits"):
+            if "torque_limits" in self.cfg["control"]:
                 if not isinstance(self.cfg["control"]["torque_limits"], (tuple, list)):
                     self.torque_limits = torch.ones(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
                     self.torque_limits *= self.cfg["control"]["torque_limits"]
@@ -902,16 +902,16 @@ class LeggedRobot(base_task.BaseTask):
         for name in self.cfg["asset"]["terminate_after_contacts_on"]:
             termination_contact_names.extend([s for s in body_names if name in s])
 
-        if hasattr(self.cfg["asset"], "front_hip_names"):
-            front_hip_names = getattr(self.cfg["asset"], "front_hip_names")
+        if "front_hip_names" in self.cfg["asset"]:
+            front_hip_names = self.cfg["asset"]["front_hip_names"]
             self.front_hip_indices = torch.zeros(len(front_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
             for i, name in enumerate(front_hip_names):
                 self.front_hip_indices[i] = self.gym.find_asset_dof_index(self.robot_asset, name)
         else:
             front_hip_names = []
 
-        if hasattr(self.cfg["asset"], "rear_hip_names"):
-            rear_hip_names = getattr(self.cfg["asset"], "rear_hip_names")
+        if "rear_hip_names" in self.cfg["asset"]:
+            rear_hip_names = self.cfg["asset"]["rear_hip_names"]
             self.rear_hip_indices = torch.zeros(len(rear_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
             for i, name in enumerate(rear_hip_names):
                 self.rear_hip_indices[i] = self.gym.find_asset_dof_index(self.robot_asset, name)
