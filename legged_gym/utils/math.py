@@ -309,3 +309,17 @@ def symlog(x):
 
 def symexp(x):
   return torch.sign(x) * torch.expm1(torch.abs(x))
+
+
+@torch.jit.script
+def logstd_to_std(logstd: torch.Tensor, minstd: float, maxstd: float):
+  minstd = torch.tensor(minstd, device=logstd.device, dtype=torch.float32)
+  maxstd = torch.tensor(maxstd, device=logstd.device, dtype=torch.float32)
+  return torch.exp(torch.sigmoid(logstd) * (torch.log(maxstd) - torch.log(minstd)) + torch.log(minstd))
+
+
+@torch.jit.script
+def std_to_logstd(std: torch.Tensor, minstd: float, maxstd: float):
+  minstd = torch.tensor(minstd, device=std.device, dtype=torch.float32)
+  maxstd = torch.tensor(maxstd, device=std.device, dtype=torch.float32)
+  return torch.logit((torch.log(std) - torch.log(minstd)) / (torch.log(maxstd) - torch.log(minstd)))

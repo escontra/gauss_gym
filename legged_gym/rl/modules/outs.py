@@ -1,7 +1,10 @@
 import functools
-
+import numpy as np
 import torch.utils._pytree as pytree
 import torch
+import torch.nn as nn
+
+from legged_gym.utils import math
 
 i32 = torch.int32
 f32 = torch.float32
@@ -274,8 +277,9 @@ class TwoHot(Output):
     assert logits.shape[-1] == len(bins), (logits.shape, len(bins))
     assert bins.dtype == f32, bins.dtype
     self.logits = logits
-    self.probs = torch.nn.functional.softmax(logits)
-    self.bins = torch.tensor(bins, device=logits.device)
+    self.probs = torch.nn.functional.softmax(logits, dim=-1)
+    self.bins = bins.clone().detach().requires_grad_(False)
+
     self.squash = squash or (lambda x: x)
     self.unsquash = unsquash or (lambda x: x)
 
@@ -325,3 +329,141 @@ class TwoHot(Output):
     log_pred = self.logits - torch.logsumexp(
         self.logits, -1, keepdims=True)
     return -(target * log_pred).sum(-1)
+
+
+class Head(torch.nn.Module):
+
+  def __init__(
+      self,
+      input_size: int,
+      output_size: int,
+      output_type: str,
+      init_std: float = 1.0,
+      minstd: float = 1.0,
+      maxstd: float = 1.0,
+      unimix: float = 0.0,
+      bins: int = 255,
+      outscale: float = 1.0,
+      **kw):
+    super().__init__()
+    self.input_size = input_size
+    self.output_size = output_size
+    self.impl = output_type
+    self.kw = kw
+    self.init_std = init_std
+    self.minstd = minstd
+    self.maxstd = maxstd
+    self.unimix = unimix
+    self.bins = bins
+    self.outscale = outscale
+    if self.impl == 'mse':
+      self.projection_net = nn.Linear(input_size, output_size, **self.kw)
+      self._init_layer(self.projection_net)
+    elif self.impl == 'symexp_twohot':
+      self.projection_net = nn.Linear(input_size, output_size * self.bins, **self.kw)
+      self._init_layer(self.projection_net)
+    elif self.impl == 'bounded_normal':
+      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+      self.stddev_net = nn.Linear(input_size, output_size, **self.kw)
+      self._init_layer(self.mean_net)
+      self._init_layer(self.stddev_net)
+    elif self.impl == 'normal_logstd':
+      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+      self.stddev_net = nn.Linear(input_size, output_size, **self.kw)
+      self._init_layer(self.mean_net)
+      self._init_layer(self.stddev_net)
+    elif self.impl == 'normal_logstdparam':
+      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+      self.logstd = torch.nn.parameter.Parameter(
+        torch.full((1, output_size), fill_value=np.log(self.init_std)), requires_grad=True
+      )
+    elif self.impl == 'normal_logstdparam_unclipped':
+      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+      self.logstd = torch.nn.parameter.Parameter(
+        torch.full(
+          (1, output_size),
+          fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
+          dtype=torch.float32),
+        requires_grad=True
+      )
+
+  def _init_layer(self, layer):
+    torch.nn.init.trunc_normal_(layer.weight)
+    layer.weight.data *= self.outscale
+    torch.nn.init.zeros_(layer.bias)
+
+  def __call__(self, x):
+    if not hasattr(self, self.impl):
+      raise NotImplementedError(self.impl)
+    output = getattr(self, self.impl)(x)
+    return output
+
+  def mse(self, x):
+    pred = self.projection_net(x)
+    return MSE(pred)
+
+  def symexp_twohot(self, x):
+    logits = self.projection_net(x)
+    logits = logits.reshape((*x.shape[:-1], self.output_size, self.bins))
+    if self.bins % 2 == 1:
+      half = torch.linspace(-20, 0, (self.bins - 1) // 2 + 1, dtype=torch.float32, device=x.device)
+      half = math.symexp(half)
+      bins = torch.cat([half, -half[:-1].flip(0)], 0)
+    else:
+      half = torch.linspace(-20, 0, self.bins // 2, dtype=torch.float32, device=x.device)
+      half = math.symexp(half)
+      bins = torch.cat([half, -half.flip(0)], 0)
+    return TwoHot(logits, bins)
+
+  def bounded_normal(self, x):
+    mean = self.mean_net(x)
+    stddev = self.stddev_net(x)
+    lo, hi = self.minstd, self.maxstd
+    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+    output = Normal(torch.tanh(mean), stddev)
+    return output
+
+  def normal_logstd(self, x):
+    mean = self.mean_net(x)
+    stddev = torch.exp(self.stddev_net(x))
+    lo, hi = self.minstd, self.maxstd
+    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+    output = Normal(mean, stddev)
+    return output
+
+  def normal(self, x):
+    mean = self.mean_net(x)
+    stddev = self.stddev_net(x)
+    lo, hi = self.minstd, self.maxstd
+    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+    output = Normal(mean, stddev)
+    return output
+
+  def normal_logstdparam(self, x):
+    mean = self.mean_net(x)
+    with torch.no_grad():
+      log_min = np.log(self.minstd)
+      log_max = np.log(self.maxstd)
+      self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
+    output = Normal(mean, torch.exp(self.logstd))
+    return output
+
+  def normal_logstdparam_unclipped(self, x):
+    mean = self.mean_net(x)
+    std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
+    output = Normal(mean, std)
+    return output
+
+  def stats(self):
+    if self.impl == 'normal_logstdparam':
+      return {
+        'logstd': self.logstd.detach().cpu().numpy(),
+        'std': torch.exp(self.logstd).detach().cpu().numpy()
+      }
+    elif self.impl == 'normal_logstdparam_unclipped':
+      return {
+        'logstd': self.logstd.detach().cpu().numpy(),
+        'std': math.logstd_to_std(self.logstd, self.minstd, self.maxstd).detach().cpu().numpy()
+      }
+    else:
+      return {}
