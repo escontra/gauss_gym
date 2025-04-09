@@ -36,6 +36,10 @@ observations:
       VELOCITY_COMMANDS, DOF_POS,
       DOF_VEL, ACTIONS
     ]
+    sync_latency: [
+      BASE_ANG_VEL, PROJECTED_GRAVITY,
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL
+    ]
 
 terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
@@ -208,16 +212,16 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
 
-  push_interval_s: 5.0
+  push_interval_s: 6.0
   push_duration_s: 1.0
   push_force:
     apply: True
-    range: [0.0, 6.0]
+    range: [0.0, 10.0]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
     apply: True
-    range: [0.0, 1.5]
+    range: [0.0, 2.0]
     operation: "additive"
     distribution: "gaussian"
 
@@ -297,30 +301,42 @@ sim:
     contact_collection: 2
 
 policy:
-  layer_activation: "elu"
-  policy_hidden_layer_sizes: [512, 256, 128]
-  value_hidden_layer_sizes: [512, 256, 128]
-  symlog_inputs: True
-  policy_head: {output_type: normal_logstdparam, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
-  value_head: {output_type: mse, outscale: 1.0}
+  class_name: "RecurrentModel"
+  learning_rate: 1.e-5
+  desired_kl: 0.01
+  params:
+    layer_activation: "elu"
+    hidden_layer_sizes: [512, 256, 128]
+    symlog_inputs: True
+    head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
+
+value:
+  class_name: "RecurrentModel"
+  learning_rate: 3.e-4
+  params:
+    layer_activation: "elu"
+    hidden_layer_sizes: [512, 256, 128]
+    symlog_inputs: True
+    head: {output_type: mse, outscale: 1.0}
+  # value_head: {output_type: symexp_twohot, bins: 255, outscale: 1.0}
 
 algorithm:
   learning_rate: 1.e-5
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
+  symmetry: False
   symmetric_coef: 3.0
   num_learning_epochs: 20
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
   bound_coef: 1.0
-  desired_kl: 0.01
   normalize_advantage_per_minibatch: True
+
 runner:
   num_steps_per_env: 24
   class_name: "Runner"
-  policy_class_name: "ActorCriticRecurrent"
   use_wandb: False
   description: ""
   log_every: 30.

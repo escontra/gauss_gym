@@ -28,49 +28,55 @@ class ExperienceBuffer:
           device=self.device,
         )
 
-  def add_hidden_state_buffers(self, hidden_states):
+  def add_hidden_state_buffers(self, name, hidden_states):
     if hidden_states is None or hidden_states == (None, None):
       return
-    # make a tuple out of GRU hidden state sto match the LSTM format
-    hid_a = (
+    hidden_states = (
       hidden_states[0]
       if isinstance(hidden_states[0], tuple)
       else (hidden_states[0],)
     )
-    hid_c = (
-      hidden_states[1]
-      if isinstance(hidden_states[1], tuple)
-      else (hidden_states[1],)
-    )
+    # make a tuple out of GRU hidden state sto match the LSTM format
+    # hid_a = (
+    #   hidden_states[0]
+    #   if isinstance(hidden_states[0], tuple)
+    #   else (hidden_states[0],)
+    # )
+    # hid_c = (
+    #   hidden_states[1]
+    #   if isinstance(hidden_states[1], tuple)
+    #   else (hidden_states[1],)
+    # )
 
-    self.tensor_dict["hid_a"] = [
-      torch.zeros(self.horizon_length, *hid_a[i].shape, device=self.device)
-      for i in range(len(hid_a))
-    ]
-    self.tensor_dict["hid_c"] = [
-      torch.zeros(self.horizon_length, *hid_c[i].shape, device=self.device)
-      for i in range(len(hid_c))
+    self.tensor_dict[name] = [
+      torch.zeros(self.horizon_length, *hidden_states[i].shape, device=self.device)
+      for i in range(len(hidden_states))
     ]
 
-  def update_hidden_state_buffers(self, idx, hidden_states):
+  def update_hidden_state_buffers(self, name, idx, hidden_states):
     if hidden_states is None or hidden_states == (None, None):
       return
-
-    # make a tuple out of GRU hidden state sto match the LSTM format
-    hid_a = (
+    # hidden_states = hidden_states[0]
+    hidden_states = (
       hidden_states[0]
       if isinstance(hidden_states[0], tuple)
       else (hidden_states[0],)
     )
-    hid_c = (
-      hidden_states[1]
-      if isinstance(hidden_states[1], tuple)
-      else (hidden_states[1],)
-    )
 
-    for i in range(len(hid_a)):
-      self.tensor_dict["hid_a"][i][idx].copy_(hid_a[i].clone().detach())
-      self.tensor_dict["hid_c"][i][idx].copy_(hid_c[i].clone().detach())
+    # make a tuple out of GRU hidden state sto match the LSTM format
+    # hid_a = (
+    #   hidden_states[0]
+    #   if isinstance(hidden_states[0], tuple)
+    #   else (hidden_states[0],)
+    # )
+    # hid_c = (
+    #   hidden_states[1]
+    #   if isinstance(hidden_states[1], tuple)
+    #   else (hidden_states[1],)
+    # )
+
+    for i in range(len(hidden_states)):
+      self.tensor_dict[name][i][idx].copy_(hidden_states[i].clone().detach())
 
   def update_data(self, name, idx, data):
     if isinstance(data, dict):
