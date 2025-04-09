@@ -28,6 +28,9 @@ class ObsManager:
             self.obs_buffers_per_group[obs_group.name] = {}
             self.latency_buffers_per_group[obs_group.name] = {}
             self.delayed_frames_per_group[obs_group.name] = {}
+            sync_latency_names, sync_latency_buffer = [], None
+            if obs_group.sync_latency is not None:
+                sync_latency_names = [obs.name for obs in obs_group.sync_latency]
             for obs in obs_group.observations:
                 if not isinstance(obs, observation_groups.Observation):
                   raise ValueError(f"Observation {obs} is not an instance of Observation")
@@ -54,12 +57,22 @@ class ObsManager:
                    dtype=obs_dtype,
                    device=self.device,
                 )
-                self.latency_buffers_per_group[obs_group.name][obs.name] = torch_rand_float(
-                  latency_range[0],
-                  latency_range[1],
-                  (env.num_envs, 1),
-                  device=self.device,
-                ).flatten()
+                if obs.name in sync_latency_names:
+                    if sync_latency_buffer is None:
+                        sync_latency_buffer = torch_rand_float(
+                          latency_range[0],
+                          latency_range[1],
+                          (env.num_envs, 1),
+                          device=self.device,
+                        ).flatten()
+                    self.latency_buffers_per_group[obs_group.name][obs.name] = sync_latency_buffer
+                else:
+                    self.latency_buffers_per_group[obs_group.name][obs.name] = torch_rand_float(
+                      latency_range[0],
+                      latency_range[1],
+                      (env.num_envs, 1),
+                      device=self.device,
+                    ).flatten()
                 self.delayed_frames_per_group[obs_group.name][obs.name] = torch.zeros_like(
                     self.latency_buffers_per_group[obs_group.name][obs.name],
                     dtype=torch.long, device=self.device)
@@ -77,14 +90,27 @@ class ObsManager:
               resample_latency_env_ids = (episode_duration_steps % int(obs_group.latency_resampling_interval_s / self.env.dt) == 0).nonzero(as_tuple=False).flatten()
             if len(resample_latency_env_ids) == 0:
                continue
+            sync_latency_names, sync_latency_buffer = [], None
+            if obs_group.sync_latency is not None:
+                sync_latency_names = [obs.name for obs in obs_group.sync_latency]
             for obs in obs_group.observations:
                 latency_range = obs.latency_range if obs_group.add_latency else (0., 0.)
-                self.latency_buffers_per_group[obs_group.name][obs.name][resample_latency_env_ids] = torch_rand_float(
-                  latency_range[0],
-                  latency_range[1],
-                  (len(resample_latency_env_ids), 1),
-                  device=self.device,
-                ).flatten()
+                if obs.name in sync_latency_names:
+                    if sync_latency_buffer is None:
+                        sync_latency_buffer = torch_rand_float(
+                          latency_range[0],
+                          latency_range[1],
+                          (len(resample_latency_env_ids), 1),
+                          device=self.device,
+                        ).flatten()
+                    self.latency_buffers_per_group[obs_group.name][obs.name][resample_latency_env_ids] = sync_latency_buffer
+                else:
+                    self.latency_buffers_per_group[obs_group.name][obs.name][resample_latency_env_ids] = torch_rand_float(
+                      latency_range[0],
+                      latency_range[1],
+                      (len(resample_latency_env_ids), 1),
+                      device=self.device,
+                    ).flatten()
 
     def reset_buffers(self, env_ids):
         self.resample_sensor_latency(env_ids=env_ids)

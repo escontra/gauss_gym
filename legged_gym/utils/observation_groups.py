@@ -20,18 +20,30 @@ class ObservationGroup:
   name: str
   observations: List[Observation]
   add_noise: bool = False
+
+  # Latency.
   add_latency: bool = False
   latency_resampling_interval_s: Union[float, None] = None
+
+  # Sync latencies for these observations. Requires that each Observation has the same
+  # latency range.
+  sync_latency: Union[List[Observation], None] = None
 
 
 def observation_groups_from_dict(config: Dict) -> List[ObservationGroup]:
   observation_groups = []
   for name, cfg in config.items():
     observations = [eval(obs_name) for obs_name in cfg['observations']]
+    if 'sync_latency' in cfg:
+      sync_latency = [eval(obs_name) for obs_name in cfg['sync_latency']]
+      assert all(obs.latency_range == sync_latency[0].latency_range for obs in sync_latency), \
+        "All observations in sync_latency must have the same latency range."
+    else:
+      sync_latency = None
     observation_groups.append(
       ObservationGroup(
         name=name,
-        **{**cfg, 'observations': observations},
+        **{**cfg, 'observations': observations, 'sync_latency': sync_latency},
       )
     )
   return observation_groups
@@ -49,20 +61,20 @@ BASE_ANG_VEL = Observation(
   func=O.base_ang_vel,
   noise=0.2,
   scale=0.25,
-  latency_range=(0.04-0.0025, 0.04+0.0075),
+  latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 PROJECTED_GRAVITY = Observation(
   name="projected_gravity",
   func=O.projected_gravity,
   noise=0.05,
-  latency_range=(0.04-0.0025, 0.04+0.0075),
+  latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 VELOCITY_COMMANDS = Observation(
   name="velocity_commands", func=O.velocity_commands,
   scale=[2.0, 2.0, 0.25],
-  latency_range=(0.04-0.0025, 0.04+0.0075),
+  latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 DOF_POS = Observation(
@@ -70,7 +82,7 @@ DOF_POS = Observation(
   func=O.dof_pos,
   noise=0.01,
   scale=1.0,
-  latency_range=(0.04-0.0025, 0.04+0.0075),
+  latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 DOF_VEL = Observation(
@@ -78,7 +90,7 @@ DOF_VEL = Observation(
   func=O.dof_vel,
   noise=1.5,
   scale=0.1,
-  latency_range=(0.04-0.0025, 0.04+0.0075),
+  latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 ACTIONS = Observation(
