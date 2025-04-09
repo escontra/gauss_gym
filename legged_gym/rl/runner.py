@@ -278,7 +278,7 @@ class Runner:
   def _learn(self, last_privileged_obs):
       all_obses = self.buffer["obses"]
       all_privileged_obses = self.buffer["privileged_obses"]
-      traj_masks, hid_a, hid_c = None, None, None, None
+      traj_masks, hid_a, hid_c = None, None, None
 
       if self.policy.is_recurrent:
         obses_split = pytree.tree_map(
