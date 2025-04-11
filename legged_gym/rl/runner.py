@@ -9,8 +9,8 @@ import pathlib
 
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
-from legged_gym.rl.modules import models
-from legged_gym.utils import agg, symmetry_groups, timer, when, math, observation_normalizer
+from legged_gym.rl.modules import models, observation_normalizer
+from legged_gym.utils import agg, symmetry_groups, timer, when, math
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
