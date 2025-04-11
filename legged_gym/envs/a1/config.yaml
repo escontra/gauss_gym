@@ -134,7 +134,7 @@ curriculum:
     # epochs: 10000
     epochs: 750
     update_every: 10
-    start: 0.2
+    start: 0.1
     end: 0.01
     sample_type: "uniform"
 
@@ -207,7 +207,7 @@ domain_rand:
 
   foot_friction:
     apply: True
-    range: [0.3, 1.5]
+    range: [0.2, 1.6]
     operation: "additive"
     distribution: "uniform"
   foot_compliance:
@@ -253,7 +253,8 @@ rewards:
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
   base_height_target: 0.25
-  hip_height_target: 0.30
+  hip_height_target_max: 0.32
+  hip_height_target: 0.28 # 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
   feet_air_time_min_time: 0.3 # 0.5
@@ -271,6 +272,7 @@ rewards:
     collision: -1.
     action_rate: -0.01
     # hip_height: -1.0
+    hip_height_l1: 1.0
     dof_pos_limits: -1.0
 
     energy: -0.0001 # TODO: helps? 
@@ -387,15 +389,17 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
+  obs_key: "student_observations"
   params:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
-    head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
+    head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
 
 value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
+  obs_key: "teacher_observations"
   params:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]

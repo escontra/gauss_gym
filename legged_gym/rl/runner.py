@@ -10,7 +10,7 @@ import pathlib
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils import agg, symmetry_groups, timer, when, math
+from legged_gym.utils import agg, symmetry_groups, timer, when, math, observation_normalizer
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -50,21 +50,32 @@ class Runner:
     self.device = device
     self.cfg = cfg
     self._set_seed()
+    self.policy_key = self.cfg["policy"]["obs_key"]
+    self.value_key = self.cfg["value"]["obs_key"]
     self.obs_group_sizes = {
-      'teacher_observations': self.env.obs_group_size_per_name("teacher_observations"),
-      'student_observations': self.env.obs_group_size_per_name("student_observations"),
+      self.policy_key: self.env.obs_group_size_per_name(self.policy_key),
+      self.value_key: self.env.obs_group_size_per_name(self.value_key),
     }
+    self.obs_normalizers = {
+      self.policy_key: observation_normalizer.ObservationNormalizer(
+        self.obs_group_sizes[self.policy_key],
+      ).to(self.device),
+      self.value_key: observation_normalizer.ObservationNormalizer(
+        self.obs_group_sizes[self.value_key],
+      ).to(self.device),
+    }
+
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy = getattr(models, self.cfg["policy"]["class_name"])(
       self.env.num_actions,
-      self.env.obs_group_size_per_name("student_observations"),
+      self.obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
 
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
     self.value = getattr(models, self.cfg["value"]["class_name"])(
       1,
-      self.env.obs_group_size_per_name("teacher_observations"),
+      self.obs_group_sizes[self.value_key],
       **self.cfg["value"]["params"]
     ).to(self.device)
 
@@ -83,7 +94,7 @@ class Runner:
         for symmetry in self.cfg["symmetries"][group_name]["symmetries"]:
           symmetry_modifier = getattr(symmetry_groups, symmetry)
           self.symmetry_groups[group_name][symmetry_modifier.observation.name] = symmetry_modifier
-      assert "student_observations" in self.symmetry_groups
+      assert self.policy_key in self.symmetry_groups
       assert "actions" in self.symmetry_groups
 
     self.buffer = experience_buffer.ExperienceBuffer(
@@ -92,11 +103,10 @@ class Runner:
       self.device,
     )
     self.buffer.add_buffer(
-      "obses", self.env.obs_group_size_per_name("student_observations")
+      self.policy_key, self.obs_group_sizes[self.policy_key]
     )
     self.buffer.add_buffer(
-      "privileged_obses",
-      self.env.obs_group_size_per_name("teacher_observations"),
+      self.value_key, self.obs_group_sizes[self.value_key]
     )
     self.buffer.add_buffer("actions", (self.env.num_actions,))
     self.buffer.add_buffer("rewards", ())
@@ -150,13 +160,19 @@ class Runner:
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
     )
-    self.policy.load_state_dict(model_dict["policy"], strict=False)
-    self.value.load_state_dict(model_dict["value"], strict=False)
+    self.policy.load_state_dict(model_dict["policy"], strict=True)
+    self.value.load_state_dict(model_dict["value"], strict=True)
     try:
       self.policy_optimizer.load_state_dict(model_dict["policy_optimizer"])
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
     except Exception as e:
       print(f"Failed to load optimizer: {e}")
+
+    try:
+      for k, v in self.obs_normalizers.items():
+        v.load_state_dict(model_dict[f"obs_normalizer/{k}"])
+    except Exception as e:
+      print(f"Failed to load obs normalizer: {e}")
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
@@ -173,20 +189,27 @@ class Runner:
       obs = pytree.tree_map(lambda x: torch.nan_to_num(x, nan=0.0), obs)
     return obs
 
+  def normalize_obs(self, obs_dict):
+    obs_dict_normalized = pytree.tree_map(
+      lambda normalizer, obs: normalizer.normalize(obs),
+      {k: v for k, v in self.obs_normalizers.items() if k in obs_dict},
+      obs_dict,
+      is_leaf=lambda x: isinstance(x, observation_normalizer.ObservationNormalizer)
+    )
+    return obs_dict_normalized
+
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
-    obs, privileged_obs = self.env.reset()
-    obs = self.to_device(obs)
-    privileged_obs = self.to_device(privileged_obs)
-
+    obs_dict = self.to_device(self.env.reset())
+    obs_dict_normalized = self.normalize_obs(obs_dict)
     if init_at_random_ep_len:
         self.env.episode_length_buf = torch.randint_like(
           self.env.episode_length_buf,
           high=int(self.env.max_episode_length))
 
     # Needed to initialize hidden states.
-    self.policy(obs)
-    self.value(privileged_obs)
+    self.policy(obs_dict_normalized[self.policy_key])
+    self.value(obs_dict_normalized[self.value_key])
 
     if self.policy.is_recurrent:
       self.buffer.add_hidden_state_buffers("policy_hidden_states", self.policy.get_hidden_states())
@@ -198,8 +221,8 @@ class Runner:
       # within horizon_length, env.step() is called with same act
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         with timer.section("buffer_add_obs"):
-          self.buffer.update_data("obses", n, obs)
-          self.buffer.update_data("privileged_obses", n, privileged_obs)
+          self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
+          self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
           if self.policy.is_recurrent:
             self.buffer.update_hidden_state_buffers(
               "policy_hidden_states", n, self.policy.get_hidden_states()
@@ -210,12 +233,13 @@ class Runner:
             )
         with timer.section("model_act"):
           with torch.no_grad():
-            dist = self.policy(obs)
-            value = self.value(privileged_obs)
+            dist = self.policy(obs_dict_normalized[self.policy_key])
+            value = self.value(obs_dict_normalized[self.value_key])
             act = dist.sample()
         with timer.section("env_step"):
-          obs, privileged_obs, rew, done, infos = self.env.step(act)
-          obs, privileged_obs, rew, done = self.to_device((obs, privileged_obs, rew, done))
+          obs_dict, rew, done, infos = self.env.step(act)
+          obs_dict, rew, done = self.to_device((obs_dict, rew, done))
+          obs_dict_normalized = self.normalize_obs(obs_dict)
         self.policy.reset(done)
         self.value.reset(done)
         with timer.section("buffer_update_data"):
@@ -239,7 +263,7 @@ class Runner:
 
 
 
-      learn_stats = self._learn(last_privileged_obs=privileged_obs)
+      learn_stats = self._learn(last_privileged_obs=obs_dict_normalized[self.value_key])
       self.learn_agg.add(learn_stats)
 
       if self.should_log(it):
@@ -264,6 +288,7 @@ class Runner:
             "value": self.value.state_dict(),
             "policy_optimizer": self.policy_optimizer.state_dict(),
             "value_optimizer": self.value_optimizer.state_dict(),
+            **{f"obs_normalizer/{k}": v.state_dict() for k, v in self.obs_normalizers.items()},
           },
           it + 1,
         )
@@ -276,20 +301,20 @@ class Runner:
 
   @timer.section("learn")
   def _learn(self, last_privileged_obs):
-      all_obses = self.buffer["obses"]
-      all_privileged_obses = self.buffer["privileged_obses"]
+      policy_obs = self.buffer[self.policy_key]
+      value_obs = self.buffer[self.value_key]
       traj_masks, hid_a, hid_c = None, None, None
 
       if self.policy.is_recurrent:
-        obses_split = pytree.tree_map(
+        policy_obs_split = pytree.tree_map(
           lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-          all_obses,
+          policy_obs,
         )
-        all_obses = pytree.tree_map(
-          lambda x: x[0], obses_split, is_leaf=lambda x: isinstance(x, tuple)
+        policy_obs = pytree.tree_map(
+          lambda x: x[0], policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
         )
         traj_masks = pytree.tree_map(
-          lambda x: x[1], obses_split, is_leaf=lambda x: isinstance(x, tuple)
+          lambda x: x[1], policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
         )
         traj_masks = list(traj_masks.values())[0]
         last_was_done = torch.zeros_like(self.buffer["dones"], dtype=torch.bool)
@@ -303,18 +328,18 @@ class Runner:
         ]
 
       if self.value.is_recurrent:
-        privileged_obses_split = pytree.tree_map(
+        value_obs_split = pytree.tree_map(
           lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-          all_privileged_obses,
+          value_obs,
         )
-        all_privileged_obses = pytree.tree_map(
+        value_obs = pytree.tree_map(
           lambda x: x[0],
-          privileged_obses_split,
+          value_obs_split,
           is_leaf=lambda x: isinstance(x, tuple),
         )
         if not self.policy.is_recurrent:
           traj_masks = pytree.tree_map(
-            lambda x: x[1], privileged_obses_split, is_leaf=lambda x: isinstance(x, tuple)
+            lambda x: x[1], value_obs_split, is_leaf=lambda x: isinstance(x, tuple)
           )
           traj_masks = list(traj_masks.values())[0]
           last_was_done = torch.zeros_like(self.buffer["dones"], dtype=torch.bool)
@@ -328,9 +353,15 @@ class Runner:
           for saved_hidden_states in hid_c
         ]
 
+      normalized_obs = self.normalize_obs(
+        {self.policy_key: policy_obs, self.value_key: value_obs}
+      )
+      policy_obs_normalized = normalized_obs[self.policy_key]
+      value_obs_normalized = normalized_obs[self.value_key]
+
       with torch.no_grad():
         old_dist = self.policy(
-          all_obses, masks=traj_masks, hidden_states=hid_a
+          policy_obs_normalized, masks=traj_masks, hidden_states=hid_a
         )
         old_actions_log_prob = old_dist.logp(self.buffer["actions"]).sum(
           dim=-1
@@ -339,7 +370,7 @@ class Runner:
       learn_step_agg = agg.Agg()
       for n in range(self.cfg["algorithm"]["num_learning_epochs"]):
         values = self.value(
-          all_privileged_obses, masks=traj_masks, hidden_states=hid_c
+          value_obs_normalized, masks=traj_masks, hidden_states=hid_c
         )
         with torch.no_grad():
           last_values = self.value(last_privileged_obs, update_state=False)
@@ -372,7 +403,7 @@ class Runner:
         else:
           value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
 
-        dist = self.policy(all_obses, masks=traj_masks, hidden_states=hid_a)
+        dist = self.policy(policy_obs_normalized, masks=traj_masks, hidden_states=hid_a)
         actions_log_prob = dist.logp(self.buffer["actions"]).sum(dim=-1)
         actor_loss = surrogate_loss(
           old_actions_log_prob, actions_log_prob, advantages,
@@ -393,12 +424,13 @@ class Runner:
           + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
         )
         if self.cfg["algorithm"]["symmetry"]:
-          all_obses_sym = {}
-          for key, value in all_obses.items():
-            assert key in self.symmetry_groups["student_observations"], f"{key} not in {self.symmetry_groups['student_observations']}"
-            all_obses_sym[key] = self.symmetry_groups["student_observations"][key](self.env, value).detach()
+          policy_obs_sym = {}
+          for key, value in policy_obs.items():
+            assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
+            policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
+          policy_obs_sym_normalized = self.normalize_obs({self.policy_key: policy_obs_sym})[self.policy_key]
 
-          act_with_sym_obs = self.policy(all_obses_sym, masks=traj_masks, hidden_states=hid_a).pred()
+          act_with_sym_obs = self.policy(policy_obs_sym_normalized, masks=traj_masks, hidden_states=hid_a).pred()
           act_sym = self.symmetry_groups["actions"]["actions"](self.env, dist.pred())
           mse_loss = torch.nn.MSELoss()
           symmetry_loss = mse_loss(act_with_sym_obs, act_sym.detach())
@@ -439,6 +471,10 @@ class Runner:
           **policy_stats
         })
 
+      # Update the observation normalizersesolicy_obs)
+      self.obs_normalizers[self.policy_key].update(self.buffer[self.policy_key])
+      self.obs_normalizers[self.value_key].update(self.buffer[self.value_key])
+
       return {
           **learn_step_agg.result(),
           "kl_mean": kl_mean.item(),
@@ -447,51 +483,66 @@ class Runner:
       }
 
   def play(self):
-    obs, _ = self.env.reset()
-    obs = self.to_device(obs)
+    obs_dict = self.to_device(self.env.reset())
+    obs_dict_normalized = self.normalize_obs(obs_dict)
 
-    # memory_module = self.policy.memory
-    # actor = self.policy.model
-    # mlp_keys = self.model.mlp_keys
-    # cnn_keys = self.model.cnn_keys
-    # cnn_model = self.model.cnn
+    memory_module = self.policy.memory
+    actor_layers = self.policy.model[:-1]
+    actor_mean_net = self.policy.model[-1].mean_net
+    mlp_keys = self.policy.mlp_keys
+    cnn_keys = self.policy.cnn_keys
+    cnn_model = self.policy.cnn
 
 
-    # @torch.jit.script
-    # def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
-    #     if symlog_inputs:
-    #       features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
-    #     else:
-    #       features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
-    #     if cnn_keys:
-    #       cnn_features = []
-    #       for k in cnn_keys:
-    #         cnn_obs = observations[k]
-    #         if cnn_obs.shape[-1] in [1, 3]:
-    #           cnn_obs = permute_cnn_obs(cnn_obs)
-    #         if cnn_obs.dtype == torch.uint8:
-    #           cnn_obs = cnn_obs.float() / 255.0
+    @torch.jit.script
+    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+        if symlog_inputs:
+          features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
+        else:
+          features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+        if cnn_keys:
+          cnn_features = []
+          for k in cnn_keys:
+            cnn_obs = observations[k]
+            if cnn_obs.shape[-1] in [1, 3]:
+              cnn_obs = permute_cnn_obs(cnn_obs)
+            if cnn_obs.dtype == torch.uint8:
+              cnn_obs = cnn_obs.float() / 255.0
 
-    #         orig_batch_size = cnn_obs.shape[0]
-    #         cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
-    #         cnn_feat = cnn_model(cnn_obs)
-    #         cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
-    #         cnn_features.append(cnn_feat)
+            orig_batch_size = cnn_obs.shape[0]
+            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
+            cnn_feat = cnn_model(cnn_obs)
+            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
+            cnn_features.append(cnn_feat)
 
-    #       cnn_features = torch.cat(cnn_features, dim=-1)
-    #       features = torch.cat([features, cnn_features], dim=-1)
-    #     input_a = memory_module(features, None, None)
-    #     dist = actor_head(actor(input_a.squeeze(0)))
-    #     return dist
-    #     # return dist.pred()
+          cnn_features = torch.cat(cnn_features, dim=-1)
+          features = torch.cat([features, cnn_features], dim=-1)
+        # features = models.process_obs(observations, mlp_keys, cnn_keys, symlog_inputs, cnn_model)
+        input_a = memory_module(features, None, None).squeeze(0)
+        latent = actor_layers(input_a)
+        mean = actor_mean_net(latent)
+        return mean
 
+    # Alternatively can use torch.compile. Not sure if this is available on all machines.
+    # opt_policy = torch.compile(self.policy)
+
+    inference_time, step = 0., 0
     while True:
       with torch.no_grad():
-        obs = self.filter_nans(obs)
-        act = self.policy(obs).pred()
-        # act = policy(obs, mlp_keys, cnn_keys, symlog_inputs=self.cfg["policy"]["symlog_inputs"])
-        obs, _, _, _, _ = self.env.step(act)
-        obs = self.to_device(obs)
+        start = time.time()
+        act = policy(obs_dict_normalized[self.policy_key], mlp_keys, cnn_keys, symlog_inputs=self.cfg["policy"]["params"]["symlog_inputs"])
+        # act = opt_policy(obs_dict_normalized[self.policy_key]).pred()
+        inference_time += time.time() - start
+        obs_dict, _, _, _ = self.env.step(act)
+        obs_dict = self.to_device(obs_dict)
+        obs_dict_normalized = self.normalize_obs(obs_dict)
+
+      step += 1
+      if step % 100 == 0:
+        print(f"Average inference time: {inference_time / step}")
+        print(f"\t Per env: {inference_time / step / self.env.num_envs}")
+        inference_time, step = 0., 0
+
 
   def interrupt_handler(self, signal, frame):
     print("\nInterrupt received, waiting for video to finish...")

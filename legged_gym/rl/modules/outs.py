@@ -1,3 +1,4 @@
+from typing import Tuple, Union
 import functools
 import numpy as np
 import torch.utils._pytree as pytree
@@ -17,25 +18,25 @@ class Output:
     pred = self.pred()
     return f'{name}({pred.dtype}, shape={pred.shape})'
 
-  def pred(self):
+  def pred(self) -> torch.Tensor:
     raise NotImplementedError
 
-  def loss(self, target):
+  def loss(self, target: torch.Tensor) -> torch.Tensor:
     return -self.logp(target.detach())
 
-  def sample(self, shape=()):
+  def sample(self, shape: Union[Tuple[int], Tuple[()]]=()) -> torch.Tensor:
     raise NotImplementedError
 
-  def logp(self, event):
+  def logp(self, event: torch.Tensor) -> torch.Tensor:
     raise NotImplementedError
 
-  def prob(self, event):
+  def prob(self, event: torch.Tensor) -> torch.Tensor:
     return torch.exp(self.logp(event))
 
-  def entropy(self):
+  def entropy(self) -> torch.Tensor:
     raise NotImplementedError
 
-  def kl(self, other):
+  def kl(self, other: 'Output') -> torch.Tensor:
     raise NotImplementedError
 
 
@@ -392,7 +393,7 @@ class Head(torch.nn.Module):
     layer.weight.data *= self.outscale
     torch.nn.init.zeros_(layer.bias)
 
-  def __call__(self, x):
+  def __call__(self, x: torch.Tensor) -> Output:
     if not hasattr(self, self.impl):
       raise NotImplementedError(self.impl)
     output = getattr(self, self.impl)(x)

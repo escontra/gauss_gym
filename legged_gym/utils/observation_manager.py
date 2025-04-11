@@ -1,8 +1,6 @@
 import torch
-from legged_gym.utils import observation_groups
 from typing import List
-from isaacgym.torch_utils import torch_rand_float
-from legged_gym.utils import timer
+from legged_gym.utils import observation_groups, math, timer
 
 
 class ObsManager:
@@ -59,36 +57,30 @@ class ObsManager:
                 )
                 if obs.name in sync_latency_names:
                     if sync_latency_buffer is None:
-                        sync_latency_buffer = torch_rand_float(
-                          latency_range[0],
-                          latency_range[1],
-                          (env.num_envs, 1),
-                          device=self.device,
-                        ).flatten()
+                        sync_latency_buffer = self._sample_latency_buffer(latency_range, env.num_envs)
                     self.latency_buffers_per_group[obs_group.name][obs.name] = sync_latency_buffer
                 else:
-                    self.latency_buffers_per_group[obs_group.name][obs.name] = torch_rand_float(
-                      latency_range[0],
-                      latency_range[1],
-                      (env.num_envs, 1),
-                      device=self.device,
-                    ).flatten()
+                    self.latency_buffers_per_group[obs_group.name][obs.name] = self._sample_latency_buffer(latency_range, env.num_envs)
                 self.delayed_frames_per_group[obs_group.name][obs.name] = torch.zeros_like(
                     self.latency_buffers_per_group[obs_group.name][obs.name],
                     dtype=torch.long, device=self.device)
             self.obs_dims_per_group[obs_group.name] = obs_dim
+  
+    def _sample_latency_buffer(self, latency_range, size):
+        return math.torch_rand_float(
+          *latency_range,
+          (size, 1),
+          device=self.device,
+        ).flatten()
 
-    def resample_sensor_latency(self, env_ids=None, episode_duration_steps=None):
-        assert env_ids is not None or episode_duration_steps is not None, "Either env_ids or episode_duration_steps and dt must be provided"
-        assert not (env_ids is not None and episode_duration_steps is not None), "Either env_ids or episode_duration_steps and dt must be provided"
+    def resample_sensor_latency(self, env_ids=None):
         for obs_group in self.obs_group_cfg:
             if not obs_group.add_latency:
                continue
-            if env_ids is not None:
-              resample_latency_env_ids = env_ids
-            else:
-              resample_latency_env_ids = (episode_duration_steps % int(obs_group.latency_resampling_interval_s / self.env.dt) == 0).nonzero(as_tuple=False).flatten()
-            if len(resample_latency_env_ids) == 0:
+            if env_ids is None:
+              _int = int(obs_group.latency_resampling_interval_s / self.env.dt)
+              env_ids = (self.env.episode_length_buf % _int == 0).nonzero(as_tuple=False).flatten()
+            if len(env_ids) == 0:
                continue
             sync_latency_names, sync_latency_buffer = [], None
             if obs_group.sync_latency is not None:
@@ -97,20 +89,11 @@ class ObsManager:
                 latency_range = obs.latency_range if obs_group.add_latency else (0., 0.)
                 if obs.name in sync_latency_names:
                     if sync_latency_buffer is None:
-                        sync_latency_buffer = torch_rand_float(
-                          latency_range[0],
-                          latency_range[1],
-                          (len(resample_latency_env_ids), 1),
-                          device=self.device,
-                        ).flatten()
-                    self.latency_buffers_per_group[obs_group.name][obs.name][resample_latency_env_ids] = sync_latency_buffer
+                        sync_latency_buffer = self._sample_latency_buffer(latency_range, len(env_ids))
+                    self.latency_buffers_per_group[obs_group.name][obs.name][env_ids] = sync_latency_buffer
                 else:
-                    self.latency_buffers_per_group[obs_group.name][obs.name][resample_latency_env_ids] = torch_rand_float(
-                      latency_range[0],
-                      latency_range[1],
-                      (len(resample_latency_env_ids), 1),
-                      device=self.device,
-                    ).flatten()
+                    self.latency_buffers_per_group[obs_group.name][obs.name][env_ids] = self._sample_latency_buffer(
+                        latency_range, len(env_ids))
 
     def reset_buffers(self, env_ids):
         self.resample_sensor_latency(env_ids=env_ids)

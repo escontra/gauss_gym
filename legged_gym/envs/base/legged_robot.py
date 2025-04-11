@@ -89,9 +89,6 @@ class LeggedRobot(base_task.BaseTask):
             self,
             observation_groups.observation_groups_from_dict(self.cfg["observations"]))
 
-    def obs_group_size(self, group_name):
-        return self.obs_manager.obs_dims_per_group[group_name]
-
     def obs_group_size_per_name(self, group_name):
         return self.obs_manager.obs_dims_per_group_obs[group_name]
 
@@ -167,7 +164,7 @@ class LeggedRobot(base_task.BaseTask):
                     self.gym.refresh_dof_state_tensor(self.sim)
                 self.post_decimation_step(dec_i)
         self.post_physics_step()
-        return self.obs_dict["student_observations"], self.obs_dict["teacher_observations"], self.rew_buf, self.reset_buf, self.extras
+        return self.obs_dict, self.rew_buf, self.reset_buf, self.extras
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
@@ -540,7 +537,7 @@ class LeggedRobot(base_task.BaseTask):
         self._update_physics_curriculum()
 
         # Resample sensor latency.
-        self.obs_manager.resample_sensor_latency(episode_duration_steps=self.episode_length_buf)
+        self.obs_manager.resample_sensor_latency()
 
         # log max power across current env step
         self.max_power_per_timestep = torch.maximum(
@@ -1110,6 +1107,14 @@ class LeggedRobot(base_task.BaseTask):
         hip_heights = self.sensors["hip_height_raycaster"].get_data()
         hip_height_error = hip_heights - self.cfg["rewards"]["hip_height_target"]
         hip_height_error = torch.square(hip_height_error).sum(dim=-1)
+        return hip_height_error
+
+    def _reward_hip_height_l1(self):
+        hip_heights = self.sensors["hip_height_raycaster"].get_data()
+        max_hip_height = self.cfg["rewards"]["hip_height_target_max"]
+        max_hip_height = max_hip_height if max_hip_height > 0 else 1e6
+        height_diff = torch.clip(hip_heights, max=max_hip_height) - self.cfg["rewards"]["hip_height_target"]
+        hip_height_error = height_diff.sum(dim=-1)
         return hip_height_error
 
     def _reward_torques(self):

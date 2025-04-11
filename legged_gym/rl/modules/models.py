@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.utils import math
@@ -144,7 +144,7 @@ class RecurrentModel(torch.nn.Module):
   def get_hidden_states(self):
     return (self.memory.hidden_states,)
 
-  def process_obs(self, obs: Dict[str, torch.Tensor]):
+  def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
     features = torch.cat([obs[k] for k in self.mlp_keys], dim=-1)
     if self.symlog_inputs:
@@ -195,20 +195,23 @@ class Memory(torch.nn.Module):
         self.rnn = rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
         self.hidden_states = None
     
-    def forward(self, input, masks=None, hidden_states=None, upd_state=True):
+    @torch.jit.ignore
+    def _process_batch_mode(self, input: torch.Tensor, masks: Optional[torch.Tensor], hidden_states: Optional[torch.Tensor]):
+        assert hidden_states is not None, "Hidden states not passed to memory module during policy update"
+        assert masks is not None, "Masks not passed to memory module during policy update"
+        out, _ = self.rnn(input, hidden_states)
+        out = unpad_trajectories(out, masks)
+        return out
+
+    def forward(self, input: torch.Tensor, masks: Optional[torch.Tensor]=None, hidden_states: Optional[torch.Tensor]=None, upd_state: bool=True) -> torch.Tensor:
         batch_mode = masks is not None
-        if batch_mode:
-            # batch mode (policy update): need saved hidden states
-            if hidden_states is None:
-                raise ValueError("Hidden states not passed to memory module during policy update")
-            out, _ = self.rnn(input, hidden_states)
-            out = unpad_trajectories(out, masks)
-        else:
-            # inference mode (collection): use hidden states of last step
+        if batch_mode:  # Batch (update) mode.
+            return self._process_batch_mode(input, masks, hidden_states)
+        else:  # Inference mode
             out, new_hidden_states = self.rnn(input.unsqueeze(0), self.hidden_states)
             if upd_state:
                 self.hidden_states = new_hidden_states
-        return out
+            return out
 
     def reset(self, dones=None):
         # When the RNN is an LSTM, self.hidden_states_a is a list with hidden_state and cell_state

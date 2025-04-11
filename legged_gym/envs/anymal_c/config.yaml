@@ -304,6 +304,7 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
+  obs_key: "student_observations"
   params:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]
@@ -313,6 +314,7 @@ policy:
 value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
+  obs_key: "teacher_observations"
   params:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]
