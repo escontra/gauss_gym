@@ -1,6 +1,15 @@
 FROM nvcr.io/nvidia/pytorch:23.04-py3
 ENV DEBIAN_FRONTEND=noninteractive 
 
+# Add these ARGs near the top of your Dockerfile
+ARG USER_ID
+ARG GROUP_ID
+ARG USERNAME # Or choose another username
+ARG SPECIFIC_CUDA_ARCH
+# Normally the output of: `nvidia-smi --query-gpu=gpu_name,compute_cap --format=csv`.
+RUN echo "SPECIFIC_CUDA_ARCH: ${SPECIFIC_CUDA_ARCH}"
+ENV TORCH_CUDA_ARCH_LIST="${SPECIFIC_CUDA_ARCH}"
+
 # System dependencies.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -36,20 +45,31 @@ COPY docker/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 WORKDIR /opt/gauss-gym
 
-RUN useradd --create-home gymuser
-# Ensure the directory is owned by gymuser.
-RUN chown -R gymuser:gymuser /opt/gauss-gym
-USER gymuser
+
+# Add these RUN commands somewhere before the final USER instruction
+# Create the group and user, only if USER_ID and GROUP_ID are provided and non-zero
+RUN if [ -n "$USER_ID" ] && [ "$USER_ID" != "0" ] && [ -n "$GROUP_ID" ] && [ "$GROUP_ID" != "0" ]; then \
+        groupadd -g ${GROUP_ID} ${USERNAME} && \
+        useradd --shell /bin/bash -u ${USER_ID} -g ${GROUP_ID} -o -c "" -m ${USERNAME} && \
+        # Add any chown commands needed for specific directories inside the image below
+        # Example: chown -R ${USERNAME}:${USERNAME} /some/internal/app/path
+        echo "Created user ${USERNAME} with UID ${USER_ID} and GID ${GROUP_ID}" \
+    ;else \
+        echo "Skipping user creation, running as root or default user" \
+    ;fi
+
+# Ensure the directory is owned by user.
+RUN chown -R ${USERNAME}:${USERNAME} /opt/gauss-gym
+# USER gymuser
+USER $USERNAME
 
 # Copy gym repo to docker.
-COPY --chown=gymuser . .
+COPY --chown=${USERNAME} . .
 
 # Install gym modules.
-ENV PATH="/home/gymuser/.local/bin:$PATH"
-# Set Cuda arch explicitly with output of `nvidia-smi --query-gpu=gpu_name,compute_cap --format=csv`.
-ENV TORCH_CUDA_ARCH_LIST="8.0"
+ENV PATH="/home/${USERNAME}/.local/bin:$PATH"
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
+# RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
 RUN pip install jaxtyping
 RUN cd isaacgym/python && pip install -q -e .
 RUN pip install -q -e .

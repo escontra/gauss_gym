@@ -60,3 +60,4 @@ __pycache__
 assets/*
 scenes/*
 isaacgym/*
+.cache/*

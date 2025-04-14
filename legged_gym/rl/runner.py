@@ -267,31 +267,32 @@ class Runner:
       self.learn_agg.add(learn_stats)
 
       if self.should_log(it):
-        step_stats = {f"step/{k}": v for k, v in self.step_agg.result().items()}
-        learn_stats = {f"learn/{k}": v for k, v in self.learn_agg.result().items()}
-        timer_stats = {f"timer/{k}": v for k, v in timer.stats().items()}
-        episode_stats = {f"episode/{k}": v for k, v in self.episode_agg.result().items()}
-        self.recorder.record_statistics(
-          {
-            **step_stats,
-            **learn_stats,
-            **timer_stats,
-            **episode_stats},
-          it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs
-        )
+        with timer.section("logger_save"):
+          step_stats = {f"step/{k}": v for k, v in self.step_agg.result().items()}
+          learn_stats = {f"learn/{k}": v for k, v in self.learn_agg.result().items()}
+          timer_stats = {f"timer/{k}": v for k, v in timer.stats().items()}
+          episode_stats = {f"episode/{k}": v for k, v in self.episode_agg.result().items()}
+          self.recorder.record_statistics(
+            {
+              **step_stats,
+              **learn_stats,
+              **timer_stats,
+              **episode_stats},
+            it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs
+          )
 
 
       if self.should_save(it):
-        self.recorder.save(
-          {
-            "policy": self.policy.state_dict(),
-            "value": self.value.state_dict(),
-            "policy_optimizer": self.policy_optimizer.state_dict(),
-            "value_optimizer": self.value_optimizer.state_dict(),
-            **{f"obs_normalizer/{k}": v.state_dict() for k, v in self.obs_normalizers.items()},
-          },
-          it + 1,
-        )
+        with timer.section("model_save"):
+          self.recorder.save( {
+              "policy": self.policy.state_dict(),
+              "value": self.value.state_dict(),
+              "policy_optimizer": self.policy_optimizer.state_dict(),
+              "value_optimizer": self.value_optimizer.state_dict(),
+              **{f"obs_normalizer/{k}": v.state_dict() for k, v in self.obs_normalizers.items()},
+            },
+            it + 1,
+          )
       print(
         "epoch: {}/{} - {}s.".format(
           it + 1, num_learning_iterations, time.time() - start
