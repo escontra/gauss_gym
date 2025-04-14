@@ -2,12 +2,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.utils._pytree as pytree
-
-
 import tensordict
-import tensordict.nn as tnn
-# from tensordict.nn import TensorDictParams, TensorDictParam
-# from tensordict import TensorDict
 
 
 def _validate_batch_shapes(batch,

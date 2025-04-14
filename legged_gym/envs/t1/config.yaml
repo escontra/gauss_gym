@@ -26,11 +26,13 @@ observations:
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
       RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES,
-      PUSHING_FORCES, PUSHING_TORQUES, GAIT_PROGRESS]
+      PUSHING_FORCES, PUSHING_TORQUES, GAIT_PROGRESS,
+      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
+      ]
   student_observations:
     add_noise: True
-    add_latency: True
-    latency_resampling_interval_s: 2.0
+    add_latency: False
+    latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS,
@@ -39,6 +41,17 @@ observations:
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL
+    ]
+
+symmetries:
+  student_observations:
+    symmetries: [
+      BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS, GAIT_PROGRESS
+    ]
+  actions:
+    symmetries: [
+      T1_ACTIONS
     ]
 
 terrain:
@@ -52,7 +65,7 @@ terrain:
 
 
 init_state:
-  pos: [0.0, 0.0, 0.78]
+  pos: [0.0, 0.0, 0.86]
   rot: [0.0, 0.0, 0.0, 1.0]
   lin_vel: [0.0, 0.0, 0.0]
   ang_vel: [0.0, 0.0, 0.0]
@@ -127,7 +140,7 @@ asset:
   thickness: 0.01
 
 curriculum:
-  apply_curriculum: True
+  apply_curriculum: False
 
   dof_friction:
     apply: False
@@ -184,7 +197,7 @@ domain_rand:
 
   dof_stiffness:
     apply: True
-    range: [0.95, 1.05]
+    range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
   dof_damping:
@@ -253,7 +266,8 @@ rewards:
   soft_dof_pos_limit: 1.0
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
-  base_height_target: 0.68
+  base_height_target: 0.65
+  base_height_target_max: 0.72
   max_contact_force: 500.0
   terminate_height: 0.45
   feet_air_time_min_time: 0.5
@@ -267,17 +281,20 @@ rewards:
     tracking_ang_vel: 1.0
     lin_vel_z: -0.5  # -2.
     ang_vel_xy: -0.2
-    orientation: -5.
-    base_height: -2.0 # -20.  # Play with this.
-    torques: -2.e-4
-    action_rate: -1.
+    orientation: -1.0 # -5.
+    # base_height: -1.0 # -20.  # Play with this.
+    base_height_l1: 1.0
+    torques: -0.0001 # -2.e-4
+    action_rate: -0.1 # -1.
     dof_acc: -1.e-7
+    dof_pos_limits: -1.
+    collision: -1.
+
+    # TODO: Do we need these?
     dof_vel: -1.e-4
     torque_tiredness: -1.e-2
     power: -2.e-3
     root_acc: -1.e-4
-    dof_pos_limits: -1.
-    collision: -1.
     feet_slip: -0.1
     feet_vel_z: -0.
     feet_yaw_diff: -1.
@@ -287,7 +304,7 @@ rewards:
     feet_swing: 3.
 
 commands:
-  still_proportion: 0.1
+  still_proportion: 0.0
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
@@ -295,7 +312,7 @@ commands:
   small_lin_vel_threshold: 0.1
   small_ang_vel_threshold: 0.1
   ranges:
-    lin_vel: [0.1, 1.0]
+    lin_vel: [0.0, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
@@ -339,9 +356,10 @@ policy:
   obs_key: "student_observations"
   params:
     layer_activation: "elu"
+    recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
-    head: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.13}
+    head: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.30}
 
 value:
   class_name: "RecurrentModel"
@@ -349,18 +367,17 @@ value:
   obs_key: "teacher_observations"
   params:
     layer_activation: "elu"
+    recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     head: {output_type: mse, outscale: 1.0}
-  # value_head: {output_type: symexp_twohot, bins: 255, outscale: 1.0}
 
 algorithm:
-  learning_rate: 1.e-5
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
   symmetry: True
-  symmetric_coef: 3.0
+  symmetry_coef: 3.0
   num_learning_epochs: 20
   value_loss_coef: 1.0
   use_clipped_value_loss: False

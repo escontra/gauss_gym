@@ -93,4 +93,4 @@ def feet_contact_time(env: "ANY_ENV", params, is_real=False):
     return env.feet_contact_time
 
 def feet_contact(env: "ANY_ENV", params, is_real=False):
-    return env.feet_contact
+    return env.feet_contact.to(torch.float32)

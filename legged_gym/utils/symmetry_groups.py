@@ -32,6 +32,40 @@ def velocity_commands_symmetry(env, obs):
   return torch.stack([x_command, -y_command, -ang_vel_command], dim=-1)
 
 
+def identity_symmetry(env, obs):
+  return obs
+
+
+def t1_joint_symmetry(env, joint_val):
+  joint_map = {'Left': 'Right', 'Right': 'Left'}
+  multipliers = {
+    'Ankle_Pitch': 1.0,
+    'Ankle_Roll': -1.0,
+    'Hip_Pitch': 1.0,
+    'Hip_Roll': -1.0,
+    'Hip_Yaw': -1.0,
+    'Knee_Pitch': 1.0}
+  joint_val_sym = torch.zeros_like(joint_val)
+  for dof_name in env.dof_names:
+    name_parts = dof_name.split('_')
+    new_name = dof_name.replace(name_parts[0], joint_map[name_parts[0]])
+    multiplier = multipliers['_'.join(name_parts[1:])]
+    joint_val_sym[..., env.dof_names.index(dof_name)] = multiplier * joint_val[..., env.dof_names.index(new_name)]
+  return joint_val_sym
+
+
+def t1_dof_pos_symmetry(env, obs):
+  return t1_joint_symmetry(env, obs)
+
+
+def t1_dof_vel_symmetry(env, obs):
+  return t1_joint_symmetry(env, obs)
+
+
+def t1_actions_symmetry(env, obs):
+  return t1_joint_symmetry(env, obs)
+
+
 def a1_joint_symmetry(env, joint_val):
   joint_map = {'FL': 'FR', 'RL': 'RR', 'FR': 'FL', 'RR': 'RL'}
   multipliers = {'calf': 1.0, 'hip': -1.0, 'thigh': 1.0}
@@ -88,7 +122,22 @@ A1_ACTIONS = SymmetryModifier(
   symmetry_fn=a1_actions_symmetry,
 )
 
+T1_DOF_POS = SymmetryModifier(
+  observation=observation_groups.DOF_POS,
+  symmetry_fn=t1_dof_pos_symmetry,
+)
 
+T1_DOF_VEL = SymmetryModifier(
+  observation=observation_groups.DOF_VEL,
+  symmetry_fn=t1_dof_vel_symmetry,
+)
 
+T1_ACTIONS = SymmetryModifier(
+  observation=observation_groups.ACTIONS,
+  symmetry_fn=t1_actions_symmetry,
+)
 
-
+GAIT_PROGRESS = SymmetryModifier(
+  observation=observation_groups.GAIT_PROGRESS,
+  symmetry_fn=identity_symmetry,
+)

@@ -207,7 +207,7 @@ domain_rand:
 
   foot_friction:
     apply: True
-    range: [0.2, 1.6]
+    range: [0.3, 2.0]
     operation: "additive"
     distribution: "uniform"
   foot_compliance:
@@ -221,7 +221,7 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 10.0
+  kick_interval_s: 5.0
   kick_lin_vel:
     apply: True
     range: [-1.0, 1.0]
@@ -253,13 +253,14 @@ rewards:
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
   base_height_target: 0.25
-  hip_height_target_max: 0.32
-  hip_height_target: 0.28 # 0.25
+  hip_height_target_max: 0.30
+  hip_height_target: 0.27 # 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.3 # 0.5
-  feet_air_time_max_time: 0.4 # 1.0
+  feet_air_time_min_time: 0.1
+  feet_air_time_max_time: 0.4
   max_foot_height: 0.2
+  foot_clearance_height: 0.05
   scales:
     tracking_lin_vel_x: 2.0
     tracking_lin_vel_y: 2.0
@@ -274,48 +275,8 @@ rewards:
     # hip_height: -1.0
     hip_height_l1: 1.0
     dof_pos_limits: -1.0
-
-    energy: -0.0001 # TODO: helps? 
-    # a1_pose: 0.01
-
-    # Additional rewards.
-    # feet_slip: -0.1
-    # feet_clearance: -2.0
-    # feet_height: -0.2
-
-  # Playground scales.
-  # only_positive_rewards: True
-  # tracking_sigma: 0.25
-  # soft_dof_pos_limit: 0.95
-  # hip_height_target: 0.30
-  # terminate_height: 0.08
-  # feet_air_time_min_time: 0.1
-  # feet_air_time_max_time: -1
-  # max_foot_height: 0.2
-  # scales:
-  #   tracking_lin_vel_x: 3.0 #1.0
-  #   tracking_lin_vel_y: 3.0 # 1.0
-  #   tracking_ang_vel: 1.5 # 0.5
-  #   # Base.
-  #   lin_vel_z: -0.5
-  #   ang_vel_xy: -0.05
-  #   orientation: -1.0
-  #   # Other.
-  #   dof_pos_limits: -1.0
-  #   a1_pose: 0.5
-  #   # Regularization.
-  #   collision: -1.0
-  #   termination: -1.0
-  #   stand_still: -1.0
-  #   torques: -0.0002
-  #   action_rate: -0.01
-  #   energy: -0.001
-
-  #   # Feet.
-  #   feet_clearance: -2.0
-  #   feet_height: -0.2
-  #   feet_slip: -0.1
-  #   feet_air_time: 0.1
+    energy: -0.0005 # TODO: helps? 
+    feet_clearance_clipped: 0.2
 
 commands:
   still_proportion: 0.0
@@ -325,7 +286,7 @@ commands:
   small_lin_vel_threshold: 0.1
   small_ang_vel_threshold: 0.1
   ranges:
-    lin_vel: [0.1, 1.0]
+    lin_vel: [0.0, 1.0]
     lin_vel_yaw: [-1.0, 1.0]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
@@ -392,6 +353,7 @@ policy:
   obs_key: "student_observations"
   params:
     layer_activation: "elu"
+    recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
@@ -402,13 +364,12 @@ value:
   obs_key: "teacher_observations"
   params:
     layer_activation: "elu"
+    recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     head: {output_type: mse, outscale: 1.0}
-  # value_head: {output_type: symexp_twohot, bins: 255, outscale: 1.0}
 
 algorithm:
-  learning_rate: 1.e-5
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01

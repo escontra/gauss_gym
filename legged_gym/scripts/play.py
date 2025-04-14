@@ -31,8 +31,8 @@ def main(argv = None):
     cfg = cfg.update({'env.num_envs': 50})
     cfg = cfg.update({'domain_rand.apply_domain_rand': False})
     cfg = cfg.update({'curriculum.apply_curriculum': False})
-    cfg = cfg.update({'observations.student_observations.add_noise': False})
-    cfg = cfg.update({'observations.student_observations.add_latency': False})
+    cfg = cfg.update({f'observations.{cfg.policy.obs_key}.add_noise': False})
+    cfg = cfg.update({f'observations.{cfg.policy.obs_key}.add_latency': False})
 
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)

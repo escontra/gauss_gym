@@ -1101,6 +1101,15 @@ class LeggedRobot(base_task.BaseTask):
         base_height_error = base_height - self.cfg["rewards"]["base_height_target"]
         base_height_error = torch.square(base_height_error).sum(dim=-1)
         return base_height_error
+
+    def _reward_base_height_l1(self):
+        # Penalize base height away from target
+        base_height = self.sensors["base_height_raycaster"].get_data()
+        max_base_height = self.cfg["rewards"]["base_height_target_max"]
+        max_base_height = max_base_height if max_base_height > 0 else 1e6
+        height_diff = torch.clip(base_height, max=max_base_height) - self.cfg["rewards"]["base_height_target"]
+        base_height_error = height_diff.sum(dim=-1)
+        return base_height_error
   
     def _reward_hip_height(self):
         # Penalize hip height away from target
@@ -1274,6 +1283,10 @@ class LeggedRobot(base_task.BaseTask):
       delta = torch.abs(feet_z - self.cfg["rewards"]["max_foot_height"])
       return torch.sum(delta * vel_norm, dim=-1)
 
+    def _reward_feet_clearance_clipped(self):
+      height_diff = self.swing_peak - self.cfg["rewards"]["foot_clearance_height"]
+      height_diff = torch.clip(height_diff * self.first_contact, max=0.)
+      return height_diff.sum(dim=-1)
 
     def _reward_feet_height(self):
       nonzero_command = ~self.get_small_command_mask()

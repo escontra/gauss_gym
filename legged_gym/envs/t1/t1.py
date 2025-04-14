@@ -44,8 +44,8 @@ class T1(LeggedRobot):
 
     def step(self, actions):
         self.gait_process[:] = torch.fmod(self.gait_process + self.dt * self.gait_frequency, 1.0)
-        obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras = super().step(actions)
-        return obs_buf, privileged_obs_buf, rew_buf, reset_buf, extras
+        obs_dict, rew_buf, reset_buf, extras = super().step(actions)
+        return obs_dict, rew_buf, reset_buf, extras
 
     def _resample_commands(self, env_ids):
         super()._resample_commands(env_ids)

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union, Tuple
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.utils import math
@@ -111,19 +111,21 @@ class RecurrentModel(torch.nn.Module):
         obs_space,
         layer_activation="elu",
         hidden_layer_sizes=[256, 128, 64],
+        recurrent_state_size=256,
         symlog_inputs=False,
         head: Dict[str, Any] = None):
     super().__init__()
     self.mlp_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
-    latent_dim = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
+    self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
+    self.recurrent_state_size = recurrent_state_size
+    self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
 
     print(f'MLP Keys: {self.mlp_keys}')
     print(f'MLP Num Obs: {self.num_mlp_obs}')
     print(f'CNN Keys: {self.cnn_keys}')
 
-    self.memory = Memory(latent_dim, type='lstm', num_layers=1, hidden_size=hidden_layer_sizes[0])
     layers = []
-    input_size = hidden_layer_sizes[0]
+    input_size = self.recurrent_state_size
     for size in hidden_layer_sizes:
       layers.append(torch.nn.Linear(input_size, size))
       layers.append(get_activation(layer_activation))
@@ -174,10 +176,14 @@ class RecurrentModel(torch.nn.Module):
                obs: Dict[str, torch.Tensor],
                masks: Optional[torch.Tensor]=None,
                hidden_states: Optional[torch.Tensor]=None,
-               update_state: bool=True) -> outs.Output:
+               update_state: bool=True,
+               return_states: bool=False) -> Union[outs.Output, Tuple[outs.Output, Dict[str, torch.Tensor]]]:
     processed_obs = self.process_obs(obs)
     rnn_state = self.memory(processed_obs, masks, hidden_states, update_state)
-    return self.model(rnn_state.squeeze(0))
+    dist = self.model(rnn_state.squeeze(0))
+    if return_states:
+        return dist, {'recurrent_state': rnn_state.squeeze(0), 'obs': processed_obs}
+    return dist
 
   def stats(self):
     stats = {}
@@ -191,10 +197,19 @@ class Memory(torch.nn.Module):
     def __init__(self, input_size, type='lstm', num_layers=1, hidden_size=256):
         super().__init__()
         # RNN
-        rnn_cls = nn.GRU if type.lower() == 'gru' else nn.LSTM
-        self.rnn = rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
+        self.rnn_cls = nn.GRU if type.lower() == 'gru' else nn.LSTM
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
+        self.rnn = self.rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
+
+        # Learnable initial hidden state (size remains [L, 1, H])
+        self.initial_hidden_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
+        if self.rnn_cls is nn.LSTM:
+            self.initial_cell_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
+
+        # Initialize hidden_states to None for lazy initialization
         self.hidden_states = None
-    
+
     @torch.jit.ignore
     def _process_batch_mode(self, input: torch.Tensor, masks: Optional[torch.Tensor], hidden_states: Optional[torch.Tensor]):
         assert hidden_states is not None, "Hidden states not passed to memory module during policy update"
@@ -208,12 +223,34 @@ class Memory(torch.nn.Module):
         if batch_mode:  # Batch (update) mode.
             return self._process_batch_mode(input, masks, hidden_states)
         else:  # Inference mode
+            if self.hidden_states is None:
+                num_envs = input.shape[0]
+                init_h = self.initial_hidden_state.to(input.device)
+                if self.rnn_cls is nn.LSTM:
+                    init_c = self.initial_cell_state.to(input.device)
+                    self.hidden_states = (
+                        init_h.repeat(1, num_envs, 1),
+                        init_c.repeat(1, num_envs, 1)
+                    )
+                else: # GRU
+                    self.hidden_states = init_h.repeat(1, num_envs, 1)
+
             out, new_hidden_states = self.rnn(input.unsqueeze(0), self.hidden_states)
             if upd_state:
                 self.hidden_states = new_hidden_states
             return out
 
     def reset(self, dones=None):
-        # When the RNN is an LSTM, self.hidden_states_a is a list with hidden_state and cell_state
-        for hidden_state in self.hidden_states:
-            hidden_state[..., dones, :] = 0.0
+        assert self.hidden_states is not None, "Reset called before forward pass! Hidden states not initialized."
+
+        if dones is None or dones.sum() == 0:
+            return
+
+        if isinstance(self.hidden_states, tuple): # LSTM
+            init_h = self.initial_hidden_state.detach().clone().to(self.hidden_states[0].device)
+            init_c = self.initial_cell_state.detach().clone().to(self.hidden_states[1].device)
+            self.hidden_states[0][..., dones, :] = init_h
+            self.hidden_states[1][..., dones, :] = init_c
+        else: # GRU
+            init_h = self.initial_hidden_state.detach().clone().to(self.hidden_states.device)
+            self.hidden_states[..., dones, :] = init_h
