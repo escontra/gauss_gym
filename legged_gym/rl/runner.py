@@ -9,7 +9,7 @@ import pathlib
 
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
-from legged_gym.rl.modules import models, observation_normalizer
+from legged_gym.rl.modules import models, normalizers
 from legged_gym.utils import agg, symmetry_groups, timer, when, math
 
 
@@ -57,10 +57,10 @@ class Runner:
       self.value_key: self.env.obs_group_size_per_name(self.value_key),
     }
     self.obs_normalizers = {
-      self.policy_key: observation_normalizer.ObservationNormalizer(
+      self.policy_key: normalizers.ObservationNormalizer(
         self.obs_group_sizes[self.policy_key],
       ).to(self.device),
-      self.value_key: observation_normalizer.ObservationNormalizer(
+      self.value_key: normalizers.ObservationNormalizer(
         self.obs_group_sizes[self.value_key],
       ).to(self.device),
     }
@@ -194,7 +194,7 @@ class Runner:
       lambda normalizer, obs: normalizer.normalize(obs),
       {k: v for k, v in self.obs_normalizers.items() if k in obs_dict},
       obs_dict,
-      is_leaf=lambda x: isinstance(x, observation_normalizer.ObservationNormalizer)
+      is_leaf=lambda x: isinstance(x, normalizers.ObservationNormalizer)
     )
     return obs_dict_normalized
 
