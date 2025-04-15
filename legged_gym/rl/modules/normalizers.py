@@ -30,18 +30,19 @@ def _validate_batch_shapes(batch,
   pytree.tree_map(validate_node_shape, reference_sample, batch)
 
 
-class ObservationNormalizer(nn.Module):
+class PyTreeNormalizer(nn.Module):
 
   def __init__(self,
                obs_tree,
                max_abs_value: Optional[float] = None,
                std_min_value: float = 1e-6,
-               std_max_value: float = 1e6):
+               std_max_value: float = 1e6,
+               use_mean_offset: bool = True):
     super().__init__()
     self.max_abs_value = max_abs_value
     self.std_min_value = std_min_value
     self.std_max_value = std_max_value
-
+    self.use_mean_offset = use_mean_offset
     self.count = nn.Parameter(torch.zeros(size=(), dtype=torch.int32), requires_grad=False)
     self.mean = tensordict.TensorDictParams(
       tensordict.TensorDict(
@@ -121,17 +122,24 @@ class ObservationNormalizer(nn.Module):
     def normalize_leaf(data: torch.Tensor,
                        mean: torch.Tensor,
                        std: torch.Tensor,
-                       max_abs_value: Optional[float] = None
+                       max_abs_value: Optional[float] = None,
+                       use_mean_offset: bool = True
                        ) -> torch.Tensor:
       if not torch.is_floating_point(data):
         return data
-      data = (data - mean) / std
+      if use_mean_offset:
+        data = data - mean
+      data = data / std
       if max_abs_value is not None:
         data = torch.clamp(data, -max_abs_value, max_abs_value)
       return data
 
     return pytree.tree_map(
-      lambda data, mean, std: normalize_leaf(data, mean, std, self.max_abs_value),
+      lambda data, mean, std: normalize_leaf(
+        data, mean, std,
+        max_abs_value=self.max_abs_value,
+        use_mean_offset=self.use_mean_offset
+      ),
       obs_tree,
       self.mean.to_dict(),
       self.std.to_dict())
@@ -139,13 +147,67 @@ class ObservationNormalizer(nn.Module):
   def denormalize(self, obs_tree):
     def denormalize_leaf(data: torch.Tensor,
                          mean: torch.Tensor,
-                         std: torch.Tensor) -> torch.Tensor:
+                         std: torch.Tensor,
+                         use_mean_offset: bool = True) -> torch.Tensor:
       if not torch.is_floating_point(data):
         return data
-      return data * std + mean
+      data = data * std
+      if use_mean_offset:
+        data = data + mean
+      return data
     
     return pytree.tree_map(
-      denormalize_leaf,
+      lambda data, mean, std: denormalize_leaf(
+        data, mean, std,
+        use_mean_offset=self.use_mean_offset
+      ),
       obs_tree,
       self.mean.to_dict(),
       self.std.to_dict())
+
+
+class BackwardReturnTracker(nn.Module):
+
+  def __init__(self,
+               obs_tree,
+               discount: float
+               ):
+    super().__init__()
+    self.discount = discount
+
+    self.bwreturn = tensordict.TensorDictParams(
+      tensordict.TensorDict(
+        pytree.tree_map(
+          lambda x: torch.zeros(x[0], dtype=x[1]),
+          obs_tree,
+          is_leaf=lambda x: isinstance(x, tuple))), no_convert=True)
+
+  def __call__(self, rew_tree, is_first, validate_shapes: bool = True):
+    assert pytree.tree_structure(rew_tree) == pytree.tree_structure(self.bwreturn.to_dict())
+    batch_leaves = pytree.tree_leaves(rew_tree)
+    if not batch_leaves:
+      # Empty batch.
+      return
+    batch_shape = batch_leaves[0].shape
+    # We assume the batch dimensions always go first.
+    batch_dims = batch_shape[:len(batch_shape) -
+                            pytree.tree_leaves(self.bwreturn.to_dict())[0].ndim]
+
+    # Validation is important. If the shapes don't match exactly, but are
+    # compatible, arrays will be silently broadcasted resulting in incorrect
+    # statistics.
+    if validate_shapes:
+      _validate_batch_shapes(rew_tree, self.bwreturn.to_dict(), batch_dims)
+
+    def _compute_node_statistics(
+        bwreturn: torch.Tensor,
+        batch: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+      # The mean and the sum of past variances are updated with Welford's
+      # algorithm using batches (see https://stackoverflow.com/q/56402955).
+      bwreturn *= (1 - is_first.to(torch.float32)) * self.discount
+      bwreturn += batch
+
+      return bwreturn
+
+    self.bwreturn.update(pytree.tree_map(_compute_node_statistics, self.bwreturn.to_dict(), rew_tree))
+    return self.bwreturn.to_dict()

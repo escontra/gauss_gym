@@ -1146,7 +1146,7 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies
-        return torch.sum(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 1.0, dim=-1)
+        return torch.sum(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 1.0, dim=-1).to(torch.float32)
 
     def _reward_termination(self):
         # Terminal reward / penalty

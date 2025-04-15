@@ -19,6 +19,7 @@ def main(argv=None):
     if parsed.task == '':
         raise ValueError('--task must be specified for training.')
     cfg = task_registry.get_cfgs(parsed.task)
+    cfg = cfg.update({'headless': True})
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
     cfg = types.MappingProxyType(dict(cfg))
