@@ -57,7 +57,7 @@ class MuJoCoRunner:
       model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
     print(f'\tLoading model weights from: {model_path}')
     model_dict = torch.load(
-      model_path, map_location=self.device, weights_only=True
+      model_path, map_location=self.device
     )
 
     # Create policy and observation normalizer.
