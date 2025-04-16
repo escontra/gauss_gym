@@ -22,7 +22,7 @@ from sensor_msgs.msg import Image
 
 import ros_numpy
 from legged_gym.utils.math import quat_rotate_inverse
-from legged_gym.teacher import observation_groups
+from legged_gym.utils import observation_groups
 
 @torch.no_grad()
 def resize2d(img, size):
