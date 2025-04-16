@@ -220,6 +220,7 @@ class Runner:
       start = time.time()
       # within horizon_length, env.step() is called with same act
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
+        print('ACTING')
         with timer.section("buffer_add_obs"):
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
           self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
@@ -231,6 +232,8 @@ class Runner:
             self.buffer.update_hidden_state_buffers(
               "value_hidden_states", n, self.value.get_hidden_states()
             )
+        import pprint
+        pprint.pprint(pytree.tree_map(lambda x: x.shape, obs_dict_normalized))
         with timer.section("model_act"):
           with torch.no_grad():
             dist = self.policy(obs_dict_normalized[self.policy_key])
@@ -300,8 +303,240 @@ class Runner:
       )
       start = time.time()
 
+  def reccurent_mini_batch_generator(self, last_value_obs):
+      import pprint
+      policy_obs = self.buffer[self.policy_key]
+      value_obs = self.buffer[self.value_key]
+      print('POLICY OBS B4')
+      pprint.pprint(pytree.tree_map(lambda x: x.shape, policy_obs))
+      print('DONES')
+      pprint.pprint(self.buffer["dones"].shape)
+      policy_obs_split = pytree.tree_map(
+        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
+        policy_obs,
+      )
+      print('POLICY OBS SPLIT')
+      pprint.pprint(pytree.tree_map(lambda x: x.shape, policy_obs_split))
+      policy_obs = pytree.tree_map(
+        lambda x: x[0].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
+      )
+      traj_masks = pytree.tree_map(
+        lambda x: x[1].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
+      )
+      traj_masks = list(traj_masks.values())[0].detach()
+      print('ALL POLICY OBS')
+      pprint.pprint(pytree.tree_map(lambda x: x.shape, policy_obs))
+      print('ALL TRAJ MASKS')
+      pprint.pprint(pytree.tree_map(lambda x: x.shape, traj_masks))
+      last_was_done = torch.zeros_like(self.buffer["dones"], dtype=torch.bool)
+      last_was_done[1:] = self.buffer["dones"][:-1]
+      last_was_done[0] = True
+      hid_a = [
+        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
+        for saved_hidden_states in self.buffer["policy_hidden_states"]
+      ]
+      value_obs_split = pytree.tree_map(
+        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
+        value_obs,
+      )
+      value_obs = pytree.tree_map(
+        lambda x: x[0],
+        value_obs_split,
+        is_leaf=lambda x: isinstance(x, tuple),
+      )
+      hid_c = [
+        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
+        for saved_hidden_states in self.buffer["value_hidden_states"]
+      ]
+      normalized_obs = self.normalize_obs(
+        {self.policy_key: policy_obs, self.value_key: value_obs}
+      )
+      policy_obs = normalized_obs[self.policy_key]
+      value_obs = normalized_obs[self.value_key]
+      with torch.no_grad():
+        last_value = self.value(last_value_obs, update_state=False).pred()
+
+      mini_batch_size = self.env.num_envs // self.cfg["algorithm"]["num_mini_batches"]
+      for ep in range(self.cfg["algorithm"]["num_learning_epochs"]):
+          first_traj = 0
+          for i in range(self.cfg["algorithm"]["num_mini_batches"]):
+              start = i * mini_batch_size
+              stop = (i + 1) * mini_batch_size
+              last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
+              print(start, stop, first_traj, last_traj)
+
+              masks_batch = traj_masks[:, first_traj:last_traj]
+              policy_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs)
+              value_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], value_obs)
+              hid_a_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_a)
+              hid_c_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_c)
+          
+
+              dones_batch = self.buffer["dones"][:, start:stop]
+              time_outs_batch = self.buffer["time_outs"][:, start:stop]
+              rewards_batch = self.buffer["rewards"][:, start:stop]
+              actions_batch = self.buffer["actions"][:, start:stop]
+              last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
+              old_values_batch = self.buffer["values"][:, start:stop]
+
+              # print('actions')
+              # print(self.buffer["actions"].shape)
+              # print(actions_batch.shape)
+
+              with torch.no_grad():
+                # import pprint
+                # print('policy_obs_batch')
+                # pprint.pprint(pytree.tree_map(lambda x: x.shape, policy_obs_batch))
+                # print('masks_batch')
+                # pprint.pprint(masks_batch.shape)
+                # print('hid_a_batch')
+                # pprint.pprint(pytree.tree_map(lambda x: x.shape, hid_a_batch))
+
+                old_dist_batch = self.policy(
+                  policy_obs_batch, masks=masks_batch, hidden_states=hid_a_batch
+                )
+                old_actions_log_prob_batch = old_dist_batch.logp(actions_batch).sum(
+                  dim=-1
+                )
+
+              yield {
+                "policy_obs": policy_obs_batch,
+                "value_obs": value_obs_batch,
+                "actions": actions_batch,
+                "old_actions_log_prob": old_actions_log_prob_batch,
+                "last_value": last_value_batch,
+                "masks": masks_batch,
+                "hid_a": hid_a_batch,
+                "hid_c": hid_c_batch,
+                "dones": dones_batch,
+                "time_outs": time_outs_batch,
+                "rewards": rewards_batch,
+                "old_values": old_values_batch,
+                "old_dist": old_dist_batch,
+              }
+              
+              first_traj = last_traj
+
   @timer.section("learn")
   def _learn(self, last_privileged_obs):
+      import pprint
+      pprint.pprint(pytree.tree_map(lambda x: x.shape, self.buffer.tensor_dict))
+      learn_step_agg = agg.Agg()
+      for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs)):
+        values = self.value(
+          batch["value_obs"], masks=batch["masks"], hidden_states=batch["hid_c"]
+        )
+        with torch.no_grad():
+          rewards = batch["rewards"].clone()
+          rewards[batch["time_outs"]] = values.pred().squeeze(-1)[batch["time_outs"]]
+          advantages = discount_values(
+            rewards,
+            batch["dones"] | batch["time_outs"],
+            values.pred().squeeze(-1),
+            batch["last_value"].squeeze(-1),
+            self.cfg["algorithm"]["gamma"],
+            self.cfg["algorithm"]["lam"],
+          )
+          returns = values.pred().squeeze(-1) + advantages
+          if self.cfg["algorithm"]["normalize_advantage_per_minibatch"]:
+            advantage_stats = (advantages.mean(), advantages.std())
+          elif n == 0:
+            advantage_stats = (advantages.mean(), advantages.std())
+
+          advantages = (advantages - advantage_stats[0]) / (advantage_stats[1] + 1e-8)
+
+        if self.cfg["algorithm"]["use_clipped_value_loss"]:
+          value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
+              -self.cfg["algorithm"]["clip_param"], self.cfg["algorithm"]["clip_param"]
+          )
+          value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
+          value_losses_clipped = (value_clipped - returns.unsqueeze(-1)).pow(2)
+          value_loss = torch.max(value_losses, value_losses_clipped).mean()
+        else:
+          value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
+
+        dist = self.policy(batch["policy_obs"], masks=batch["masks"], hidden_states=batch["hid_a"])
+        actions_log_prob = dist.logp(batch["actions"]).sum(dim=-1)
+        actor_loss = surrogate_loss(
+          batch["old_actions_log_prob"], actions_log_prob, advantages,
+          e_clip=self.cfg["algorithm"]["clip_param"]
+        )
+
+        bound_loss = (
+          torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
+          + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
+        )
+
+        entropy = dist.entropy().sum(dim=-1)
+
+        loss = (
+          self.cfg["algorithm"]["value_loss_coef"] * value_loss
+          + actor_loss
+          + self.cfg["algorithm"]["bound_coef"] * bound_loss
+          + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
+        )
+        if self.cfg["algorithm"]["symmetry"]:
+          policy_obs_sym = {}
+          for key, value in batch["policy_obs"].items():
+            assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
+            policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
+          policy_obs_sym_normalized = self.normalize_obs({self.policy_key: policy_obs_sym})[self.policy_key]
+
+          act_with_sym_obs = self.policy(policy_obs_sym_normalized, masks=batch["masks"], hidden_states=batch["hid_a"]).pred()
+          act_sym = self.symmetry_groups["actions"]["actions"](self.env, dist.pred())
+          mse_loss = torch.nn.MSELoss()
+          symmetry_loss = mse_loss(act_with_sym_obs, act_sym.detach())
+          if self.cfg["algorithm"]["symmetry_coef"] <= 0.0:
+            symmetry_loss = symmetry_loss.detach()
+          learn_step_agg.add({'symmetry_loss': symmetry_loss.item()})
+          loss += self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
+
+        self.policy_optimizer.zero_grad()
+        self.value_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(list(self.policy.parameters()) + list(self.value.parameters()), 1.0)
+        self.policy_optimizer.step()
+        self.value_optimizer.step()
+
+        kl = torch.sum(dist.kl(batch["old_dist"]), axis=-1)
+        kl_mean = torch.mean(kl)
+        if "desired_kl" in self.cfg["policy"]:
+          if kl_mean > self.cfg["policy"]["desired_kl"] * 2.0:
+            self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
+          elif kl_mean < self.cfg["policy"]["desired_kl"] / 2.0 and kl_mean > 0.0:
+            self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
+          for param_group in self.policy_optimizer.param_groups:
+            param_group["lr"] = self.policy_learning_rate
+
+        policy_stats = {}
+        for k, v in self.policy.stats().items():
+          policy_stats[f'policy/{k}_mean'] = v.mean()
+          policy_stats[f'policy/{k}_std'] = v.std()
+          policy_stats[f'policy/{k}_min'] = v.min()
+          policy_stats[f'policy/{k}_max'] = v.max()
+
+        learn_step_agg.add({
+          "value_loss": value_loss.item(),
+          "actor_loss": actor_loss.item(),
+          "bound_loss": bound_loss.item(),
+          "entropy": entropy.mean().item(),
+          **policy_stats
+        })
+
+      # Update the observation normalizersesolicy_obs)
+      self.obs_normalizers[self.policy_key].update(self.buffer[self.policy_key])
+      self.obs_normalizers[self.value_key].update(self.buffer[self.value_key])
+
+      return {
+          **learn_step_agg.result(),
+          "kl_mean": kl_mean.item(),
+          "policy_lr": self.policy_learning_rate,
+          "value_lr": self.value_learning_rate,
+      }
+
+
+  @timer.section("learn")
+  def _learn_old(self, last_privileged_obs):
       policy_obs = self.buffer[self.policy_key]
       value_obs = self.buffer[self.value_key]
       traj_masks, hid_a, hid_c = None, None, None

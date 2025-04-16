@@ -374,7 +374,8 @@ algorithm:
   entropy_coef: -0.01
   symmetry: True
   symmetry_coef: 3.0
-  num_learning_epochs: 20
+  num_learning_epochs: 5
+  num_mini_batches: 4
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
