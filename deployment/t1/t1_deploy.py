@@ -21,7 +21,7 @@ from utils.rotate import rotate_vector_inverse_rpy
 from utils.timer import TimerConfig, Timer
 from utils.policy import Policy
 
-from legged_gym import LEGGED_GYM_ROOT_DIR
+from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
 import pathlib
 
@@ -40,9 +40,9 @@ class Controller:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
 
         # Load from file
-        log_root = pathlib.Path(os.path.join(LEGGED_GYM_ROOT_DIR, 'logs'))
+        log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
         load_run_path = None
-        parsed, other = flags.Flags(load_run='', checkpoint=-1).parse_known(argv)
+        parsed, other = flags.Flags(load_run='', checkpoint=10000).parse_known(argv)
         if parsed.load_run != '':
             load_run_path = log_root / parsed.load_run
         else:
@@ -64,8 +64,8 @@ class Controller:
         self.cfg = cfg
 
         # Initialize components
-        self.remoteControlService = RemoteControlService()
-        self.policy = Policy(cfg=self.cfg)
+        self.remoteControlService = RemoteControlService(self.onboard_cfg["commands"])
+        self.policy = Policy(cfg=self.cfg, onboard_cfg=self.onboard_cfg)
 
         self._init_timer()
         self._init_low_state_values()
@@ -144,7 +144,7 @@ class Controller:
                 break
             time.sleep(0.1)
         start_time = time.perf_counter()
-        create_prepare_cmd(self.low_cmd, self.cfg)
+        create_prepare_cmd(self.low_cmd, self.onboard_cfg)
         for i in range(B1JointCnt):
             self.dof_target[i] = self.low_cmd.motor_cmd[i].q
             self.filtered_dof_target[i] = self.low_cmd.motor_cmd[i].q
@@ -161,7 +161,7 @@ class Controller:
             if self.remoteControlService.start_rl_gait():
                 break
             time.sleep(0.1)
-        create_first_frame_rl_cmd(self.low_cmd, self.cfg)
+        create_first_frame_rl_cmd(self.low_cmd, self.onboard_cfg)
         self._send_cmd(self.low_cmd)
         self.next_inference_time = self.timer.get_time()
         self.next_publish_time = self.timer.get_time()
@@ -186,9 +186,9 @@ class Controller:
             dof_vel=self.dof_vel,
             base_ang_vel=self.base_ang_vel,
             projected_gravity=self.projected_gravity,
-            vx=self.remoteControlService.get_vx_cmd(),
-            vy=self.remoteControlService.get_vy_cmd(),
-            vyaw=self.remoteControlService.get_vyaw_cmd(),
+            vx=np.clip(self.remoteControlService.get_vx_cmd(), self.onboard_cfg["commands"]["ranges"]["lin_vel_x"][0], self.onboard_cfg["commands"]["ranges"]["lin_vel_x"][1]),
+            vy=np.clip(self.remoteControlService.get_vy_cmd(), self.onboard_cfg["commands"]["ranges"]["lin_vel_y"][0], self.onboard_cfg["commands"]["ranges"]["lin_vel_y"][1]),
+            vyaw=np.clip(self.remoteControlService.get_vyaw_cmd(), self.onboard_cfg["commands"]["ranges"]["ang_vel_yaw"][0], self.onboard_cfg["commands"]["ranges"]["ang_vel_yaw"][1]),
         )
 
         inference_time = time.perf_counter()
@@ -210,12 +210,12 @@ class Controller:
                 self.low_cmd.motor_cmd[i].q = self.filtered_dof_target[i]
 
             # Use series-parallel conversion for torque to avoid non-linearity
-            for i in self.cfg["mech"]["parallel_mech_indexes"]:
+            for i in self.onboard_cfg["mech"]["parallel_mech_indexes"]:
                 self.low_cmd.motor_cmd[i].q = self.dof_pos_latest[i]
                 self.low_cmd.motor_cmd[i].tau = np.clip(
-                    (self.filtered_dof_target[i] - self.dof_pos_latest[i]) * self.cfg["common"]["stiffness"][i],
-                    -self.cfg["common"]["torque_limit"][i],
-                    self.cfg["common"]["torque_limit"][i],
+                    (self.filtered_dof_target[i] - self.dof_pos_latest[i]) * self.onboard_cfg["common"]["stiffness"][i],
+                    -self.onboard_cfg["common"]["torque_limit"][i],
+                    self.onboard_cfg["common"]["torque_limit"][i],
                 )
                 self.low_cmd.motor_cmd[i].kp = 0.0
 
@@ -246,7 +246,7 @@ def main(argv=None):
     signal.signal(signal.SIGINT, signal_handler)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/T1.yaml", type=str, help="Name of the configuration file.")
+    parser.add_argument("--config", default="T1.yaml", type=str, help="Name of the configuration file.")
     parser.add_argument("--net", type=str, default="127.0.0.1", help="Network interface for SDK communication.")
     args = parser.parse_args()
     cfg_file = os.path.join("configs", args.config)

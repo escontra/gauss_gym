@@ -32,7 +32,8 @@ class RemoteControlService:
 
     def __init__(self, config: Optional[JoystickConfig] = None):
         """Initialize remote control service with optional configuration."""
-        self.config = config or JoystickConfig()
+        self.config = JoystickConfig()
+        self.cmd_cfg = config
         self._lock = threading.Lock()
         self._running = True
         try:
@@ -81,32 +82,32 @@ class RemoteControlService:
         if key == "w":
             old_x = self.vx
             self.vx += 0.1
-            self.vx = min(self.vx, self.config.max_vx)
+            self.vx = min(self.vx, self.cmd_cfg["ranges"]["lin_vel_x"][1])
             print(f"VX: {old_x:.1f} => {self.vx:.1f}")
         if key == "s":
             old_x = self.vx
             self.vx -= 0.1
-            self.vx = max(self.vx, -self.config.max_vx)
+            self.vx = max(self.vx, -self.cmd_cfg["ranges"]["lin_vel_x"][0])
             print(f"VX: {old_x:.1f} => {self.vx:.1f}")
         if key == "a":
             old_y = self.vy
             self.vy += 0.1
-            self.vy = min(self.vy, self.config.max_vy)
+            self.vy = min(self.vy, self.cmd_cfg["ranges"]["lin_vel_y"][1])
             print(f"VY: {old_y:.1f} => {self.vy:.1f}")
         if key == "d":
             old_y = self.vy
             self.vy -= 0.1
-            self.vy = max(self.vy, -self.config.max_vy)
+            self.vy = max(self.vy, -self.cmd_cfg["ranges"]["lin_vel_y"][0])
             print(f"VY: {old_y:.1f} => {self.vy:.1f}")
         if key == "q":
             old_yaw = self.vyaw
             self.vyaw += 0.1
-            self.vyaw = min(self.vyaw, self.config.max_vyaw)
+            self.vyaw = min(self.vyaw, self.cmd_cfg["ranges"]["ang_vel_yaw"][1])
             print(f"VYaw: {old_yaw:.1f} => {self.vyaw:.1f}")
         if key == "e":
             old_yaw = self.vyaw
             self.vyaw -= 0.1
-            self.vyaw = max(self.vyaw, -self.config.max_vyaw)
+            self.vyaw = max(self.vyaw, -self.cmd_cfg["ranges"]["ang_vel_yaw"][0])
             print(f"VYaw: {old_yaw:.1f} => {self.vyaw:.1f}")
         if key == "space":
             self.vx = 0
@@ -188,13 +189,13 @@ class RemoteControlService:
         try:
             """Handle axis events."""
             if code == self.config.x_axis:
-                self.vx = self._scale(value, self.config.max_vx, self.config.control_threshold, code)
+                self.vx = self._scale(value, self.cmd_cfg["ranges"]["lin_vel_x"][1], self.cmd_cfg["control_threshold"], code)
                 # print("value x:", self.vx)
             elif code == self.config.y_axis:
-                self.vy = self._scale(value, self.config.max_vy, self.config.control_threshold, code)
+                self.vy = self._scale(value, self.cmd_cfg["ranges"]["lin_vel_y"][1], self.cmd_cfg["control_threshold"], code)
                 # print("value y:", self.vy)
             elif code == self.config.yaw_axis:
-                self.vyaw = self._scale(value, self.config.max_vyaw, self.config.control_threshold, code)
+                self.vyaw = self._scale(value, self.cmd_cfg["ranges"]["ang_vel_yaw"][1], self.cmd_cfg["control_threshold"], code)
                 # print("value yaw:", self.vyaw)
         except Exception:
             raise

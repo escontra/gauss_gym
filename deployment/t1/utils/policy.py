@@ -3,7 +3,7 @@ import torch
 
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import helpers
-from legged_gym.teacher import observation_groups as observation_groups_teacher
+from legged_gym.utils import observation_groups as observation_groups_teacher
 
 def quat_rotate_inverse(q, v):
     q_w = q[-1]
@@ -37,9 +37,9 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
                 obs = torch.cat((
                     (torch.cos(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
                     (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                ), dim = -1)
+                ), dim = -1).to(torch.float32)
             elif observation.name == "actions":
-                obs = torch.tensor(actions)
+                obs = torch.tensor(actions, dtype=torch.float32)
             else:
                 raise ValueError(f"Observation {observation.name} not found")
             obs = obs.unsqueeze(0)
@@ -48,24 +48,23 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
             if observation.scale is not None:
                 scale = observation.scale
                 if isinstance(scale, list):
-                    scale = torch.tensor(scale, device=obs.device)[None]
+                    scale = torch.tensor(scale, device=obs.device, dtype=torch.float32)[None]
                 obs = scale * obs
             obs_dict[group.name][observation.name] = obs
 
     return obs_dict
 
 class Policy:
-    def __init__(self, cfg):
-
+    def __init__(self, cfg, onboard_cfg):
+        self.cfg = cfg
+        self.onboard_cfg = onboard_cfg
 
         try:
-            # TODO: can we get rid of the env?
-            task_class = task_registry.get_task_class(cfg["task"])
             helpers.set_seed(cfg["seed"])
-            env = task_class(cfg=cfg)
             cfg["runner"]["resume"] = True
             cfg["runner"]["class_name"] = "MuJoCoRunner"
-            self.runner = task_registry.make_alg_runner(env, cfg=cfg)
+            cfg["rl_device"] = "cpu"
+            self.runner = task_registry.make_alg_runner(None, cfg=cfg)
             self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
         except Exception as e:
             print(f"Failed to start runner: {e}")
@@ -76,19 +75,19 @@ class Policy:
         return self.policy_interval
 
     def _init_inference_variables(self):
-        self.default_dof_pos = np.array(self.cfg["common"]["default_qpos"], dtype=np.float32)
-        self.stiffness = np.array(self.cfg["common"]["stiffness"], dtype=np.float32)
-        self.damping = np.array(self.cfg["common"]["damping"], dtype=np.float32)
+        self.default_dof_pos = np.array(self.onboard_cfg["common"]["default_qpos"], dtype=np.float32)
+        self.stiffness = np.array(self.onboard_cfg["common"]["stiffness"], dtype=np.float32)
+        self.damping = np.array(self.onboard_cfg["common"]["damping"], dtype=np.float32)
 
         self.commands = np.zeros(3, dtype=np.float32)
         self.smoothed_commands = np.zeros(3, dtype=np.float32)
 
-        self.gait_frequency = self.cfg["policy"]["gait_frequency"]
+        self.gait_frequency = np.average(self.onboard_cfg["commands"]["gait_frequency"])
         self.gait_process = 0.0
         self.dof_targets = np.copy(self.default_dof_pos)
-        self.obs = np.zeros(self.cfg["policy"]["num_observations"], dtype=np.float32)
-        self.actions = np.zeros(self.cfg["policy"]["num_actions"], dtype=np.float32)
-        self.policy_interval = self.cfg["common"]["dt"] * self.cfg["policy"]["control"]["decimation"]
+        self.obs = None
+        self.actions = np.zeros(12, dtype=np.float32) # TODO: get from cfg
+        self.policy_interval = self.onboard_cfg["common"]["dt"] * self.cfg["control"]["decimation"]
 
     def inference(self, time_now, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw):
         self.gait_process = np.fmod(time_now * self.gait_frequency, 1.0)
@@ -101,7 +100,7 @@ class Policy:
         if np.linalg.norm(self.smoothed_commands) < 1e-5:
             self.gait_frequency = 0.0
         else:
-            self.gait_frequency = self.cfg["policy"]["gait_frequency"]
+            self.gait_frequency = np.average(self.onboard_cfg["commands"]["gait_frequency"])
 
         # self.obs[0:3] = projected_gravity * self.cfg["policy"]["normalization"]["gravity"]
         # self.obs[3:6] = base_ang_vel * self.cfg["policy"]["normalization"]["ang_vel"]
@@ -121,12 +120,14 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
+        # for key in self.obs['student_observations']:
+            # print(key, self.obs['student_observations'][key].dtype)
 
         dist = self.runner.act(self.obs['student_observations'])
         self.actions[:] = dist.detach().cpu().numpy()
         self.actions[:] = np.clip(self.actions, -self.cfg["normalization"]["clip_actions"], self.cfg["normalization"]["clip_actions"])
         
         self.dof_targets[:] = self.default_dof_pos
-        # self.dof_targets[11:] += self.cfg["policy"]["control"]["action_scale"] * self.actions
+        self.dof_targets[11:] += self.cfg["control"]["action_scale"] * self.actions
 
         return self.dof_targets

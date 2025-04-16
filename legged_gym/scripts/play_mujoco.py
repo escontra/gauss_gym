@@ -53,6 +53,8 @@ def compute_observation(env_cfg, obs_groups, mj_data, command, gait_frequency, g
             elif observation.name == "actions":
                 obs = torch.tensor(actions)
                 obs = apply_map(obs, mj_ig_map)
+            else:
+                raise ValueError(f"Observation {observation.name} not found")
             obs = obs.unsqueeze(0)
             if observation.clip:
                 obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
@@ -89,7 +91,6 @@ def main(argv=None):
 
     print(f'\tTask name: {cfg["task"]}')
 
-    # TODO: can we get rid of the env?
     cfg = flags.Flags(cfg).parse(other)
     print('Config:')
     print(cfg)
