@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from typing import Any, Dict, List
+from typing import Any, Dict
 import random
 import time
 import torch
@@ -10,7 +10,7 @@ import pathlib
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models, normalizers
-from legged_gym.utils import agg, symmetry_groups, timer, when, math
+from legged_gym.utils import agg, symmetry_groups, timer, when
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -45,7 +45,6 @@ def surrogate_loss(
 
 class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
-    self.test = True
     self.env = env
     self.device = device
     self.cfg = cfg
@@ -722,43 +721,7 @@ class Runner:
     obs_dict = self.to_device(self.env.reset())
     obs_dict_normalized = self.normalize_obs(obs_dict)
 
-    memory_module = self.policy.memory
-    actor_layers = self.policy.model[:-1]
-    actor_mean_net = self.policy.model[-1].mean_net
-    mlp_keys = self.policy.mlp_keys
-    cnn_keys = self.policy.cnn_keys
-    cnn_model = self.policy.cnn
-
-
-    @torch.jit.script
-    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
-        if symlog_inputs:
-          features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
-        else:
-          features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
-        if cnn_keys:
-          cnn_features = []
-          for k in cnn_keys:
-            cnn_obs = observations[k]
-            if cnn_obs.shape[-1] in [1, 3]:
-              cnn_obs = permute_cnn_obs(cnn_obs)
-            if cnn_obs.dtype == torch.uint8:
-              cnn_obs = cnn_obs.float() / 255.0
-
-            orig_batch_size = cnn_obs.shape[0]
-            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
-            cnn_feat = cnn_model(cnn_obs)
-            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
-            cnn_features.append(cnn_feat)
-
-          cnn_features = torch.cat(cnn_features, dim=-1)
-          features = torch.cat([features, cnn_features], dim=-1)
-        # features = models.process_obs(observations, mlp_keys, cnn_keys, symlog_inputs, cnn_model)
-        input_a = memory_module(features, None, None).squeeze(0)
-        latent = actor_layers(input_a)
-        mean = actor_mean_net(latent)
-        return mean
-
+    policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
     # Alternatively can use torch.compile. Not sure if this is available on all machines.
     # opt_policy = torch.compile(self.policy)
 
@@ -766,7 +729,7 @@ class Runner:
     while True:
       with torch.no_grad():
         start = time.time()
-        act = policy(obs_dict_normalized[self.policy_key], mlp_keys, cnn_keys, symlog_inputs=self.cfg["policy"]["params"]["symlog_inputs"])
+        act = policy(obs_dict_normalized[self.policy_key])
         # act = opt_policy(obs_dict_normalized[self.policy_key]).pred()
         inference_time += time.time() - start
         obs_dict, _, _, _ = self.env.step(act)
@@ -783,12 +746,3 @@ class Runner:
   def interrupt_handler(self, signal, frame):
     print("\nInterrupt received, waiting for video to finish...")
     self.interrupt = True
-
-
-def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
-    if x.dim() == 5:
-        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
-    elif x.dim() == 4:
-        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
-    else:
-        return x  # or raise an error if that's not expected

@@ -1,7 +1,8 @@
+import functools
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Dict, Any, Optional, Union, Tuple
+from typing import Dict, Any, Optional, Union, Tuple, List
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.utils import math
@@ -161,7 +162,7 @@ class RecurrentModel(torch.nn.Module):
       for k in self.cnn_keys:
         cnn_obs = obs[k]
         if cnn_obs.shape[-1] in [1, 3]:
-          cnn_obs = cnn_obs.permute(*range(len(cnn_obs.shape)-3), -1, -3, -2)
+          cnn_obs = permute_cnn_obs(cnn_obs)
         if cnn_obs.dtype == torch.uint8:
           cnn_obs = cnn_obs.float() / 255.0
 
@@ -262,3 +263,55 @@ class Memory(torch.nn.Module):
         else: # GRU
             init_h = self.initial_hidden_state.detach().clone().to(self.hidden_states.device)
             self.hidden_states[..., dones, :] = init_h
+
+
+def get_policy_jitted(policy, cfg):
+    memory_module = policy.memory
+    actor_layers = policy.model[:-1]
+    actor_mean_net = policy.model[-1].mean_net
+    mlp_keys = policy.mlp_keys
+    cnn_keys = policy.cnn_keys
+    cnn_model = policy.cnn
+
+
+    @torch.jit.script
+    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+        if symlog_inputs:
+          features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
+        else:
+          features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+        if cnn_keys:
+          cnn_features = []
+          for k in cnn_keys:
+            cnn_obs = observations[k]
+            if cnn_obs.shape[-1] in [1, 3]:
+              cnn_obs = permute_cnn_obs(cnn_obs)
+            if cnn_obs.dtype == torch.uint8:
+              cnn_obs = cnn_obs.float() / 255.0
+
+            orig_batch_size = cnn_obs.shape[0]
+            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
+            cnn_feat = cnn_model(cnn_obs)
+            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
+            cnn_features.append(cnn_feat)
+
+          cnn_features = torch.cat(cnn_features, dim=-1)
+          features = torch.cat([features, cnn_features], dim=-1)
+        # features = models.process_obs(observations, mlp_keys, cnn_keys, symlog_inputs, cnn_model)
+        input_a = memory_module(features, None, None).squeeze(0)
+        latent = actor_layers(input_a)
+        mean = actor_mean_net(latent)
+        return mean
+
+    return functools.partial(policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys, symlog_inputs=cfg["symlog_inputs"])
+
+
+def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() == 5:
+        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
+    elif x.dim() == 4:
+        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+    elif x.dim() == 3:
+        return x.permute(2, 0, 1)  # [H, W, C] -> [H, W]
+    else:
+        raise ValueError(f"Unexpected shape: {x.shape}")
