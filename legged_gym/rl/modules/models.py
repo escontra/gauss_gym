@@ -25,15 +25,12 @@ def split_and_pad_trajectories(tensor, dones):
             
     Assumes that the inputy has the following dimension order: [time, number of envs, aditional dimensions]
     """
-    print('IN SPLIT AND PAD TRAJECTORIES')
     dones = dones.clone()
     dones[-1] = 1
     # Permute the buffers to have order (num_envs, num_transitions_per_env, ...), for correct reshaping
     flat_dones = dones.transpose(1, 0).reshape(-1, 1)
-    print(dones.transpose(1, 0).reshape(-1, 1).shape, dones.transpose(1, 0).reshape(-1,).shape) 
 
     # Get length of trajectory by counting the number of successive not done elements
-    
     done_indices = torch.cat((flat_dones.new_tensor([-1], dtype=torch.int64), flat_dones.nonzero()[:, 0]))
     trajectory_lengths = done_indices[1:] - done_indices[:-1]
     trajectory_lengths_list = trajectory_lengths.tolist()
@@ -43,7 +40,6 @@ def split_and_pad_trajectories(tensor, dones):
 
 
     trajectory_masks = trajectory_lengths > torch.arange(0, tensor.shape[0], device=tensor.device).unsqueeze(1)
-    print('PADDED TRAJ', padded_trajectories.shape, 'TRAJ MASKS', trajectory_masks.shape)
     return padded_trajectories, trajectory_masks
 
 
@@ -220,16 +216,12 @@ class Memory(torch.nn.Module):
         assert hidden_states is not None, "Hidden states not passed to memory module during policy update"
         assert masks is not None, "Masks not passed to memory module during policy update"
         out, _ = self.rnn(input, hidden_states)
-        print('In _process_batch_mode')
-        print(out.shape, masks.shape)
         out = unpad_trajectories(out, masks)
         return out
 
     def forward(self, input: torch.Tensor, masks: Optional[torch.Tensor]=None, hidden_states: Optional[torch.Tensor]=None, upd_state: bool=True) -> torch.Tensor:
         batch_mode = masks is not None
         if batch_mode:  # Batch (update) mode.
-            import torch.utils._pytree as pytree
-            print('processed_obs', input.shape, 'masks', masks.shape, 'hidden_states', pytree.tree_map(lambda x: x.shape, hidden_states))
             return self._process_batch_mode(input, masks, hidden_states)
         else:  # Inference mode
             if self.hidden_states is None:

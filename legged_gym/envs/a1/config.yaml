@@ -384,6 +384,7 @@ algorithm:
 
 runner:
   num_steps_per_env: 24
+  compile: True
   class_name: "Runner"
   use_wandb: True
   description: ""
