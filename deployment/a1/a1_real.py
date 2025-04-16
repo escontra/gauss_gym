@@ -213,7 +213,7 @@ class UnitreeA1Real:
         self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"][self.cfg["policy"]["obs_key"]])
+        self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
         # self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
 
 
