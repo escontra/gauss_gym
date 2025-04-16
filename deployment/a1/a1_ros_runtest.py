@@ -7,6 +7,9 @@ import torch
 from collections import OrderedDict
 from functools import partial
 from typing import Tuple
+import pathlib
+import types
+import dataclasses
 
 import rospy
 from std_msgs.msg import Float32MultiArray
@@ -19,6 +22,9 @@ import glob
 from typing import Dict, List
 from deployment.a1.a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
+import legged_gym
+from legged_gym.utils import flags, config
+from legged_gym.rl import mujoco_runner
 
 @torch.no_grad()
 def handle_forward_depth(ros_msg, model, publisher, output_resolution, device):
@@ -114,7 +120,11 @@ def load_walk_policy(env, model_dir):
     
     return policy, model
 
-def standup_procedure(env, ros_rate, angle_tolerance= 0.1,
+def standup_procedure(
+        env,
+        ros_rate,
+        cfg,
+        angle_tolerance= 0.1,
         kp= None,
         kd= None,
         warmup_timesteps= 25,
@@ -201,40 +211,80 @@ def ignore_unknown(loader, tag_suffix, node):
     return None  # or raise an error, or log
 
 
-def main(args):
-    log_level = rospy.DEBUG if args.debug else rospy.INFO
-    rospy.init_node("a1_legged_gym_" + args.mode, log_level= log_level)
+def main(argv = None):
+    mode = "jetson"
+    debug = False
+    namespace = "/a112138"
+
+    log_level = rospy.DEBUG if debug else rospy.INFO
+    rospy.init_node("a1_legged_gym_" + mode, log_level= log_level)
+
+    log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, 'logs'))
+    load_run_path = None
+    parsed, other = flags.Flags({'runner': {'load_run': ''}}).parse_known(argv)
+
+    if parsed.runner.load_run != '':
+      load_run_path = log_root / parsed.runner.load_run
+    else:
+      load_run_path = sorted(
+        [item for item in log_root.iterdir() if item.is_dir()],
+        key=lambda path: path.stat().st_mtime,
+      )[-1]
+
+    print(f'Loading run from: {load_run_path}...')
+    cfg = config.Config.load(load_run_path / 'config.yaml')
+    cfg = cfg.update({'runner.load_run': load_run_path.name})
+    cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'headless': False})
+    cfg = cfg.update({'env.num_envs': 50})
+    cfg = cfg.update({'domain_rand.apply_domain_rand': False})
+    cfg = cfg.update({'curriculum.apply_curriculum': False})
+    cfg = cfg.update({f'observations.{cfg.policy.obs_key}.add_noise': False})
+    cfg = cfg.update({f'observations.{cfg.policy.obs_key}.add_latency': False})
+
+    cfg = flags.Flags(cfg).parse(other)
+    print(cfg)
+    cfg = types.MappingProxyType(dict(cfg))
+
+    if cfg["logdir"] == "default":
+        log_root = pathlib.Path(legged_gym.GAUSS_GYM_ROOT_DIR) / 'logs'
+    elif cfg["logdir"] != "":
+        log_root = pathlib.Path(cfg["logdir"])
+    else:
+        raise ValueError("Must specify logdir as 'default' or a path.")
+
+    @dataclasses.dataclass
+    class DummyEnv:
+        num_actions: int = 12
+
+    runner = mujoco_runner.MuJoCoRunner(DummyEnv(), cfg, device=cfg["rl_device"])
+
+    if cfg["runner"]["resume"]:
+        assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
+        runner.load(log_root)
+
 
     """ Not finished this modification yet """
-    # if args.logdir is not None:
-    #     rospy.loginfo("Use logdir/config.json to initialize env proxy.")
-    #     with open(osp.join(args.logdir, "config.json"), "r") as f:
-    #         config_dict = json.load(f, object_pairs_hook= OrderedDict)
-    # else:
-    #     assert args.walkdir is not None, "You must provide at least a --logdir or --walkdir"
-    #     rospy.logwarn("You did not provide logdir, use walkdir/config.json for initializing env proxy.")
-    #     with open(osp.join(args.walkdir, "config.json"), "r") as f:
-    #         config_dict = json.load(f, object_pairs_hook= OrderedDict)
-    assert args.logdir is not None
-    # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
-    #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
-    print(f'READING FROM: {osp.join(args.logdir, "env_config.pkl")}')
-    with open(osp.join(args.logdir, "env_config_dict.pkl"), "rb") as f:
-        env_config = pickle.load(f)
-    with open(osp.join(args.logdir, "train_config_dict.pkl"), "rb") as f:
-        train_config = pickle.load(f)
-    with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
-        obs_group_sizes = pickle.load(f)
+    # assert args.logdir is not None
+    # # with open(osp.join(args.logdir, "env_config.json"), "r") as f:
+    # #     config_dict = json.load(f, object_pairs_hook= OrderedDict)
+    # print(f'READING FROM: {osp.join(args.logdir, "env_config.pkl")}')
+    # with open(osp.join(args.logdir, "env_config_dict.pkl"), "rb") as f:
+    #     env_config = pickle.load(f)
+    # with open(osp.join(args.logdir, "train_config_dict.pkl"), "rb") as f:
+    #     train_config = pickle.load(f)
+    # with open(osp.join(args.logdir, "obs_group_sizes.pkl"), "rb") as f:
+    #     obs_group_sizes = pickle.load(f)
     
-    duration = env_config["sim"]["dt"] * env_config["control"]["decimation"] # in sec
+    duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
     # env_config["control"]["stiffness"]["joint"] += 30.0 # kp
     # env_config["control"]["damping"]["joint"] += 0.5 # kp
 
-    model_device = torch.device("cpu") if args.mode == "upboard" else torch.device("cuda")
+    model_device = torch.device("cpu") if mode == "upboard" else torch.device("cuda")
 
     unitree_real_env = UnitreeA1Real(
-        robot_namespace= args.namespace,
-        cfg= env_config,
+        robot_namespace= namespace,
+        cfg= cfg,
         forward_depth_topic=None,
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
@@ -250,74 +300,77 @@ def main(args):
         #     ], dtype= torch.float32, device= model_device, requires_grad= False),
         # ),
     )
-    model = getattr(models, train_config["runner"]["policy_class_name"])(
-      12,
-      obs_group_sizes["student_observations"],
-      obs_group_sizes["teacher_observations"],
-      train_config["policy"]["init_noise_std"],
-      train_config["policy"]["mu_activation"],
-    ).to(model_device)
-    model_path = sorted(
-      glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),
-      key=os.path.getmtime,
-    )[-1]
-    print(f'Loading model from {model_path}')
-    model_dict = torch.load(
-      model_path, map_location=model_device,
-      # weights_only=True
-    )
-    model.load_state_dict(model_dict["model"], strict=True)
+    # model = getattr(models, train_config["runner"]["policy_class_name"])(
+    #   12,
+    #   obs_group_sizes["student_observations"],
+    #   obs_group_sizes["teacher_observations"],
+    #   train_config["policy"]["init_noise_std"],
+    #   train_config["policy"]["mu_activation"],
+    # ).to(model_device)
+    # model_path = sorted(
+    #   glob.glob(osp.join(args.logdir, "nn", "**/*.pth"), recursive=True),
+    #   key=os.path.getmtime,
+    # )[-1]
+    # print(f'Loading model from {model_path}')
+    # model_dict = torch.load(
+    #   model_path, map_location=model_device,
+    #   # weights_only=True
+    # )
+    # model.load_state_dict(model_dict["model"], strict=True)
 
-    # Jitted policy.
-    memory_module = model.memory_a
-    actor = model.actor
-    mlp_keys = model.mlp_keys_a
-    cnn_keys = model.cnn_keys_a
-    cnn_model = model.cnn_a
-    @torch.jit.script
-    def _policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
-        features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
-        if cnn_keys:
-          cnn_features = []
-          for k in cnn_keys:
-            cnn_obs = observations[k]
-            if cnn_obs.shape[-1] in [1, 3]:
-              cnn_obs = permute_cnn_obs(cnn_obs)
-            if cnn_obs.dtype == torch.uint8:
-              cnn_obs = cnn_obs.float() / 255.0
+    # # Jitted policy.
+    # memory_module = model.memory_a
+    # actor = model.actor
+    # mlp_keys = model.mlp_keys_a
+    # cnn_keys = model.cnn_keys_a
+    # cnn_model = model.cnn_a
+    # @torch.jit.script
+    # def _policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str]) -> torch.Tensor:
+    #     features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+    #     if cnn_keys:
+    #       cnn_features = []
+    #       for k in cnn_keys:
+    #         cnn_obs = observations[k]
+    #         if cnn_obs.shape[-1] in [1, 3]:
+    #           cnn_obs = permute_cnn_obs(cnn_obs)
+    #         if cnn_obs.dtype == torch.uint8:
+    #           cnn_obs = cnn_obs.float() / 255.0
 
-            orig_batch_size = cnn_obs.shape[0]
-            cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
-            cnn_feat = cnn_model(cnn_obs)
-            cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
-            cnn_features.append(cnn_feat)
+    #         orig_batch_size = cnn_obs.shape[0]
+    #         cnn_obs = cnn_obs.reshape(-1, cnn_obs.shape[-3], cnn_obs.shape[-2], cnn_obs.shape[-1])  # Shape: [M*N*L*O, C, H, W]
+    #         cnn_feat = cnn_model(cnn_obs)
+    #         cnn_feat = cnn_feat.reshape(orig_batch_size, cnn_feat.shape[-1])
+    #         cnn_features.append(cnn_feat)
 
-          cnn_features = torch.cat(cnn_features, dim=-1)
-          features = torch.cat([features, cnn_features], dim=-1)
-        input_a = memory_module(features, None, None)
-        actions = actor(input_a.squeeze(0))
-        return actions
+    #       cnn_features = torch.cat(cnn_features, dim=-1)
+    #       features = torch.cat([features, cnn_features], dim=-1)
+    #     input_a = memory_module(features, None, None)
+    #     actions = actor(input_a.squeeze(0))
+    #     return actions
 
-    import functools
-    policy = functools.partial(_policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys)
+    # import functools
+    # policy = functools.partial(_policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys)
 
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
     rate = rospy.Rate(1 / duration)
 
     with torch.no_grad():
-        standup_procedure(unitree_real_env, rate,
+        standup_procedure(
+            unitree_real_env,
+            rate,
+            cfg,
             angle_tolerance= 0.2,
             kp= 80,
             kd= 1.5,
             warmup_timesteps= 100,
-            policy=policy,
+            policy=runner.act,
             device= model_device,
         )
         while not rospy.is_shutdown():
             # inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            actions = policy(obs['student_observations'])
+            actions = runner.act(obs['student_observations'])
             # actions = torch.zeros((1, 12), device=model_device)
             # actions = torch.zeros_like(actions)
             # act_dist = model.act(obs["student_observations"])
@@ -511,30 +564,30 @@ if __name__ == "__main__":
     """ The script to run the A1 script in ROS.
     It's designed as a main function and not designed to be a scalable code.
     """
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--namespace",
-        type= str,
-        default= "/a112138",                    
-    )
-    parser.add_argument("--logdir",
-        type= str,
-        help= "The log directory of the trained model",
-        default= None,
-    )
-    parser.add_argument("--walkdir",
-        type= str,
-        help= "The log directory of the walking model, not for the skills.",
-        default= None,
-    )
-    parser.add_argument("--mode",
-        type= str,
-        help= "The mode to determine which computer to run on.",
-        choices= ["jetson", "upboard", "full"],                
-    )
-    parser.add_argument("--debug",
-        action= "store_true",
-    )
+    # import argparse
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--namespace",
+    #     type= str,
+    #     default= "/a112138",                    
+    # )
+    # parser.add_argument("--logdir",
+    #     type= str,
+    #     help= "The log directory of the trained model",
+    #     default= None,
+    # )
+    # parser.add_argument("--walkdir",
+    #     type= str,
+    #     help= "The log directory of the walking model, not for the skills.",
+    #     default= None,
+    # )
+    # parser.add_argument("--mode",
+    #     type= str,
+    #     help= "The mode to determine which computer to run on.",
+    #     choices= ["jetson", "upboard", "full"],                
+    # )
+    # parser.add_argument("--debug",
+    #     action= "store_true",
+    # )
 
-    args = parser.parse_args()
-    main(args)
+    # args = parser.parse_args()
+    main()
