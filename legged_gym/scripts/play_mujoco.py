@@ -7,6 +7,7 @@ import torch
 import pathlib
 import mujoco
 import mujoco.viewer
+import dataclasses
 
 import legged_gym
 from legged_gym.utils import flags, config, helpers, observation_groups, math
@@ -107,28 +108,31 @@ def main(argv=None):
     mujoco.mj_resetData(mj_model, mj_data)
 
     # Map from MuJoCo dof index to IsaacGym dof index. Used for re-ordering observations.
-    mj_ig_map = {}
     for i in range(mj_model.nu):
         mj_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
-        mj_ig_map[i] = deploy_cfg["deploy"]["dof_names"].index(mj_name)
-        print(mj_name, deploy_cfg["deploy"]["dof_names"][mj_ig_map[i]])
-    ig_mj_map = {v: k for k, v in mj_ig_map.items()}
-    print(mj_ig_map)
 
+    mj_ig_map = {}
     default_dof_pos_mj = np.zeros(mj_model.nu, dtype=np.float32)
     dof_stiffness_mj = np.zeros(mj_model.nu, dtype=np.float32)
     dof_damping_mj = np.zeros(mj_model.nu, dtype=np.float32)
+    print(f'{"MJ Index":<10}{"IG Index":<10}{"Name":<20}{"Default Pos":<15}{"Stiffness":<15}{"Damping":<15}')
+    print(f'{"-"*10:<10}{"-"*10:<10}{"-"*20:<20}{"-"*15:<15}{"-"*15:<15}{"-"*15:<15}')
     for i in range(mj_model.nu):
-        name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
-        default_dof_pos_mj[i] = cfg["init_state"]["default_joint_angles"][name]
+        mj_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)
+        ig_idx = deploy_cfg["deploy"]["dof_names"].index(mj_name)
+        mj_ig_map[i] = ig_idx
+        default_dof_pos_mj[i] = cfg["init_state"]["default_joint_angles"][mj_name]
         found_stiffness = False
         for cfg_name in cfg["control"]["stiffness"].keys():
-            if cfg_name in name:
+            if cfg_name in mj_name:
                 dof_stiffness_mj[i] = cfg["control"]["stiffness"][cfg_name]
                 dof_damping_mj[i] = cfg["control"]["damping"][cfg_name]
                 found_stiffness = True
         if not found_stiffness:
-            raise ValueError(f"PD gain of joint {name} were not defined")
+            raise ValueError(f"PD gain of joint {mj_name} were not defined")
+        print(f'{i:<10}{ig_idx:<10}{mj_name:<20}{default_dof_pos_mj[i]:<15.1f}{dof_stiffness_mj[i]:<15.1f}{dof_damping_mj[i]:<15.1f}')
+    ig_mj_map = {v: k for k, v in mj_ig_map.items()}
+
     mj_data.qpos = np.concatenate(
         [
             np.array(cfg["init_state"]["pos"], dtype=np.float32),
@@ -138,46 +142,15 @@ def main(argv=None):
     )
     mujoco.mj_forward(mj_model, mj_data)
 
-    # default_dof_pos = np.zeros(mj_model.nu, dtype=np.float32)
-    # dof_stiffness = np.zeros(mj_model.nu, dtype=np.float32)
-    # dof_damping = np.zeros(mj_model.nu, dtype=np.float32)
-    # for i in range(mj_model.nu):
-    #     found = False
-    #     for name in cfg["init_state"]["default_joint_angles"].keys():
-    #         if name in mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i):
-    #             default_dof_pos[i] = cfg["init_state"]["default_joint_angles"][name]
-    #             found = True
-    #     if not found:
-    #         raise ValueError(f"Default DoF pos for joint {mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)} were not defined")
-
-    #     found = False
-    #     for name in cfg["control"]["stiffness"].keys():
-    #         if name in mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i):
-    #             dof_stiffness[i] = cfg["control"]["stiffness"][name]
-    #             dof_damping[i] = cfg["control"]["damping"][name]
-    #             found = True
-    #     if not found:
-    #         raise ValueError(f"PD gain of joint {mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, i)} were not defined")
-    # mj_data.qpos = np.concatenate(
-    #     [
-    #         np.array(cfg["init_state"]["pos"], dtype=np.float32),
-    #         np.array(cfg["init_state"]["rot"][3:4] + cfg["init_state"]["rot"][0:3], dtype=np.float32),
-    #         default_dof_pos,
-    #     ]
-    # )
-    # mujoco.mj_forward(mj_model, mj_data)
-
-
-    import dataclasses
     @dataclasses.dataclass
     class DummyEnv:
         num_actions: int = mj_model.nu
     env = DummyEnv()
 
-    mujoco_runner = MuJoCoRunner(env, cfg, load_run_path, device=cfg["rl_device"])
+    mujoco_runner = MuJoCoRunner(env, cfg, device=cfg["rl_device"])
     mujoco_runner.load(log_root)
     obs_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
-    use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"]["student_observations"]["observations"]
+    use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"][cfg["policy"]["obs_key"]]["observations"]
 
     print("Starting MuJoCo viewer...")
     actions = np.zeros(env.num_actions, dtype=np.float32) # TODO: get from env
@@ -214,11 +187,12 @@ def main(argv=None):
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
             if it % cfg["control"]["decimation"] == 0:
                 obs = compute_observation(cfg, obs_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos_mj, actions, mj_ig_map)
-                dist = mujoco_runner.act(obs['student_observations'])
+                dist = mujoco_runner.act(obs[cfg["policy"]["obs_key"]])
                 actions[:] = dist.detach().cpu().numpy()
                 actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
+                actions[:] = actions * cfg["control"]["action_scale"]
                 actions[:] = apply_map(actions, ig_mj_map)
-                dof_targets[:] = default_dof_pos_mj + cfg["control"]["action_scale"] * actions
+                dof_targets[:] = default_dof_pos_mj + actions
             mj_data.ctrl = np.clip(
                 dof_stiffness_mj * (dof_targets - dof_pos) - dof_damping_mj * dof_vel,
                 mj_model.actuator_ctrlrange[:, 0],
