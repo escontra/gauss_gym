@@ -57,10 +57,10 @@ class Runner:
       self.value_key: self.env.obs_group_size_per_name(self.value_key),
     }
     self.obs_normalizers = {
-      self.policy_key: normalizers.ObservationNormalizer(
+      self.policy_key: normalizers.PyTreeNormalizer(
         self.obs_group_sizes[self.policy_key],
       ).to(self.device),
-      self.value_key: normalizers.ObservationNormalizer(
+      self.value_key: normalizers.PyTreeNormalizer(
         self.obs_group_sizes[self.value_key],
       ).to(self.device),
     }
@@ -194,7 +194,7 @@ class Runner:
       lambda normalizer, obs: normalizer.normalize(obs),
       {k: v for k, v in self.obs_normalizers.items() if k in obs_dict},
       obs_dict,
-      is_leaf=lambda x: isinstance(x, normalizers.ObservationNormalizer)
+      is_leaf=lambda x: isinstance(x, normalizers.PyTreeNormalizer)
     )
     return obs_dict_normalized
 
