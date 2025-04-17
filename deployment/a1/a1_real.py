@@ -150,8 +150,7 @@ class UnitreeA1Real:
             self.command_buf[0, 1] = 0.
         if self.command_buf[0, 2].norm() < self.ang_vel_deadband:
             self.command_buf[0, 2] = 0.
-        if had_event:
-          print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
+        rospy.loginfo_throttle(2, f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
 
     def start_ros(self):
         # initialze several buffers so that the system works even without message update.
