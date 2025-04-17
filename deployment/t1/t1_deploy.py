@@ -36,7 +36,7 @@ class Controller:
         self.logger = logging.getLogger(__name__)
 
         # Load config
-        with open(onboard_cfg_file, "r", encoding="utf-8") as f:
+        with open('configs/' + onboard_cfg_file, "r", encoding="utf-8") as f:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
         
         self.cfg = cfg
