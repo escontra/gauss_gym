@@ -215,6 +215,7 @@ class LeggedRobot(base_task.BaseTask):
         self.feet_contact[:] = self.sensors["foot_contact_sensor"].get_data()
 
         # Check if is first contact.
+        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
         contact_filt = torch.logical_or(self.feet_contact[:], self.last_contacts) 
         self.first_contact = (self.feet_air_time > 0.) * contact_filt
         self.last_contact = (self.feet_contact_time > 0.) * ~contact_filt
@@ -228,7 +229,6 @@ class LeggedRobot(base_task.BaseTask):
         self.check_termination()
         self.compute_reward()
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
 
         self.swing_peak *= ~contact_filt
         self.feet_air_time *= ~contact_filt
@@ -238,6 +238,8 @@ class LeggedRobot(base_task.BaseTask):
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_contacts[:] = self.feet_contact[:]
         self.last_torques[:] = self.torques[:]
+
+        self.reset_idx(env_ids)
 
         self.obs_dict = self.obs_manager.compute_obs(self)        
 
@@ -624,6 +626,7 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reset_buffers(self, env_ids):
         # reset buffers
+        self.last_root_vel[env_ids] = 0.
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
@@ -1187,7 +1190,6 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_feet_air_time(self):
         # Reward long steps
-        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
         max_air_time = self.cfg["rewards"]["feet_air_time_max_time"]
         max_air_time = max_air_time if max_air_time > 0 else 1e6
         time_diff = torch.clip(self.feet_air_time, max=max_air_time) - self.cfg["rewards"]["feet_air_time_min_time"]
@@ -1286,7 +1288,9 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_feet_clearance_clipped(self):
       height_diff = self.swing_peak - self.cfg["rewards"]["foot_clearance_height"]
       height_diff = torch.clip(height_diff * self.first_contact, max=0.)
-      return height_diff.sum(dim=-1)
+      reward = height_diff.sum(dim=-1)
+      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      return reward
 
     def _reward_feet_height(self):
       nonzero_command = ~self.get_small_command_mask()

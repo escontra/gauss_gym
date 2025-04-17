@@ -224,12 +224,12 @@ domain_rand:
   kick_interval_s: 5.0
   kick_lin_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
 
@@ -257,7 +257,7 @@ rewards:
   hip_height_target: 0.25 # 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.1
+  feet_air_time_min_time: 0.3
   feet_air_time_max_time: 0.4
   max_foot_height: 0.2
   foot_clearance_height: 0.05
@@ -274,8 +274,8 @@ rewards:
     action_rate: -0.01
     hip_height_l1: 1.0
     dof_pos_limits: -1.0
-    energy: -0.0001 # TODO: helps? 
-    feet_clearance_clipped: 0.2
+    energy: -0.0005 # TODO: helps? 
+    feet_clearance_clipped: 0.1
 
 commands:
   still_proportion: 0.0
@@ -352,8 +352,8 @@ policy:
   obs_key: "student_observations"
   params:
     layer_activation: "elu"
-    recurrent_state_size: 512
-    hidden_layer_sizes: [512, 256, 128]
+    recurrent_state_size: 256
+    hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
     head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}

@@ -236,12 +236,12 @@ domain_rand:
   kick_interval_s: 5.0
   kick_lin_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-2.0, 2.0]
     operation: "additive"
     distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-2.0, 2.0]
     operation: "additive"
     distribution: "uniform"
 
@@ -262,12 +262,12 @@ domain_rand:
 
 rewards:
   only_positive_rewards: True
-  tracking_sigma: 0.25
+  tracking_sigma: 0.15
   soft_dof_pos_limit: 1.0
   soft_dof_vel_limit: 1.0
   soft_torque_limit: 1.0
-  base_height_target: 0.65
-  base_height_target_max: 0.72
+  base_height_target: 0.68
+  base_height_target_max: 0.70
   max_contact_force: 500.0
   terminate_height: 0.45
   feet_air_time_min_time: 0.5
@@ -356,8 +356,8 @@ policy:
   obs_key: "student_observations"
   params:
     layer_activation: "elu"
-    recurrent_state_size: 512
-    hidden_layer_sizes: [512, 256, 128]
+    recurrent_state_size: 256
+    hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
     head: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.30}
