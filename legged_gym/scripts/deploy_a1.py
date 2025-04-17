@@ -55,7 +55,7 @@ def standup_procedure(
         ros_rate.sleep()
         standup_timestep_i += 1
 
-    rospy.loginfo("Robot stood up! press ? on the gamepad to continue")
+    rospy.loginfo("Robot stood up! press A on the gamepad to continue")
     while not rospy.is_shutdown():
         if env.start_pressed:
             break
@@ -155,7 +155,7 @@ def main(argv = None):
             inference_duration = rospy.get_time() - inference_start_time
             motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
             rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
-            rospy.loginfo("inference duration: {:.3f}".format(inference_duration))
+            rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
             rate.sleep()
             if unitree_real_env.quit_pressed:
                 unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
