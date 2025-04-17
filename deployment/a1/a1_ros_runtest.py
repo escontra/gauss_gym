@@ -9,7 +9,6 @@ from functools import partial
 from typing import Tuple
 import pathlib
 import types
-import dataclasses
 
 import rospy
 from std_msgs.msg import Float32MultiArray
@@ -24,7 +23,7 @@ from deployment.a1.a1_real import UnitreeA1Real, resize2d
 from legged_gym.rl.modules import models
 import legged_gym
 from legged_gym.utils import flags, config
-from legged_gym.rl import mujoco_runner
+from legged_gym.rl import deployment_runner
 
 @torch.no_grad()
 def handle_forward_depth(ros_msg, model, publisher, output_resolution, device):
@@ -246,6 +245,10 @@ def main(argv = None):
     print(cfg)
     cfg = types.MappingProxyType(dict(cfg))
 
+    deploy_cfg = config.Config.load(load_run_path / 'deploy_config.yaml')
+    print(deploy_cfg)
+    deploy_cfg = types.MappingProxyType(dict(deploy_cfg))
+
     if cfg["logdir"] == "default":
         log_root = pathlib.Path(legged_gym.GAUSS_GYM_ROOT_DIR) / 'logs'
     elif cfg["logdir"] != "":
@@ -253,11 +256,7 @@ def main(argv = None):
     else:
         raise ValueError("Must specify logdir as 'default' or a path.")
 
-    @dataclasses.dataclass
-    class DummyEnv:
-        num_actions: int = 12
-
-    runner = mujoco_runner.MuJoCoRunner(DummyEnv(), cfg, device=cfg["rl_device"])
+    runner = deployment_runner.DeploymentRunner(deploy_cfg, cfg, device=cfg["rl_device"])
 
     if cfg["runner"]["resume"]:
         assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."

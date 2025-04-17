@@ -32,7 +32,6 @@ import time
 
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.runner import Runner
-from legged_gym.rl.mujoco_runner import MuJoCoRunner
 
 import legged_gym
 

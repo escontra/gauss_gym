@@ -1,3 +1,4 @@
+import types
 import numpy as np
 import time
 import yaml
@@ -25,12 +26,9 @@ from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
 import pathlib
 
-from legged_gym.utils import flags, config
-
-import os
 
 class Controller:
-    def __init__(self, argv=None, cfg=None, onboard_cfg_file=None) -> None:
+    def __init__(self, argv=None, cfg=None, deploy_cfg=None, onboard_cfg_file=None) -> None:
         # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -43,7 +41,7 @@ class Controller:
 
         # Initialize components
         self.remoteControlService = RemoteControlService(self.onboard_cfg["commands"])
-        self.policy = Policy(cfg=self.cfg, onboard_cfg=self.onboard_cfg)
+        self.policy = Policy(cfg=self.cfg, deploy_cfg=deploy_cfg, onboard_cfg=self.onboard_cfg)
 
         self._init_timer()
         self._init_low_state_values()
@@ -245,17 +243,22 @@ def main(argv=None):
     cfg = config.Config.load(load_run_path / 'config.yaml')
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     # cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
+    cfg = cfg.update({'runner.class_name': "DeploymentRunner"})
     cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'rl_device': 'cpu'})
 
     cfg = flags.Flags(cfg).parse(other)
     print(cfg)
-    cfg = dict(cfg)
+    cfg = types.MappingProxyType(dict(cfg))
     
+    deploy_cfg = config.Config.load(load_run_path / 'deploy_config.yaml')
+    print(deploy_cfg)
+    deploy_cfg = types.MappingProxyType(dict(deploy_cfg))
     
     # print(f"Starting custom controller, connecting to {args.net} ...")
     ChannelFactory.Instance().Init(0, parsed.net)
 
-    with Controller(argv, cfg=cfg, onboard_cfg_file=parsed.config) as controller:
+    with Controller(argv, cfg=cfg, deploy_cfg=deploy_cfg, onboard_cfg_file=parsed.config) as controller:
         time.sleep(2)  # Wait for channels to initialize
         print("Initialization complete.")
         controller.start_custom_mode_conditionally()
