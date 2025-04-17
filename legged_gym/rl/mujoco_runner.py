@@ -73,6 +73,7 @@ class MuJoCoRunner:
     # Load policy and observation normalizer.
     self.policy.load_state_dict(model_dict["policy"], strict=False)
     self.observation_normalizer.load_state_dict(model_dict[f"obs_normalizer/{self.policy_key}"])
+    self.policy_jit = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
@@ -80,9 +81,9 @@ class MuJoCoRunner:
   def act(self, obs):
     obs = self.to_device(obs)
     obs = self.observation_normalizer.normalize(obs)
-    policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
+    # policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
     with torch.no_grad():
-      act = policy(obs)
+      act = self.policy_jit(obs)
     
     return act
 
