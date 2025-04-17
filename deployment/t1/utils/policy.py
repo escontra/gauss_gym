@@ -5,6 +5,11 @@ from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import helpers
 from legged_gym.utils import observation_groups as observation_groups_teacher
 
+from legged_gym import GAUSS_GYM_ROOT_DIR
+import pathlib
+from legged_gym.rl.deployment_runner import DeploymentRunner
+import dataclasses
+
 def quat_rotate_inverse(q, v):
     q_w = q[-1]
     q_vec = q[:3]
@@ -55,17 +60,25 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
     return obs_dict
 
 class Policy:
-    def __init__(self, cfg, onboard_cfg):
+    def __init__(self, cfg, deploy_cfg, onboard_cfg):
         self.cfg = cfg
         self.onboard_cfg = onboard_cfg
 
         try:
             helpers.set_seed(cfg["seed"])
-            cfg["runner"]["resume"] = True
-            cfg["runner"]["class_name"] = "MuJoCoRunner"
-            cfg["rl_device"] = "cpu"
-            self.runner = task_registry.make_alg_runner(None, cfg=cfg)
-            self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
+            if cfg["logdir"] == "default":
+                log_root = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 'logs'
+            elif cfg["logdir"] != "":
+                log_root = pathlib.Path(cfg["logdir"])
+            else:
+                raise ValueError("Must specify logdir as 'default' or a path.")
+            
+            self.runner = eval(cfg["runner"]["class_name"])(deploy_cfg, cfg, device=cfg["rl_device"])
+
+            if cfg["runner"]["resume"]:
+                assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
+                self.runner.load(log_root)
+            self.observation_groups = observation_groups_teacher.observation_groups_from_dict(cfg["observations"])
         except Exception as e:
             print(f"Failed to start runner: {e}")
             raise

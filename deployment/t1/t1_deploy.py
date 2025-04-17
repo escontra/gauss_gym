@@ -1,3 +1,4 @@
+import types
 import numpy as np
 import time
 import yaml
@@ -25,47 +26,22 @@ from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
 import pathlib
 
-from legged_gym.utils import flags, config
-
-import os
 
 class Controller:
-    def __init__(self, argv=None, onboard_cfg_file=None) -> None:
+    def __init__(self, argv=None, cfg=None, deploy_cfg=None, onboard_cfg_file=None) -> None:
         # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
         # Load config
-        with open(onboard_cfg_file, "r", encoding="utf-8") as f:
+        with open('configs/' + onboard_cfg_file, "r", encoding="utf-8") as f:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
-
-        # Load from file
-        log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
-        load_run_path = None
-        parsed, other = flags.Flags(load_run='', checkpoint=10000).parse_known(argv)
-        if parsed.load_run != '':
-            load_run_path = log_root / parsed.load_run
-        else:
-            load_run_path = sorted(
-                [item for item in log_root.iterdir() if item.is_dir()],
-                key=lambda path: path.stat().st_mtime,
-            )[-1]
-
-        print(f'Loading run from: {load_run_path}...')
-        cfg = config.Config.load(load_run_path / 'config.yaml')
-        cfg = cfg.update({'runner.load_run': load_run_path.name})
-        cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
-        cfg = cfg.update({'runner.resume': True})
-
-        cfg = flags.Flags(cfg).parse(other)
-        print(cfg)
-        cfg = dict(cfg)
         
         self.cfg = cfg
 
         # Initialize components
         self.remoteControlService = RemoteControlService(self.onboard_cfg["commands"])
-        self.policy = Policy(cfg=self.cfg, onboard_cfg=self.onboard_cfg)
+        self.policy = Policy(cfg=self.cfg, deploy_cfg=deploy_cfg, onboard_cfg=self.onboard_cfg)
 
         self._init_timer()
         self._init_low_state_values()
@@ -245,16 +221,44 @@ def main(argv=None):
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="T1.yaml", type=str, help="Name of the configuration file.")
-    parser.add_argument("--net", type=str, default="127.0.0.1", help="Network interface for SDK communication.")
-    args = parser.parse_args()
-    cfg_file = os.path.join("configs", args.config)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--config", default="T1.yaml", type=str, help="Name of the configuration file.")
+    # parser.add_argument("--net", type=str, default="127.0.0.1", help="Network interface for SDK communication.")
+    # args = parser.parse_args()
+    # cfg_file = os.path.join("configs", args.config)
 
-    print(f"Starting custom controller, connecting to {args.net} ...")
-    ChannelFactory.Instance().Init(0, args.net)
+    # Load from file
+    log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
+    load_run_path = None
+    parsed, other = flags.Flags({'config': 'T1.yaml', 'net': '127.0.0.1', 'runner': {'load_run': ''}}).parse_known(argv)
+    if parsed.runner.load_run != '':
+        load_run_path = log_root / parsed.runner.load_run
+    else:
+        load_run_path = sorted(
+            [item for item in log_root.iterdir() if item.is_dir()],
+            key=lambda path: path.stat().st_mtime,
+        )[-1]
 
-    with Controller(argv, onboard_cfg_file=cfg_file) as controller:
+    print(f'Loading run from: {load_run_path}...')
+    cfg = config.Config.load(load_run_path / 'config.yaml')
+    cfg = cfg.update({'runner.load_run': load_run_path.name})
+    # cfg = cfg.update({'runner.checkpoint': parsed.checkpoint})
+    cfg = cfg.update({'runner.class_name': "DeploymentRunner"})
+    cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'rl_device': 'cpu'})
+
+    cfg = flags.Flags(cfg).parse(other)
+    print(cfg)
+    cfg = types.MappingProxyType(dict(cfg))
+    
+    deploy_cfg = config.Config.load(load_run_path / 'deploy_config.yaml')
+    print(deploy_cfg)
+    deploy_cfg = types.MappingProxyType(dict(deploy_cfg))
+    
+    # print(f"Starting custom controller, connecting to {args.net} ...")
+    ChannelFactory.Instance().Init(0, parsed.net)
+
+    with Controller(argv, cfg=cfg, deploy_cfg=deploy_cfg, onboard_cfg_file=parsed.config) as controller:
         time.sleep(2)  # Wait for channels to initialize
         print("Initialization complete.")
         controller.start_custom_mode_conditionally()

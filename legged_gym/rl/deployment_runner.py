@@ -7,16 +7,15 @@ import pickle
 import torch.utils._pytree as pytree
 import pathlib
 
-from legged_gym.rl.env import vec_env
-from legged_gym.rl.modules import models, normalizers
+from legged_gym.rl.modules import models
 
-class MuJoCoRunner:
-  def __init__(self, env: vec_env.VecEnv, cfg: Dict, device="cpu"):
+class DeploymentRunner:
+  def __init__(self, deploy_cfg: Dict, cfg: Dict, device="cpu"):
     self.device = device
+    self.deploy_cfg = deploy_cfg
     self.cfg = cfg
     self._set_seed()
     self.policy_key = self.cfg["policy"]["obs_key"]
-    self.env = env
 
   def _set_seed(self):
     seed = self.cfg["seed"]
@@ -56,34 +55,29 @@ class MuJoCoRunner:
       model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
     print(f'\tLoading model weights from: {model_path}')
     model_dict = torch.load(
-      model_path, map_location=self.device, weights_only=True
+      model_path, map_location=self.device
     )
 
     # Create policy and observation normalizer.
     obs_group_sizes = pickle.load(open(resume_path / "obs_group_sizes.pkl", "rb"))
     self.policy = getattr(models, self.cfg["policy"]["class_name"])(
-      self.env.num_actions,
+      self.deploy_cfg["deploy"]["num_actions"],
       obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
-    ).to(self.device)
-    self.observation_normalizer = normalizers.PyTreeNormalizer(
-      obs_group_sizes[self.policy_key],
     ).to(self.device)
 
     # Load policy and observation normalizer.
     self.policy.load_state_dict(model_dict["policy"], strict=False)
-    self.observation_normalizer.load_state_dict(model_dict[f"obs_normalizer/{self.policy_key}"])
+    self.jit_policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
 
   def act(self, obs):
     obs = self.to_device(obs)
-    obs = self.observation_normalizer.normalize(obs)
-    policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
     with torch.no_grad():
-      act = policy(obs)
-    
+      act = self.jit_policy(obs)
+
     return act
 
   def interrupt_handler(self, signal, frame):

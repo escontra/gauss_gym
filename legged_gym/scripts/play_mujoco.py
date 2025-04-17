@@ -7,11 +7,10 @@ import torch
 import pathlib
 import mujoco
 import mujoco.viewer
-import dataclasses
 
 import legged_gym
 from legged_gym.utils import flags, config, helpers, observation_groups, math
-from legged_gym.rl.mujoco_runner import MuJoCoRunner
+from legged_gym.rl.deployment_runner import DeploymentRunner
 
 
 def apply_map(data, map):
@@ -85,7 +84,7 @@ def main(argv=None):
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.resume': True})
     cfg = cfg.update({'headless': False})
-    cfg = cfg.update({'runner.class_name': "MuJoCoRunner"})
+    cfg = cfg.update({'runner.class_name': "DeploymentRunner"})
 
     deploy_cfg = config.Config.load(load_run_path / 'deploy_config.yaml')
 
@@ -143,18 +142,13 @@ def main(argv=None):
     )
     mujoco.mj_forward(mj_model, mj_data)
 
-    @dataclasses.dataclass
-    class DummyEnv:
-        num_actions: int = mj_model.nu
-    env = DummyEnv()
-
-    mujoco_runner = MuJoCoRunner(env, cfg, device=cfg["rl_device"])
-    mujoco_runner.load(log_root)
+    runner = DeploymentRunner(deploy_cfg, cfg, device=cfg["rl_device"])
+    runner.load(log_root)
     obs_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
     use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"][cfg["policy"]["obs_key"]]["observations"]
 
     print("Starting MuJoCo viewer...")
-    actions = np.zeros(env.num_actions, dtype=np.float32) # TODO: get from env
+    actions = np.zeros(deploy_cfg["deploy"]["num_actions"], dtype=np.float32)
     dof_targets = np.zeros(default_dof_pos_mj.shape, dtype=np.float32)
     gait_frequency = gait_process = 0.0
     lin_vel_x = lin_vel_y = ang_vel_yaw = 0.0
@@ -188,7 +182,7 @@ def main(argv=None):
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
             if it % cfg["control"]["decimation"] == 0:
                 obs = compute_observation(cfg, obs_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos_mj, actions, mj_ig_map)
-                dist = mujoco_runner.act(obs[cfg["policy"]["obs_key"]])
+                dist = runner.act(obs[cfg["policy"]["obs_key"]])
                 actions[:] = dist.detach().cpu().numpy()
                 actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
                 actions[:] = actions * cfg["control"]["action_scale"]

@@ -1,11 +1,11 @@
 import functools
 import torch
 import torch.nn as nn
-import numpy as np
 from typing import Dict, Any, Optional, Union, Tuple, List
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.utils import math
+from legged_gym.rl.modules import normalizers
 
 
 def split_and_pad_trajectories(tensor, dones):
@@ -66,43 +66,6 @@ def get_mlp_cnn_keys(obs):
 
 IMAGE_EMBEDDING_DIM = 256
 
-class ActorCritic(torch.nn.Module):
-  is_recurrent = False
-  def __init__(self, num_act, num_obs, num_privileged_obs, init_std):
-    super().__init__()
-    self.critic = torch.nn.Sequential(
-      torch.nn.Linear(num_privileged_obs, 256),
-      torch.nn.ELU(),
-      torch.nn.Linear(256, 256),
-      torch.nn.ELU(),
-      torch.nn.Linear(256, 128),
-      torch.nn.ELU(),
-      torch.nn.Linear(128, 1),
-    )
-    self.actor = torch.nn.Sequential(
-      torch.nn.Linear(num_obs, 256),
-      torch.nn.ELU(),
-      torch.nn.Linear(256, 128),
-      torch.nn.ELU(),
-      torch.nn.Linear(128, 128),
-      torch.nn.ELU(),
-      torch.nn.Linear(128, num_act),
-    )
-    self.logstd = torch.nn.parameter.Parameter(
-      torch.full((1, num_act), fill_value=np.log(init_std)), requires_grad=True
-    )
-
-  def act(self, obs, masks=None, hidden_states=None):
-    action_mean = self.actor(obs)
-    action_std = torch.exp(self.logstd).expand_as(action_mean)
-    return torch.distributions.Normal(action_mean, action_std)
-
-  def est_value(self, privileged_obs, masks=None, hidden_states=None, upd_state=True):
-    return self.critic(privileged_obs).squeeze(-1)
-
-  def reset(self, dones=None):
-     pass
-
 
 class RecurrentModel(torch.nn.Module):
   is_recurrent = True
@@ -114,16 +77,23 @@ class RecurrentModel(torch.nn.Module):
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
         symlog_inputs=False,
+        normalize_obs=True,
+        max_abs_value=None,
         head: Dict[str, Any] = None):
     super().__init__()
     self.mlp_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
     self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
     self.recurrent_state_size = recurrent_state_size
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
+    self.normalize_obs = normalize_obs
+    self.max_abs_value = max_abs_value
+    if self.normalize_obs:
+      self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value)
 
     print(f'MLP Keys: {self.mlp_keys}')
     print(f'MLP Num Obs: {self.num_mlp_obs}')
     print(f'CNN Keys: {self.cnn_keys}')
+    print(f'Normalizing obs: {self.normalize_obs}')
 
     layers = []
     input_size = self.recurrent_state_size
@@ -149,9 +119,14 @@ class RecurrentModel(torch.nn.Module):
 
   def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
-    features = torch.cat([obs[k] for k in self.mlp_keys], dim=-1)
-    if self.symlog_inputs:
-      features = math.symlog(features)
+    with torch.no_grad():
+      if self.normalize_obs:
+        obs = apply_normalizer(
+          obs,
+          self.obs_normalizer.mean,
+          self.obs_normalizer.std,
+          max_abs_value=self.max_abs_value)
+      features = process_mlp_features(obs, self.mlp_keys, self.symlog_inputs)
     
     if self.cnn_keys:
       cnn_features = []
@@ -172,6 +147,10 @@ class RecurrentModel(torch.nn.Module):
       cnn_features = torch.cat(cnn_features, dim=-1)
       features = torch.cat([features, cnn_features], dim=-1)
     return features
+  
+  def update_normalizer(self, obs: Dict[str, torch.Tensor]):
+    if self.normalize_obs:
+      self.obs_normalizer.update(obs)
 
   def __call__(self,
                obs: Dict[str, torch.Tensor],
@@ -257,21 +236,75 @@ class Memory(torch.nn.Module):
             self.hidden_states[..., dones, :] = init_h
 
 
-def get_policy_jitted(policy, cfg):
+@torch.jit.script
+def apply_normalizer(
+        observations: Dict[str, torch.Tensor],
+        normalizer_mean: Optional[Dict[str, torch.Tensor]],
+        normalizer_std: Optional[Dict[str, torch.Tensor]],
+        use_mean_offset: bool = True,
+        max_abs_value: Optional[float] = None
+    ) -> Dict[str, torch.Tensor]:
+    normalized_observations = {}
+    for k, v in observations.items():
+        if use_mean_offset and normalizer_mean is not None:
+            v = v - normalizer_mean[k]
+        if normalizer_std is not None:
+            v = v / normalizer_std[k]
+        if max_abs_value is not None:
+            v = torch.clamp(v, -max_abs_value, max_abs_value)
+        normalized_observations[k] = v
+    return normalized_observations
+    
+
+@torch.jit.script
+def process_mlp_features(observations: Dict[str, torch.Tensor], mlp_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+    features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+    if symlog_inputs:
+        features = math.symlog(features)
+    return features
+
+
+@torch.jit.script
+def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() == 5:
+        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
+    elif x.dim() == 4:
+        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+    elif x.dim() == 3:
+        return x.permute(2, 0, 1)  # [H, W, C] -> [H, W]
+    else:
+        raise ValueError(f"Unexpected shape: {x.shape}")
+
+
+def get_policy_jitted(policy: RecurrentModel, cfg: Dict[str, Any]):
     memory_module = policy.memory
     actor_layers = policy.model[:-1]
     actor_mean_net = policy.model[-1].mean_net
     mlp_keys = policy.mlp_keys
     cnn_keys = policy.cnn_keys
     cnn_model = policy.cnn
-
+    if policy.normalize_obs:
+      max_abs_value = policy.max_abs_value
+      normalizer_mean = {k: v.data for k, v in policy.obs_normalizer.mean.items()}
+      normalizer_std = {k: v.data for k, v in policy.obs_normalizer.std.items()}
+    else:
+      max_abs_value = None
+      normalizer_mean = None
+      normalizer_std = None
 
     @torch.jit.script
-    def policy(observations: Dict[str, torch.Tensor], mlp_keys: List[str], cnn_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
-        if symlog_inputs:
-          features = torch.cat([math.symlog(observations[k]) for k in mlp_keys], dim=-1)
-        else:
-          features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
+    def policy(
+          observations: Dict[str, torch.Tensor],
+          mlp_keys: List[str],
+          cnn_keys: List[str],
+          symlog_inputs: bool,
+          normalizer_mean: Optional[Dict[str, torch.Tensor]],
+          normalizer_std: Optional[Dict[str, torch.Tensor]],
+          max_abs_value: Optional[float]) -> torch.Tensor:
+
+        observations = apply_normalizer(observations, normalizer_mean, normalizer_std, max_abs_value=max_abs_value)
+        features = process_mlp_features(observations, mlp_keys, symlog_inputs)
+
         if cnn_keys:
           cnn_features = []
           for k in cnn_keys:
@@ -289,21 +322,18 @@ def get_policy_jitted(policy, cfg):
 
           cnn_features = torch.cat(cnn_features, dim=-1)
           features = torch.cat([features, cnn_features], dim=-1)
-        # features = models.process_obs(observations, mlp_keys, cnn_keys, symlog_inputs, cnn_model)
+
         input_a = memory_module(features, None, None).squeeze(0)
         latent = actor_layers(input_a)
         mean = actor_mean_net(latent)
         return mean
 
-    return functools.partial(policy, mlp_keys=mlp_keys, cnn_keys=cnn_keys, symlog_inputs=cfg["symlog_inputs"])
+    return functools.partial(
+       policy,
+       mlp_keys=mlp_keys,
+       cnn_keys=cnn_keys,
+       symlog_inputs=cfg["symlog_inputs"],
+       normalizer_mean=normalizer_mean,
+       normalizer_std=normalizer_std,
+       max_abs_value=max_abs_value)
 
-
-def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
-    if x.dim() == 5:
-        return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
-    elif x.dim() == 4:
-        return x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
-    elif x.dim() == 3:
-        return x.permute(2, 0, 1)  # [H, W, C] -> [H, W]
-    else:
-        raise ValueError(f"Unexpected shape: {x.shape}")

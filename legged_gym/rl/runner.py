@@ -9,7 +9,7 @@ import pathlib
 
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
-from legged_gym.rl.modules import models, normalizers
+from legged_gym.rl.modules import models
 from legged_gym.utils import agg, symmetry_groups, timer, when
 
 
@@ -56,24 +56,9 @@ class Runner:
       self.value_key: self.env.obs_group_size_per_name(self.value_key),
     }
 
-    if cfg["runner"]["compile"]:
-      compile_fn = torch.compile
-    else:
-      def _identity_compile_fn(x):
-        return x
-      compile_fn = _identity_compile_fn
-
-    self.obs_normalizers = {
-      self.policy_key: compile_fn(normalizers.PyTreeNormalizer(
-        self.obs_group_sizes[self.policy_key],
-      ).to(self.device)),
-      self.value_key: compile_fn(normalizers.PyTreeNormalizer(
-        self.obs_group_sizes[self.value_key],
-      ).to(self.device)),
-    }
-
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
-    self.policy = getattr(models, self.cfg["policy"]["class_name"])(
+    self.policy: models.RecurrentModel = getattr(
+      models, self.cfg["policy"]["class_name"])(
       self.env.num_actions,
       self.obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
@@ -88,15 +73,12 @@ class Runner:
       param.requires_grad = False
 
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
-    self.value = getattr(models, self.cfg["value"]["class_name"])(
+    self.value: models.RecurrentModel = getattr(
+      models, self.cfg["value"]["class_name"])(
       1,
       self.obs_group_sizes[self.value_key],
       **self.cfg["value"]["params"]
     ).to(self.device)
-
-    self.policy = compile_fn(self.policy)
-    self.old_policy = compile_fn(self.old_policy)
-    self.value = compile_fn(self.value)
 
     self.policy_optimizer = torch.optim.Adam(
       self.policy.parameters(), lr=self.policy_learning_rate
@@ -175,12 +157,6 @@ class Runner:
     except Exception as e:
       print(f"Failed to load optimizer: {e}")
 
-    try:
-      for k, v in self.obs_normalizers.items():
-        v.load_state_dict(model_dict[f"obs_normalizer/{k}"])
-    except Exception as e:
-      print(f"Failed to load obs normalizer: {e}")
-
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
 
@@ -195,15 +171,6 @@ class Runner:
       print(f"{num_nan_envs} NaN envs")
       obs = pytree.tree_map(lambda x: torch.nan_to_num(x, nan=0.0), obs)
     return obs
-
-  def normalize_obs(self, obs_dict):
-    obs_dict_normalized = pytree.tree_map(
-      lambda normalizer, obs: normalizer.normalize(obs),
-      {k: v for k, v in self.obs_normalizers.items() if k in obs_dict},
-      obs_dict,
-      is_leaf=lambda x: isinstance(x, normalizers.PyTreeNormalizer)
-    )
-    return obs_dict_normalized
 
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Replay buffer.
@@ -232,15 +199,14 @@ class Runner:
 
     self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
     obs_dict = self.to_device(self.env.reset())
-    obs_dict_normalized = self.normalize_obs(obs_dict)
     if init_at_random_ep_len:
         self.env.episode_length_buf = torch.randint_like(
           self.env.episode_length_buf,
           high=int(self.env.max_episode_length))
 
     # Needed to initialize hidden states.
-    self.policy(obs_dict_normalized[self.policy_key])
-    self.value(obs_dict_normalized[self.value_key])
+    self.policy(obs_dict[self.policy_key])
+    self.value(obs_dict[self.value_key])
 
     if self.policy.is_recurrent:
       self.buffer.add_hidden_state_buffers("policy_hidden_states", self.policy.get_hidden_states())
@@ -264,13 +230,12 @@ class Runner:
             )
         with timer.section("model_act"):
           with torch.no_grad():
-            dist = self.policy(obs_dict_normalized[self.policy_key])
-            value = self.value(obs_dict_normalized[self.value_key])
+            dist = self.policy(obs_dict[self.policy_key])
+            value = self.value(obs_dict[self.value_key])
             act = dist.sample()
         with timer.section("env_step"):
           obs_dict, rew, done, infos = self.env.step(act)
           obs_dict, rew, done = self.to_device((obs_dict, rew, done))
-          obs_dict_normalized = self.normalize_obs(obs_dict)
         self.policy.reset(done)
         self.value.reset(done)
         with timer.section("buffer_update_data"):
@@ -292,7 +257,9 @@ class Runner:
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
 
-      learn_stats = self._learn(last_privileged_obs=obs_dict_normalized[self.value_key], is_first=it == 0)
+
+
+      learn_stats = self._learn(last_privileged_obs=obs_dict[self.value_key], is_first=it == 0)
       self.learn_agg.add(learn_stats)
 
       if self.should_log(it):
@@ -318,7 +285,6 @@ class Runner:
               "value": self.value.state_dict(),
               "policy_optimizer": self.policy_optimizer.state_dict(),
               "value_optimizer": self.value_optimizer.state_dict(),
-              **{f"obs_normalizer/{k}": v.state_dict() for k, v in self.obs_normalizers.items()},
             },
             it + 1,
           )
@@ -368,13 +334,6 @@ class Runner:
         for key, value in policy_obs.items():
           assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
           policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
-        policy_obs_sym = self.normalize_obs({self.policy_key: policy_obs_sym})[self.policy_key]
-
-      normalized_obs = self.normalize_obs(
-        {self.policy_key: policy_obs, self.value_key: value_obs}
-      )
-      policy_obs = normalized_obs[self.policy_key]
-      value_obs = normalized_obs[self.value_key]
 
       self.old_policy.load_state_dict(self.policy.state_dict())
 
@@ -532,8 +491,8 @@ class Runner:
         })
 
       # Update the observation normalizers.
-      self.obs_normalizers[self.policy_key].update(self.buffer[self.policy_key])
-      self.obs_normalizers[self.value_key].update(self.buffer[self.value_key])
+      self.policy.update_normalizer(self.buffer[self.policy_key])
+      self.value.update_normalizer(self.buffer[self.value_key])
 
       return {
           **learn_step_agg.result(),
@@ -543,7 +502,6 @@ class Runner:
 
   def play(self):
     obs_dict = self.to_device(self.env.reset())
-    obs_dict_normalized = self.normalize_obs(obs_dict)
 
     policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
     # Alternatively can use torch.compile. Not sure if this is available on all machines.
@@ -553,12 +511,11 @@ class Runner:
     while True:
       with torch.no_grad():
         start = time.time()
-        act = policy(obs_dict_normalized[self.policy_key])
+        act = policy(obs_dict[self.policy_key])
         # act = opt_policy(obs_dict_normalized[self.policy_key]).pred()
         inference_time += time.time() - start
         obs_dict, _, _, _ = self.env.step(act)
         obs_dict = self.to_device(obs_dict)
-        obs_dict_normalized = self.normalize_obs(obs_dict)
 
       step += 1
       if step % 100 == 0:

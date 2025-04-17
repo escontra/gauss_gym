@@ -22,7 +22,7 @@ from sensor_msgs.msg import Image
 
 import ros_numpy
 from legged_gym.utils.math import quat_rotate_inverse
-from legged_gym.teacher import observation_groups
+from legged_gym.utils import observation_groups
 
 @torch.no_grad()
 def resize2d(img, size):
@@ -213,7 +213,8 @@ class UnitreeA1Real:
         self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
+        self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
+        # self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
 
 
         if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
