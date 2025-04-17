@@ -76,7 +76,12 @@ class Policy:
             else:
                 raise ValueError("Must specify logdir as 'default' or a path.")
             
-            runner = eval(cfg["runner"]["class_name"])(None, cfg, device=cfg["rl_device"])
+            @dataclasses.dataclass
+            class DummyEnv:
+                num_actions: int = 12
+            env = DummyEnv()
+
+            runner = eval(cfg["runner"]["class_name"])(env, cfg, device=cfg["rl_device"])
 
             if cfg["runner"]["resume"]:
                 assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
