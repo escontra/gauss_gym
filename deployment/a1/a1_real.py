@@ -1,12 +1,6 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torch.autograd import Variable
-import json
 import os
-import os.path as osp
-from collections import OrderedDict
-from typing import Tuple
 import pygame
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
@@ -20,13 +14,8 @@ from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
 
-import ros_numpy
-from legged_gym.utils.math import quat_rotate_inverse
 from legged_gym.utils import observation_groups
 
-@torch.no_grad()
-def resize2d(img, size):
-    return (F.adaptive_avg_pool2d(Variable(img), size)).data
 
 class UnitreeA1Real:
     """ This is the handler that works for ROS 1 on unitree. """
@@ -136,7 +125,9 @@ class UnitreeA1Real:
           print("Joystick initialized:", self.joystick.get_name())
 
     def _poll_gamepad(self):
+        had_event = False
         for event in pygame.event.get():
+            had_event = True
             # Handle axis motion events
             if event.type == pygame.JOYAXISMOTION:
                 if event.axis == 0:
@@ -159,8 +150,9 @@ class UnitreeA1Real:
             self.command_buf[0, 1] = 0.
         if self.command_buf[0, 2].norm() < self.ang_vel_deadband:
             self.command_buf[0, 2] = 0.
-        print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
-    
+        if had_event:
+          print(f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
+
     def start_ros(self):
         # initialze several buffers so that the system works even without message update.
         # self.low_state_buffer = LowState() # not initialized, let input message update it.
@@ -214,8 +206,6 @@ class UnitreeA1Real:
         self.gravity_vec[:, self.up_axis_idx] = -1
 
         self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
-        # self.observation_groups = [getattr(observation_groups, name) for name in self.cfg["observations"]["observation_groups"]]
-
 
         if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
             self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12
@@ -301,7 +291,7 @@ class UnitreeA1Real:
             self._poll_gamepad()
         obs_dict = {}
         for group in self.observation_groups:
-          if "teacher" in group.name:
+          if group.name != self.cfg["policy"]["obs_key"]:
               continue
           obs_dict[group.name] = {}
           for observation in group.observations:
