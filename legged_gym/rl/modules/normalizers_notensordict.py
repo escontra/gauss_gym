@@ -107,16 +107,71 @@ class PyTreeNormalizer(nn.Module):
         data = torch.clamp(data, -max_abs_value, max_abs_value)
       return data
 
-    return pytree.tree_map(
-      lambda data, mean, std: normalize_leaf(
-        data, mean, std,
-        max_abs_value=self.max_abs_value,
-        use_mean_offset=self.use_mean_offset
-      ),
-      obs_tree,
-      param_container_to_plain_structure(self.mean),
-      param_container_to_plain_structure(self.std))
-      
+    def recursive_apply_normalize(obs_node, mean_node, std_node, normalize_leaf_fn_with_args):
+        """
+        Recursively applies a function to corresponding leaves of three tree structures.
+        Assumes all trees have the same structure.
+        """
+        if isinstance(obs_node, torch.Tensor):
+            # Base case: Found corresponding leaves, apply the function
+            # Ensure mean and std are also tensors here if needed
+            if not (isinstance(mean_node, torch.Tensor) and isinstance(std_node, torch.Tensor)):
+                 raise TypeError(f"Leaf type mismatch: expected Tensors, got {type(mean_node)}, {type(std_node)}")
+            return normalize_leaf_fn_with_args(obs_node, mean_node, std_node)
+
+        elif isinstance(obs_node, dict):
+            # Recursive step for dictionaries
+            if not (isinstance(mean_node, dict) and isinstance(std_node, dict)):
+                raise TypeError("Structure mismatch: expected dicts")
+            new_dict = {}
+            for key in obs_node:
+                if key not in mean_node or key not in std_node:
+                    raise KeyError(f"Key '{key}' missing in mean or std structure during normalization")
+                new_dict[key] = recursive_apply_normalize(
+                    obs_node[key], mean_node[key], std_node[key], normalize_leaf_fn_with_args
+                )
+            return new_dict
+
+        elif isinstance(obs_node, (list, tuple)):
+             # Recursive step for lists/tuples
+            if not (isinstance(mean_node, type(obs_node)) and isinstance(std_node, type(obs_node))):
+                raise TypeError(f"Structure mismatch: expected {type(obs_node)}")
+            if not (len(obs_node) == len(mean_node) == len(std_node)):
+                 raise ValueError("Structure mismatch: sequence lengths differ")
+
+            new_seq = [
+                recursive_apply_normalize(o, m, s, normalize_leaf_fn_with_args)
+                for o, m, s in zip(obs_node, mean_node, std_node)
+            ]
+            return type(obs_node)(new_seq) # Return same sequence type
+
+        else:
+            # Handle other potential structures or raise an error
+            raise TypeError(f"Unsupported node type in tree structure: {type(obs_node)}")
+
+    # 1. Define the normalization function closure (capturing self)
+    #    Using a specific function is often clearer than a complex lambda here
+    def normalize_fn_for_node(data, mean, std):
+        return normalize_leaf(
+            data, mean, std,
+            max_abs_value=self.max_abs_value,
+            use_mean_offset=self.use_mean_offset
+        )
+
+    # 2. Convert the parameter dicts first (if needed)
+    mean_dict = param_container_to_plain_structure(self.mean)
+    std_dict = param_container_to_plain_structure(self.std)
+
+    # 3. Call your custom recursive function instead of pytree.tree_map
+    normalized_obs_tree = recursive_apply_normalize(
+        obs_tree,
+        mean_dict,
+        std_dict,
+        normalize_fn_for_node # Pass the function reference
+    )
+
+    return normalized_obs_tree
+
   def denormalize(self, obs_tree):
     def denormalize_leaf(data: torch.Tensor,
                          mean: torch.Tensor,
