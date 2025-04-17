@@ -7,16 +7,15 @@ import pickle
 import torch.utils._pytree as pytree
 import pathlib
 
-from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 
-class MuJoCoRunner:
-  def __init__(self, env: vec_env.VecEnv, cfg: Dict, device="cpu"):
+class DeploymentRunner:
+  def __init__(self, deploy_cfg: Dict, cfg: Dict, device="cpu"):
     self.device = device
+    self.deploy_cfg = deploy_cfg
     self.cfg = cfg
     self._set_seed()
     self.policy_key = self.cfg["policy"]["obs_key"]
-    self.env = env
 
   def _set_seed(self):
     seed = self.cfg["seed"]
@@ -62,7 +61,7 @@ class MuJoCoRunner:
     # Create policy and observation normalizer.
     obs_group_sizes = pickle.load(open(resume_path / "obs_group_sizes.pkl", "rb"))
     self.policy = getattr(models, self.cfg["policy"]["class_name"])(
-      self.env.num_actions,
+      self.deploy_cfg["deploy"]["num_actions"],
       obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
