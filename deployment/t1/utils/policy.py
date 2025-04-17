@@ -8,7 +8,7 @@ from legged_gym.utils import observation_groups as observation_groups_teacher
 from legged_gym import GAUSS_GYM_ROOT_DIR
 import pathlib
 from legged_gym.rl.mujoco_runner import MuJoCoRunner
-
+import dataclasses
 def quat_rotate_inverse(q, v):
     q_w = q[-1]
     q_vec = q[:3]
