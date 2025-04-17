@@ -5,6 +5,9 @@ from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import helpers
 from legged_gym.utils import observation_groups as observation_groups_teacher
 
+from legged_gym import GAUSS_GYM_ROOT_DIR
+import pathlib
+
 def quat_rotate_inverse(q, v):
     q_w = q[-1]
     q_vec = q[:3]
@@ -64,7 +67,19 @@ class Policy:
             cfg["runner"]["resume"] = True
             cfg["runner"]["class_name"] = "MuJoCoRunner"
             cfg["rl_device"] = "cpu"
-            self.runner = task_registry.make_alg_runner(None, cfg=cfg)
+            # self.runner = task_registry.make_alg_runner(None, cfg=cfg)
+            if cfg["logdir"] == "default":
+                log_root = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 'logs'
+            elif cfg["logdir"] != "":
+                log_root = pathlib.Path(cfg["logdir"])
+            else:
+                raise ValueError("Must specify logdir as 'default' or a path.")
+            
+            runner = eval(cfg["runner"]["class_name"])(None, cfg, device=cfg["rl_device"])
+
+            if cfg["runner"]["resume"]:
+                assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
+                runner.load(log_root)
             self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
         except Exception as e:
             print(f"Failed to start runner: {e}")
