@@ -82,11 +82,11 @@ class Policy:
                 num_actions: int = 12
             env = DummyEnv()
 
-            runner = eval(cfg["runner"]["class_name"])(env, cfg, device=cfg["rl_device"])
+            self.runner = eval(cfg["runner"]["class_name"])(env, cfg, device=cfg["rl_device"])
 
             if cfg["runner"]["resume"]:
                 assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
-                runner.load(log_root)
+                self.runner.load(log_root)
             self.observation_groups = observation_groups_teacher.observation_groups_from_dict(cfg["observations"])
             # self.observation_groups = [getattr(observation_groups_teacher, name) for name in cfg["observations"]["observation_groups"]]
         except Exception as e:
