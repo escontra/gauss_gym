@@ -2,7 +2,6 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.utils._pytree as pytree
-import tensordict
 
 
 def _validate_batch_shapes(batch,
@@ -44,6 +43,8 @@ class PyTreeNormalizer(nn.Module):
     self.std_max_value = std_max_value
     self.use_mean_offset = use_mean_offset
     self.count = nn.Parameter(torch.zeros(size=(), dtype=torch.int32), requires_grad=False)
+
+    import tensordict
     self.mean = tensordict.TensorDictParams(
       tensordict.TensorDict(
         pytree.tree_map(
@@ -166,6 +167,85 @@ class PyTreeNormalizer(nn.Module):
       self.std.to_dict())
 
 
+class DictNormalizer(nn.Module):
+
+  def __init__(self,
+               obs_space,
+               max_abs_value: Optional[float] = None,
+               std_min_value: float = 1e-6,
+               std_max_value: float = 1e6,
+               use_mean_offset: bool = True):
+    super().__init__()
+    self.max_abs_value = max_abs_value
+    self.std_min_value = std_min_value
+    self.std_max_value = std_max_value
+    self.use_mean_offset = use_mean_offset
+    self.count = nn.Parameter(torch.zeros(size=(), dtype=torch.int32), requires_grad=False)
+    self.mean = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+    self.std = nn.ParameterDict({k: nn.Parameter(torch.ones(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+    self.summed_variance = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+
+  def update(self, obs_tree, validate_shapes: bool = True):
+    batch_dims = None
+    batch_axis = None
+    for k, v in obs_tree.items():
+      batch_shape = v.shape
+      curr_batch_dims = batch_shape[:len(batch_shape) - self.mean[k].ndim]
+      if batch_dims is None:
+        batch_dims = curr_batch_dims
+      else:
+        assert batch_dims == curr_batch_dims, f'Batch dimensions mismatch for {k}'
+      batch_axis = list(range(len(batch_dims)))
+
+      # Validation is important. If the shapes don't match exactly, but are
+      # compatible, arrays will be silently broadcasted resulting in incorrect
+      # statistics.
+      if validate_shapes:
+        expected_shape = batch_dims + self.mean[k].shape
+        assert v.shape == expected_shape, f'{v.shape} != {expected_shape}'
+
+    step_increment = torch.prod(torch.tensor(batch_dims))
+
+    # Update the item count.
+    self.count.data = self.count.data + step_increment
+
+    for k, v in obs_tree.items():
+      # The mean and the sum of past variances are updated with Welford's
+      # algorithm using batches (see https://stackoverflow.com/q/56402955).
+      diff_to_old_mean = v - self.mean[k]
+      mean_update = torch.sum(diff_to_old_mean, dim=batch_axis) / self.count
+      self.mean[k].data = self.mean[k].data + mean_update
+
+      diff_to_new_mean = v - self.mean[k]
+      variance_update = diff_to_old_mean * diff_to_new_mean
+      variance_update = torch.sum(variance_update, axis=batch_axis)
+      self.summed_variance[k].data = self.summed_variance[k].data + variance_update
+
+      summed_variance = torch.clip(self.summed_variance[k], min=0)
+      std = torch.sqrt(summed_variance / self.count)
+      std = torch.clip(std, self.std_min_value, self.std_max_value)
+      self.std[k].data = std
+
+  def normalize(self, obs_tree):
+    normalized_obs_tree = {}
+    for k, v in obs_tree.items():
+      if self.use_mean_offset:
+        v = v - self.mean[k]
+      v = v / self.std[k]
+      if self.max_abs_value is not None:
+        v = torch.clamp(v, -self.max_abs_value, self.max_abs_value)
+      normalized_obs_tree[k] = v
+    return normalized_obs_tree
+
+  def denormalize(self, normalized_obs_tree):
+    denormalized_obs_tree = {}
+    for k, v in normalized_obs_tree.items():
+      v = v * self.std[k]
+      if self.use_mean_offset:
+        v = v + self.mean[k]
+      denormalized_obs_tree[k] = v
+    return denormalized_obs_tree
+
 class BackwardReturnTracker(nn.Module):
 
   def __init__(self,
@@ -175,6 +255,7 @@ class BackwardReturnTracker(nn.Module):
     super().__init__()
     self.discount = discount
 
+    import tensordict
     self.bwreturn = tensordict.TensorDictParams(
       tensordict.TensorDict(
         pytree.tree_map(

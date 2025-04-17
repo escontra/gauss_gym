@@ -188,11 +188,7 @@ def main(argv=None):
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
             if it % cfg["control"]["decimation"] == 0:
                 obs = compute_observation(cfg, obs_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos_mj, actions, mj_ig_map)
-                import time
-                s = time.time()
                 dist = mujoco_runner.act(obs[cfg["policy"]["obs_key"]])
-                e = time.time()
-                print(f"Time taken: {e - s} seconds")
                 actions[:] = dist.detach().cpu().numpy()
                 actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
                 actions[:] = actions * cfg["control"]["action_scale"]

@@ -9,7 +9,6 @@ import pathlib
 
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.rl.modules import normalizers_notensordict as normalizers
 
 class MuJoCoRunner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict, device="cpu"):
@@ -67,13 +66,9 @@ class MuJoCoRunner:
       obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
-    self.observation_normalizer = normalizers.PyTreeNormalizer(
-      obs_group_sizes[self.policy_key],
-    ).to(self.device)
 
     # Load policy and observation normalizer.
     self.policy.load_state_dict(model_dict["policy"], strict=False)
-    self.observation_normalizer.load_state_dict(model_dict[f"obs_normalizer/{self.policy_key}"], strict=False)
     self.jit_policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
 
   def to_device(self, obs):
@@ -81,10 +76,9 @@ class MuJoCoRunner:
 
   def act(self, obs):
     obs = self.to_device(obs)
-    obs = self.observation_normalizer.normalize(obs)
     with torch.no_grad():
       act = self.jit_policy(obs)
-    
+
     return act
 
   def interrupt_handler(self, signal, frame):

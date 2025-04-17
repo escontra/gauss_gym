@@ -355,6 +355,7 @@ policy:
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
+    normalize_obs: True
     head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
 
 value:
@@ -366,6 +367,7 @@ value:
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
+    normalize_obs: True
     head: {output_type: mse, outscale: 1.0}
 
 algorithm:
