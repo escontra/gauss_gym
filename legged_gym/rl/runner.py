@@ -173,41 +173,37 @@ class Runner:
     return obs
 
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
+    # Logger aggregators.
+    self.step_agg = agg.Agg()
+    self.episode_agg = agg.Agg()
+    self.learn_agg = agg.Agg()
+    self.should_log = when.Clock(self.cfg["runner"]["log_every"])
+    self.should_save = when.Clock(self.cfg["runner"]["save_every"])
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
+
+    # Initialize hidden states and set random episode length.
+    obs_dict = self.to_device(self.env.reset())
+    self.policy(obs_dict[self.policy_key], update_state=False)
+    self.value(obs_dict[self.value_key], update_state=False)
+    if init_at_random_ep_len:
+        self.env.episode_length_buf = torch.randint_like(
+          self.env.episode_length_buf,
+          high=int(self.env.max_episode_length))
+
+
     # Replay buffer.
     self.buffer = experience_buffer.ExperienceBuffer(
       self.cfg["runner"]["num_steps_per_env"],
       self.env.num_envs,
       self.device,
     )
-    self.buffer.add_buffer(
-      self.policy_key, self.obs_group_sizes[self.policy_key]
-    )
-    self.buffer.add_buffer(
-      self.value_key, self.obs_group_sizes[self.value_key]
-    )
+    self.buffer.add_buffer(self.policy_key, self.obs_group_sizes[self.policy_key])
+    self.buffer.add_buffer(self.value_key, self.obs_group_sizes[self.value_key])
     self.buffer.add_buffer("actions", (self.env.num_actions,))
     self.buffer.add_buffer("rewards", ())
     self.buffer.add_buffer("values", (1,))
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
-
-    self.step_agg = agg.Agg()
-    self.episode_agg = agg.Agg()
-    self.learn_agg = agg.Agg()
-    self.should_log = when.Clock(self.cfg["runner"]["log_every"])
-    self.should_save = when.Clock(self.cfg["runner"]["save_every"])
-
-    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
-    obs_dict = self.to_device(self.env.reset())
-    if init_at_random_ep_len:
-        self.env.episode_length_buf = torch.randint_like(
-          self.env.episode_length_buf,
-          high=int(self.env.max_episode_length))
-
-    # Needed to initialize hidden states.
-    self.policy(obs_dict[self.policy_key])
-    self.value(obs_dict[self.value_key])
-
     if self.policy.is_recurrent:
       self.buffer.add_hidden_state_buffers("policy_hidden_states", self.policy.get_hidden_states())
     if self.value.is_recurrent:
@@ -215,7 +211,6 @@ class Runner:
 
     for it in range(num_learning_iterations):
       start = time.time()
-      # within horizon_length, env.step() is called with same act
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         with timer.section("buffer_add_obs"):
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
@@ -257,8 +252,7 @@ class Runner:
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
 
-
-
+      # We skip the first gradient update to initialize the observation normalizers.
       learn_stats = self._learn(last_privileged_obs=obs_dict[self.value_key], is_first=it == 0)
       self.learn_agg.add(learn_stats)
 
@@ -276,7 +270,6 @@ class Runner:
               **episode_stats},
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs
           )
-
 
       if self.should_save(it):
         with timer.section("model_save"):
@@ -330,17 +323,20 @@ class Runner:
         for saved_hidden_states in self.buffer["value_hidden_states"]
       ]
       if self.cfg["algorithm"]["symmetry"]:
+        # Symmetry-augmented observations.
         policy_obs_sym = {}
         for key, value in policy_obs.items():
           assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
           policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
 
+      # Used for computing KL divergence and old log probs.
       self.old_policy.load_state_dict(self.policy.state_dict())
 
       mini_batch_size = self.env.num_envs // self.cfg["algorithm"]["num_mini_batches"]
       for _ in range(self.cfg["algorithm"]["num_learning_epochs"]):
           first_traj = 0
           with torch.no_grad():
+            # Used for value bootstrap.
             last_value = self.value(last_value_obs, update_state=False).pred().detach()
           for i in range(self.cfg["algorithm"]["num_mini_batches"]):
               start = i * mini_batch_size
@@ -365,11 +361,14 @@ class Runner:
               actions_batch = self.buffer["actions"][:, start:stop]
               last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
               old_values_batch = self.buffer["values"][:, start:stop]
-
               with torch.no_grad():
                 old_dist_batch = self.old_policy(
                   policy_obs_batch, masks=masks_batch, hidden_states=hid_a_batch
                 )
+                if self.cfg["algorithm"]["symmetry"]:
+                  symmetry_obs_batch['old_dist_sym'] = self.old_policy(
+                    symmetry_obs_batch['policy_obs_sym'], masks=masks_batch, hidden_states=hid_a_batch
+                  )
 
               yield {
                 "policy_obs": policy_obs_batch,
@@ -396,6 +395,7 @@ class Runner:
         values = self.value(
           batch["value_obs"], masks=batch["masks"], hidden_states=batch["hid_c"]
         )
+        # Compute returns and advantages.
         with torch.no_grad():
           rewards = batch["rewards"].clone()
           rewards[batch["time_outs"]] = values.pred().squeeze(-1)[batch["time_outs"]]
@@ -415,6 +415,7 @@ class Runner:
 
           advantages = (advantages - advantage_stats[0]) / (advantage_stats[1] + 1e-8)
 
+        # Value loss.
         if self.cfg["algorithm"]["use_clipped_value_loss"]:
           value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
               -self.cfg["algorithm"]["clip_param"], self.cfg["algorithm"]["clip_param"]
@@ -424,8 +425,12 @@ class Runner:
           value_loss = torch.max(value_losses, value_losses_clipped).mean()
         else:
           value_loss = torch.mean(values.loss(returns.unsqueeze(-1)))
+        total_loss = self.cfg["algorithm"]["value_loss_coef"] * value_loss
         learn_step_agg.add({'value_loss': value_loss.item()})
 
+        # Actor loss.
+        # actor_loss_coef = 0.5 if self.cfg["algorithm"]["symmetry"] else 1.0
+        actor_loss_coef = 1.0
         dist = self.policy(batch["policy_obs"], masks=batch["masks"], hidden_states=batch["hid_a"])
         actions_log_prob = dist.logp(batch["actions"]).sum(dim=-1)
         with torch.no_grad():
@@ -434,50 +439,79 @@ class Runner:
           old_actions_log_prob_batch, actions_log_prob, advantages,
           e_clip=self.cfg["algorithm"]["clip_param"]
         )
+        total_loss += actor_loss_coef * actor_loss
         learn_step_agg.add({'actor_loss': actor_loss.item()})
+        kl_mean = torch.mean(torch.sum(dist.kl(batch["old_dist"]), axis=-1))
+        self.learn_agg.add({'kl_mean': kl_mean.item()})
 
+        # Bound loss.
         bound_loss = (
           torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
           + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
         )
+        total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coef"] * bound_loss
         learn_step_agg.add({'bound_loss': bound_loss.item()})
 
+        # Entropy loss.
         entropy = dist.entropy().sum(dim=-1)
+        total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
         learn_step_agg.add({'entropy': entropy.mean().item()})
 
-        loss = (
-          self.cfg["algorithm"]["value_loss_coef"] * value_loss
-          + actor_loss
-          + self.cfg["algorithm"]["bound_coef"] * bound_loss
-          + self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
-        )
         if self.cfg["algorithm"]["symmetry"]:
-          act_with_sym_obs = self.policy(batch["policy_obs_sym"], masks=batch["masks"], hidden_states=batch["hid_a"]).pred()
-          act_sym = self.symmetry_groups["actions"]["actions"](self.env, dist.pred())
-          symmetry_loss = torch.nn.MSELoss()(act_with_sym_obs, act_sym.detach())
+          dist_sym = self.policy(batch["policy_obs_sym"], masks=batch["masks"], hidden_states=batch["hid_a"])
+          # TODO(alescontrela): Adding symmetric actor losses causes instability. Why?
+          # # Actor loss with symmetric data.
+          # actions_sym = self.symmetry_groups["actions"]["actions"](self.env, batch["actions"])
+          # actions_log_prob_symm = dist_sym.logp(actions_sym.detach()).sum(dim=-1)
+          # with torch.no_grad():
+          #   old_actions_sym_log_prob_batch = batch["old_dist_sym"].logp(actions_sym).sum(dim=-1)
+          # actor_loss_symm = surrogate_loss(
+          #   old_actions_sym_log_prob_batch, actions_log_prob_symm, advantages,
+          #   e_clip=self.cfg["algorithm"]["clip_param"]
+          # )
+          # learn_step_agg.add({'actor_loss_symm': actor_loss_symm.item()})
+          # total_loss += actor_loss_coef * actor_loss_symm
+          # kl_sym_mean = torch.mean(torch.sum(dist_sym.kl(batch["old_dist_sym"]), axis=-1))
+          # self.learn_agg.add({'kl_sym_mean': kl_sym_mean.item()})
+          # kl_mean = (kl_mean + kl_sym_mean) / 2.0
+
+          # # Bound loss with symmetric data.
+          # bound_loss_sym = (
+          #   torch.clip(dist_sym.pred() - 1.0, min=0.0).square().mean()
+          #   + torch.clip(dist_sym.pred() + 1.0, max=0.0).square().mean()
+          # )
+          # total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coef"] * bound_loss_sym
+          # learn_step_agg.add({'bound_loss_sym': bound_loss_sym.item()})
+
+          # # Entropy loss with symmetric data.
+          # entropy_sym = dist_sym.entropy().sum(dim=-1)
+          # total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coef"] * entropy_sym.mean()
+          # learn_step_agg.add({'entropy_sym': entropy_sym.mean().item()})
+
+          # Symmetry loss.
+          dist_act_sym = self.symmetry_groups["actions"]["actions"](self.env, dist.pred())
+          symmetry_loss = torch.nn.MSELoss()(dist_sym.pred(), dist_act_sym.detach())
           if self.cfg["algorithm"]["symmetry_coef"] <= 0.0:
             symmetry_loss = symmetry_loss.detach()
           learn_step_agg.add({'symmetry_loss': symmetry_loss.item()})
-          loss += self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
+          total_loss += self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
 
+        # Skip the first gradient update to initialize the observation normalizers.
         if not is_first:
           self.policy_optimizer.zero_grad()
           self.value_optimizer.zero_grad()
-          loss.backward()
+          total_loss.backward()
           torch.nn.utils.clip_grad_norm_(list(self.policy.parameters()) + list(self.value.parameters()), 1.0)
           self.policy_optimizer.step()
           self.value_optimizer.step()
 
-          kl = torch.sum(dist.kl(batch["old_dist"]), axis=-1)
-          kl_mean = torch.mean(kl)
-          if "desired_kl" in self.cfg["policy"]:
+          if self.cfg["policy"]["desired_kl"] > 0.0:
             if kl_mean > self.cfg["policy"]["desired_kl"] * 2.0:
               self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
             elif kl_mean < self.cfg["policy"]["desired_kl"] / 2.0 and kl_mean > 0.0:
               self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
             for param_group in self.policy_optimizer.param_groups:
               param_group["lr"] = self.policy_learning_rate
-          self.learn_agg.add({'kl_mean': kl_mean.item()})
 
         policy_stats = {}
         for k, v in self.policy.stats().items():
@@ -485,10 +519,7 @@ class Runner:
           policy_stats[f'policy/{k}_std'] = v.std()
           policy_stats[f'policy/{k}_min'] = v.min()
           policy_stats[f'policy/{k}_max'] = v.max()
-
-        learn_step_agg.add({
-          **policy_stats
-        })
+        learn_step_agg.add(policy_stats)
 
       # Update the observation normalizers.
       self.policy.update_normalizer(self.buffer[self.policy_key])
