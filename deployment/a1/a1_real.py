@@ -125,9 +125,7 @@ class UnitreeA1Real:
           print("Joystick initialized:", self.joystick.get_name())
 
     def _poll_gamepad(self):
-        had_event = False
         for event in pygame.event.get():
-            had_event = True
             # Handle axis motion events
             if event.type == pygame.JOYAXISMOTION:
                 if event.axis == 0:
