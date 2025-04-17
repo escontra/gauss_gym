@@ -229,7 +229,6 @@ class LeggedRobot(base_task.BaseTask):
         self.check_termination()
         self.compute_reward()
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
 
         self.swing_peak *= ~contact_filt
         self.feet_air_time *= ~contact_filt
@@ -239,6 +238,8 @@ class LeggedRobot(base_task.BaseTask):
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_contacts[:] = self.feet_contact[:]
         self.last_torques[:] = self.torques[:]
+
+        self.reset_idx(env_ids)
 
         self.obs_dict = self.obs_manager.compute_obs(self)        
 
