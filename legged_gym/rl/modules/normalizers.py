@@ -180,10 +180,27 @@ class DictNormalizer(nn.Module):
     self.std_min_value = std_min_value
     self.std_max_value = std_max_value
     self.use_mean_offset = use_mean_offset
-    self.count = nn.Parameter(torch.zeros(size=(), dtype=torch.int32), requires_grad=False)
-    self.mean = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
-    self.std = nn.ParameterDict({k: nn.Parameter(torch.ones(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
-    self.summed_variance = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+    self.register_buffer('count', torch.zeros(size=(), dtype=torch.int32))
+    self.obs_keys = list(obs_space.keys())
+    for k, v in obs_space.items():
+      self.register_buffer(f'mean_{k}', torch.zeros(v[0], dtype=torch.float32))
+      self.register_buffer(f'std_{k}', torch.ones(v[0], dtype=torch.float32))
+      self.register_buffer(f'summed_variance_{k}', torch.zeros(v[0], dtype=torch.float32))
+    # self.mean = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+    # self.std = nn.ParameterDict({k: nn.Parameter(torch.ones(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+    # self.summed_variance = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
+
+  @property
+  def mean(self):
+    return {k: getattr(self, f'mean_{k}') for k in self.obs_keys}
+
+  @property
+  def std(self):
+    return {k: getattr(self, f'std_{k}') for k in self.obs_keys}
+
+  @property
+  def summed_variance(self):
+    return {k: getattr(self, f'summed_variance_{k}') for k in self.obs_keys}
 
   def update(self, obs_tree, validate_shapes: bool = True):
     batch_dims = None
@@ -226,25 +243,6 @@ class DictNormalizer(nn.Module):
       std = torch.clip(std, self.std_min_value, self.std_max_value)
       self.std[k].data = std
 
-  def normalize(self, obs_tree):
-    normalized_obs_tree = {}
-    for k, v in obs_tree.items():
-      if self.use_mean_offset:
-        v = v - self.mean[k]
-      v = v / self.std[k]
-      if self.max_abs_value is not None:
-        v = torch.clamp(v, -self.max_abs_value, self.max_abs_value)
-      normalized_obs_tree[k] = v
-    return normalized_obs_tree
-
-  def denormalize(self, normalized_obs_tree):
-    denormalized_obs_tree = {}
-    for k, v in normalized_obs_tree.items():
-      v = v * self.std[k]
-      if self.use_mean_offset:
-        v = v + self.mean[k]
-      denormalized_obs_tree[k] = v
-    return denormalized_obs_tree
 
 class BackwardReturnTracker(nn.Module):
 
