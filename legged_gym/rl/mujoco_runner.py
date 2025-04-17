@@ -67,19 +67,14 @@ class MuJoCoRunner:
       obs_group_sizes[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
-    print('NORMALIZE STATE DICT')
-    print(model_dict[f"obs_normalizer/{self.policy_key}"])
     self.observation_normalizer = normalizers.PyTreeNormalizer(
       obs_group_sizes[self.policy_key],
     ).to(self.device)
-    print('NEW NORMALIZER STATE DICT')
-    print(self.observation_normalizer.state_dict())
 
     # Load policy and observation normalizer.
     self.policy.load_state_dict(model_dict["policy"], strict=False)
     self.observation_normalizer.load_state_dict(model_dict[f"obs_normalizer/{self.policy_key}"], strict=False)
-    print('FINAL NORMALIZER STATE DICT')
-    print(self.observation_normalizer.state_dict())
+    self.jit_policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
@@ -87,9 +82,8 @@ class MuJoCoRunner:
   def act(self, obs):
     obs = self.to_device(obs)
     obs = self.observation_normalizer.normalize(obs)
-    policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
     with torch.no_grad():
-      act = policy(obs)
+      act = self.jit_policy(obs)
     
     return act
 
