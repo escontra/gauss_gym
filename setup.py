@@ -17,7 +17,6 @@ setup(
         "plyfile",
         "viser",
         "warp-lang",
-        "tensordict",
         "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git",
     ],
 )
