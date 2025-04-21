@@ -1090,7 +1090,7 @@ class LeggedRobot(base_task.BaseTask):
         # (n_envs, n_substeps, n_dofs) 
         # square sum -> (n_envs, n_substeps)
         # mean -> (n_envs,)
-        return torch.mean(torch.sum(torch.square(self.substep_torques * self.substep_dof_vel), dim=-1), dim=-1)
+        return torch.mean(torch.sum(torch.abs(self.substep_torques) * torch.abs(self.substep_dof_vel), dim=-1), dim=-1)
 
     def _reward_energy(self):
         # return torch.sum(torch.square(self.torques * self.dof_vel), dim=1)
@@ -1165,7 +1165,8 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_action_rate(self):
         # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=-1)
+        action_diff = self.last_actions - self.actions
+        return torch.norm(action_diff, p=2, dim=-1) + action_diff.abs().sum(dim=-1)
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies
@@ -1274,7 +1275,8 @@ class LeggedRobot(base_task.BaseTask):
         return torch.sum(torch.square(self.dof_pos[:, self.hip_indices] - self.default_dof_pos[:, self.hip_indices]), dim=1)
 
     def _reward_delta_torques(self):
-        return torch.sum(torch.square(self.torques - self.last_torques), dim=1)
+        torques_diff = self.last_torques - self.torques
+        return torch.norm(torques_diff, p=2, dim=-1) + torques_diff.abs().sum(dim=-1)
 
     def _reward_exceed_torque_limits_l1norm(self):
         """ square function for exceeding part """
