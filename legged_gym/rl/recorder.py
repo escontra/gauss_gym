@@ -37,6 +37,7 @@ class Recorder:
     self.log_dir = log_dir
     self.obs_group_sizes = obs_group_sizes
     self.initialized = False
+    self.fps = int(1. / (self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"]))
 
   def setup_recorder(self, env):
     from isaacgym import gymapi
@@ -178,11 +179,10 @@ class Recorder:
         if self.cfg["runner"]["use_wandb"]:
           wandb.log({key: float(value)}, step=it)
       elif isinstance(value, np.ndarray) and value.ndim == 4 and value.dtype == np.uint8:
-        self._video_summary(key, value, it)
+        gif_bytes = self._video_summary(key, value, it)
         if self.cfg["runner"]["use_wandb"]:
-          fps = 20 # Use the same fps as _video_summary
-          gif_bytes = _encode_gif(value, fps)
-          wandb.log({key: wandb.Video(gif_bytes, fps=fps, format='gif')}, step=it)
+          import io
+          wandb.log({key: wandb.Video(io.BytesIO(gif_bytes), format='gif')}, step=it)
       else:
         raise ValueError(f"Unsupported type for {key}: {type(value)}")
     self.writer.flush()
@@ -197,13 +197,15 @@ class Recorder:
       T, H, W, C = video.shape
       summary = tf1.Summary()
       image = tf1.Summary.Image(height=H, width=W, colorspace=C)
-      image.encoded_image_string = _encode_gif(video, 20)
+      gif_bytes = _encode_gif(video, self.fps)
+      image.encoded_image_string = gif_bytes
       summary.value.add(tag=name, image=image)
       content = summary.SerializeToString()
       tf.summary.experimental.write_raw_pb(content, step)
     except (IOError, OSError) as e:
       print('GIF summaries require ffmpeg in $PATH.', e)
-      self._retry(tf.summary.image, name, video, step)
+      tf.summary.image(name, video, step)
+    return gif_bytes
 
   @timer.section("save")
   def save(self, model_dict, it):
