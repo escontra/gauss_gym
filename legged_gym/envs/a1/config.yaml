@@ -26,7 +26,7 @@ observations:
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
-      # HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
+      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
     ]
   student_observations:
     add_noise: True
@@ -56,7 +56,7 @@ terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
   cams_yaw_only: False
   max_traj_pos_distance: 1.0
-  max_traj_yaw_distance_rad: 1.0
+  max_traj_yaw_distance_rad: 6.28
   static_friction: 1.0
   dynamic_friction: 1.0
   restitution: 0.
@@ -136,7 +136,7 @@ curriculum:
     epochs: 750
     update_every: 10
     start: 0.1
-    end: 0.01
+    end: 0.0
     sample_type: "uniform"
 
 domain_rand:
@@ -150,6 +150,11 @@ domain_rand:
   init_base_lin_vel_xy:
     apply: True
     range: [0.0, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  init_base_yaw:
+    apply: True
+    range: [0.0, 1.5]
     operation: "additive"
     distribution: "gaussian"
 
@@ -180,7 +185,7 @@ domain_rand:
     distribution: "uniform"
   other_mass:
     apply: True
-    range: [0.98, 1.02]
+    range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
 
@@ -258,8 +263,9 @@ rewards:
   hip_height_target: 0.25 # 0.25
   max_contact_force: 100.0
   terminate_height: 0.08
-  feet_air_time_min_time: 0.3
-  feet_air_time_max_time: 0.4
+  terminate_rotation: 0.0
+  feet_air_time_min_time: 0.2
+  feet_air_time_max_time: 0.3
   max_foot_height: 0.2
   foot_clearance_height: 0.05
   scales:
@@ -287,7 +293,6 @@ commands:
   small_ang_vel_threshold: 0.1
   ranges:
     lin_vel: [0.0, 1.0]
-    lin_vel_yaw: [-1.0, 1.0]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
 

@@ -279,6 +279,7 @@ class LeggedRobot(base_task.BaseTask):
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= self.sensors["base_height_raycaster"].get_data()[..., 0] < self.cfg["rewards"]["terminate_height"]
+        self.reset_buf |= self.projected_gravity[:, -1] > self.cfg["rewards"]["terminate_rotation"]
 
         distance_exceeded, yaw_exceeded = self.scene_manager.check_termination()
         self.distance_exceeded_buf = distance_exceeded
@@ -569,6 +570,7 @@ class LeggedRobot(base_task.BaseTask):
             forward = tu.quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
             self.commands[:, 2] = torch.clip(0.5*math.wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+            self.commands[:, 2] = torch.clip(self.commands[:, 2], *self.cfg["commands"]["ranges"]["ang_vel_yaw"])
         else:
             raise NotImplementedError()
 
@@ -680,7 +682,17 @@ class LeggedRobot(base_task.BaseTask):
         # Sample starting poses.
         cam_trans, cam_quat = self.scene_manager.sample_cam_pose(env_ids, use_ground_positions=True)
         self.root_states[env_ids, :3] += cam_trans
-        self.root_states[env_ids, 3:7] = cam_quat
+    
+        rot_quat = cam_quat
+        if self.cfg["domain_rand"]["init_base_yaw"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
+          rand_yaw = math.apply_randomization(
+              torch.zeros(len(env_ids), dtype=torch.float, device=self.device),
+              self.cfg["domain_rand"]["init_base_yaw"]
+          )
+          rand_quat = math.quat_from_euler_xyz(torch.zeros_like(rand_yaw), torch.zeros_like(rand_yaw), rand_yaw)
+          rot_quat = math.quat_mul(rot_quat, rand_quat)
+        self.root_states[env_ids, 3:7] = rot_quat
+        
         # Linear velocity is 7:10, angular velocity is 10:13.
         if self.cfg["domain_rand"]["init_base_lin_vel_xy"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
           self.root_states[env_ids, 7:9] = math.apply_randomization(
