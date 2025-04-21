@@ -180,6 +180,8 @@ class Runner:
     self.should_log = when.Clock(self.cfg["runner"]["log_every"])
     self.should_save = when.Clock(self.cfg["runner"]["save_every"])
     self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.obs_group_sizes)
+    if self.cfg["runner"]["record_video"]:
+      self.recorder.setup_recorder(self.env)
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
@@ -212,6 +214,10 @@ class Runner:
     for it in range(num_learning_iterations):
       start = time.time()
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
+        if self.cfg["runner"]["record_video"]:
+          self.recorder.record_statistics(
+            self.recorder.maybe_record(self.env),
+            it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
         with timer.section("buffer_add_obs"):
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
           self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])

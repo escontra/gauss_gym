@@ -3,6 +3,7 @@ task: "a1"
 print_config: False
 rl_device: "cuda:0"
 sim_device: "cuda:0"
+graphics_device: "cuda:0"
 headless: False
 logdir: "default"
 
@@ -322,7 +323,6 @@ viewer:
   ref_env: 0
   pos: [10., 0., 6.]
   lookat: [11., 5., 3.]
-  record_video: False
 
 sim:
   physics_engine: "SIM_PHYSX" # or "SIM_FLEX"
@@ -385,6 +385,8 @@ algorithm:
   normalize_advantage_per_minibatch: True
 
 runner:
+  record_video: False
+  record_distance: [-1.8, -1.8, 0.5]
   num_steps_per_env: 24
   compile: True
   class_name: "Runner"
@@ -392,6 +394,8 @@ runner:
   description: ""
   log_every: 30.
   save_every: 150.
+  record_every: 600.
+  record_frames: 300.
   run_name: ""
   resume: False
   load_run: ""

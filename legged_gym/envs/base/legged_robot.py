@@ -364,6 +364,7 @@ class LeggedRobot(base_task.BaseTask):
         sim_cfg = dict(self.cfg["sim"])
         sim_device = self.cfg["sim_device"]
         sim_device_type, self.sim_device_id = gymutil.parse_device_str(sim_device)
+        _, self.graphics_device_id = gymutil.parse_device_str(self.cfg["graphics_device"])
 
         # env device is GPU only if sim is on GPU, otherwise returned tensors are copied to CPU by physX.
         if sim_device_type == "cuda":
@@ -373,8 +374,7 @@ class LeggedRobot(base_task.BaseTask):
 
         # graphics device for rendering, -1 for no rendering
         self.headless = self.cfg["headless"]
-        self.graphics_device_id = self.sim_device_id
-        if self.headless and not self.cfg["viewer"]["record_video"]:
+        if self.headless and not self.cfg["runner"]["record_video"]:
             self.graphics_device_id = -1
 
         self.sim_params = gymapi.SimParams()

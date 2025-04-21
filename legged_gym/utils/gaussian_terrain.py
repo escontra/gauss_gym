@@ -432,6 +432,24 @@ class GaussianSceneManager:
     )
     return int(np.floor(env_id / robots_per_mesh))
 
+  def mesh_name_from_id(self, mesh_id):
+    return '/'.join(self._terrain.mesh_keys[mesh_id])
+
+  def env_ids_for_mesh_id(self, mesh_id):
+    robots_per_mesh = int(
+      np.ceil(self._env.num_envs / self._terrain.num_meshes)
+    )
+    return torch.arange(
+      mesh_id * robots_per_mesh,
+      min((mesh_id + 1) * robots_per_mesh, self._env.num_envs),
+      device=self._env.device,
+      dtype=torch.int32,
+    )
+
+  @property
+  def num_meshes(self):
+    return self._terrain.num_meshes
+
   def _get_nearest_traj_idx(self):
     curr_cam_trans, _ = self.get_cam_link_pose_local_frame()
     trans_difference = curr_cam_trans[:, None] - self.cam_trans
