@@ -68,7 +68,7 @@ class DeploymentRunner:
 
     # Load policy and observation normalizer.
     self.policy.load_state_dict(model_dict["policy"], strict=False)
-    self.jit_policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
+    self.jit_policy = models.get_policy_jitted(self.policy)
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)

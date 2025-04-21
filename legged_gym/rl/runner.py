@@ -540,7 +540,7 @@ class Runner:
   def play(self):
     obs_dict = self.to_device(self.env.reset())
 
-    policy = models.get_policy_jitted(self.policy, self.cfg["policy"]["params"])
+    policy = models.get_policy_jitted(self.policy)
     # Alternatively can use torch.compile. Not sure if this is available on all machines.
     # opt_policy = torch.compile(self.policy)
 

@@ -1,7 +1,7 @@
 import functools
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional, Union, Tuple, List
+from typing import Dict, Any, Optional, Union, Tuple, List, Callable
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.utils import math
@@ -276,21 +276,21 @@ def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
         raise ValueError(f"Unexpected shape: {x.shape}")
 
 
-def get_policy_jitted(policy: RecurrentModel, cfg: Dict[str, Any]):
+def get_policy_jitted(policy: RecurrentModel) -> Callable[[Dict[str, torch.Tensor]], torch.Tensor]:
     memory_module = policy.memory
     actor_layers = policy.model[:-1]
     actor_mean_net = policy.model[-1].mean_net
     mlp_keys = policy.mlp_keys
     cnn_keys = policy.cnn_keys
     cnn_model = policy.cnn
+    symlog_inputs = policy.symlog_inputs
+    max_abs_value: Optional[float] = None
+    normalizer_mean: Optional[Dict[str, torch.Tensor]] = None
+    normalizer_std: Optional[Dict[str, torch.Tensor]] = None
     if policy.normalize_obs:
       max_abs_value = policy.max_abs_value
       normalizer_mean = {k: v.data for k, v in policy.obs_normalizer.mean.items()}
       normalizer_std = {k: v.data for k, v in policy.obs_normalizer.std.items()}
-    else:
-      max_abs_value = None
-      normalizer_mean = None
-      normalizer_std = None
 
     @torch.jit.script
     def policy(
@@ -332,7 +332,7 @@ def get_policy_jitted(policy: RecurrentModel, cfg: Dict[str, Any]):
        policy,
        mlp_keys=mlp_keys,
        cnn_keys=cnn_keys,
-       symlog_inputs=cfg["symlog_inputs"],
+       symlog_inputs=symlog_inputs,
        normalizer_mean=normalizer_mean,
        normalizer_std=normalizer_std,
        max_abs_value=max_abs_value)
