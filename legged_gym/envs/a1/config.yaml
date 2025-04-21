@@ -210,6 +210,16 @@ domain_rand:
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "uniform"
+  dof_friction_ig_property:
+    apply: False
+    range: [0.0, 0.05]
+    operation: "additive"
+    distribution: "uniform"
+  dof_armature_ig_property:
+    apply: True
+    range: [0.01, 0.015]
+    operation: "additive"
+    distribution: "uniform"
 
   foot_friction:
     apply: True

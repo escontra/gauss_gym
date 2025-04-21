@@ -494,6 +494,14 @@ class LeggedRobot(base_task.BaseTask):
                 else:
                     self.torque_limits = torch.tensor(self.cfg["control"]["torque_limits"], dtype=torch.float, device=self.device, requires_grad=False)
 
+        if self.cfg["domain_rand"]["dof_friction_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
+            for i in range(len(props)):
+                props["friction"][i] = math.apply_randomization(props["friction"][i], self.cfg["domain_rand"]["dof_friction_ig_property"])
+
+        if self.cfg["domain_rand"]["dof_armature_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
+            for i in range(len(props)):
+                props["armature"][i] = math.apply_randomization(0.0, self.cfg["domain_rand"]["dof_armature_ig_property"])
+
         return props
 
     def _process_rigid_body_props(self, props, env_id):
