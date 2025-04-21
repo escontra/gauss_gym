@@ -249,19 +249,19 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 5.0
+  kick_interval_s: 6.0
   kick_lin_vel:
     apply: True
-    range: [-2.0, 2.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [-2.0, 2.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
 
-  push_interval_s: 5.0
+  push_interval_s: 8.0
   push_duration_s: 1.0
   push_force:
     apply: True
@@ -276,52 +276,72 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
 
+termination:
+  base_height_threshold: 0.45
+  projected_gravity_z_threshold: 0.0
+
 rewards:
   only_positive_rewards: True
-  tracking_sigma: 0.15
-  soft_dof_pos_limit: 1.0
-  soft_dof_vel_limit: 1.0
-  soft_torque_limit: 1.0
-  base_height_target: 0.68
-  base_height_target_max: 0.70
-  max_contact_force: 500.0
-  terminate_height: 0.45
-  terminate_rotation: 0.0
-  feet_air_time_min_time: 0.5
-  feet_air_time_max_time: 1.0
-  swing_period: 0.2
-  feet_distance_ref: 0.2
-  scales:
-    survival: 0.25
-    tracking_lin_vel_x: 2.0
-    tracking_lin_vel_y: 2.0
-    tracking_ang_vel: 1.0
-    lin_vel_z: -0.5  # -2.
-    ang_vel_xy: -0.2
-    orientation: -1.0 # -5.
-    # base_height: -1.0 # -20.  # Play with this.
-    base_height_l1: 1.0
-    torques: -0.0001 # -2.e-4
-    action_rate: -0.1 # -1.
-    dof_acc: -1.e-7
-    dof_pos_limits: -1.
-    collision: -1.
 
-    # TODO: Do we need these?
-    dof_vel: -1.e-4
-    torque_tiredness: -1.e-2
-    power: -2.e-3
-    root_acc: -1.e-4
-    feet_slip: -0.1
-    feet_vel_z: -0.
-    feet_yaw_diff: -1.
-    feet_yaw_mean: -1.
-    feet_roll: -0.1
-    feet_distance: -1.
-    feet_swing: 3.
-
+  survival:
+    scale: 0.25
+  tracking_lin_vel_x:
+    scale: 2.0
+    tracking_sigma: 0.15
+  tracking_lin_vel_y:
+    scale: 2.0
+    tracking_sigma: 0.15
+  tracking_ang_vel:
+    scale: 1.0
+    tracking_sigma: 0.15
+  lin_vel_z:
+    scale: -0.5
+  ang_vel_xy:
+    scale: -0.2
+  orientation:
+    scale: -1.0
+  base_height_l1:
+    scale: 1.0
+    min_height: 0.68
+    max_height: 0.70
+  torques:
+    scale: -0.0001
+  action_rate:
+    scale: -0.1
+  dof_acc:
+    scale: -1.e-7
+  dof_pos_limits:
+    scale: -1.0
+    soft_dof_pos_limit: 1.0
+  collision:
+    scale: -1.0
+  dof_vel:
+    scale: -1.e-4
+  torque_tiredness:
+    scale: -1.e-2
+  power:
+    scale: -2.e-3
+  root_acc:
+    scale: -1.e-4
+  feet_slip:
+    scale: -0.1
+  feet_vel_z:
+    scale: -0.
+  feet_yaw_diff:
+    scale: -1.
+  feet_yaw_mean:
+    scale: -1.
+  feet_roll:
+    scale: -0.1
+  feet_distance:
+    scale: -1.
+    feet_distance_ref: 0.2
+  feet_swing:
+    scale: 3.
+    swing_period: 0.2
+    
 commands:
-  still_proportion: 0.0
+  still_proportion: 0.05
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
@@ -395,8 +415,8 @@ algorithm:
   entropy_coef: -0.01
   symmetry: True
   symmetry_coef: 3.0
-  num_learning_epochs: 5
-  num_mini_batches: 4
+  num_learning_epochs: 20
+  num_mini_batches: 1
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2

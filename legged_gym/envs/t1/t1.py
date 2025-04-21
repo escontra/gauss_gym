@@ -55,12 +55,12 @@ class T1(LeggedRobot):
         self.gait_frequency[self.still_envs] = 0.0
         self.gait_frequency[self.get_small_command_mask()] = 0.0
 
-    def _reward_dof_pos_limits(self):
+    def _reward_dof_pos_limits(self, soft_dof_pos_limit):
         # Penalize dof positions too close to the limit
-        lower = self.dof_pos_limits[:, 0] + 0.5 * (1 - self.cfg["rewards"]["soft_dof_pos_limit"]) * (
+        lower = self.dof_pos_limits[:, 0] + 0.5 * (1 - soft_dof_pos_limit) * (
             self.dof_pos_limits[:, 1] - self.dof_pos_limits[:, 0]
         )
-        upper = self.dof_pos_limits[:, 1] - 0.5 * (1 - self.cfg["rewards"]["soft_dof_pos_limit"]) * (
+        upper = self.dof_pos_limits[:, 1] - 0.5 * (1 - soft_dof_pos_limit) * (
             self.dof_pos_limits[:, 1] - self.dof_pos_limits[:, 0]
         )
         return torch.sum(((self.dof_pos < lower) | (self.dof_pos > upper)).float(), dim=-1)
@@ -81,15 +81,15 @@ class T1(LeggedRobot):
         feet_yaw_mean = yaw.mean(dim=-1) + torch.pi * (torch.abs(yaw[:, 1] - yaw[:, 0]) > torch.pi)
         return torch.square((tu.get_euler_xyz(self.base_quat)[2] - feet_yaw_mean + torch.pi) % (2 * torch.pi) - torch.pi)
 
-    def _reward_feet_distance(self):
+    def _reward_feet_distance(self, feet_distance_ref):
         _, _, base_yaw = tu.get_euler_xyz(self.base_quat)
         feet_distance = torch.abs(
             torch.cos(base_yaw) * (self.get_feet_state()[0][:, 1, 1] - self.get_feet_state()[0][:, 0, 1])
             - torch.sin(base_yaw) * (self.get_feet_state()[0][:, 1, 0] - self.get_feet_state()[0][:, 0, 0])
         )
-        return torch.clip(self.cfg["rewards"]["feet_distance_ref"] - feet_distance, min=0.0, max=0.1)
+        return torch.clip(feet_distance_ref - feet_distance, min=0.0, max=0.1)
 
-    def _reward_feet_swing(self):
-        left_swing = (torch.abs(self.gait_process - 0.25) < 0.5 * self.cfg["rewards"]["swing_period"]) & (self.gait_frequency > 1.0e-8)
-        right_swing = (torch.abs(self.gait_process - 0.75) < 0.5 * self.cfg["rewards"]["swing_period"]) & (self.gait_frequency > 1.0e-8)
+    def _reward_feet_swing(self, swing_period):
+        left_swing = (torch.abs(self.gait_process - 0.25) < 0.5 * swing_period) & (self.gait_frequency > 1.0e-8)
+        right_swing = (torch.abs(self.gait_process - 0.75) < 0.5 * swing_period) & (self.gait_frequency > 1.0e-8)
         return (left_swing & ~self.feet_contact[:, 0]).float() + (right_swing & ~self.feet_contact[:, 1]).float()

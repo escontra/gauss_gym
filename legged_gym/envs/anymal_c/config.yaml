@@ -3,6 +3,7 @@ task: "anymal_c"
 print_config: False
 rl_device: "cuda:0"
 sim_device: "cuda:0"
+graphics_device: "cuda:0"
 headless: False
 logdir: "default"
 
@@ -45,7 +46,7 @@ terrain:
   scene_root: "{GAUSS_GYM_ROOT_DIR}/scenes"
   cams_yaw_only: False
   max_traj_pos_distance: 1.0
-  max_traj_yaw_distance_rad: 1.0
+  max_traj_yaw_distance_rad: 6.28
   static_friction: 1.0
   dynamic_friction: 1.0
   restitution: 0.
@@ -136,6 +137,11 @@ domain_rand:
     range: [0.0, 0.1]
     operation: "additive"
     distribution: "gaussian"
+  init_base_yaw:
+    apply: True
+    range: [0.0, 1.5]
+    operation: "additive"
+    distribution: "gaussian"
 
   base_com_x:
     apply: True
@@ -164,7 +170,7 @@ domain_rand:
     distribution: "uniform"
   other_mass:
     apply: True
-    range: [0.98, 1.02]
+    range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
 
@@ -178,9 +184,25 @@ domain_rand:
     range: [0.95, 1.05]
     operation: "scaling"
     distribution: "uniform"
+  dof_damping_ankles:
+    apply: False
+    ankle_names: ["Left_Ankle_Pitch", "Right_Ankle_Pitch", "Left_Ankle_Roll", "Right_Ankle_Roll"]
+    range: [-0.5, 2.0]
+    operation: "additive"
+    distribution: "uniform"
   dof_friction:
     apply: False
     range: [0.0, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+  dof_friction_ig_property:
+    apply: False
+    range: [0.0, 0.05]
+    operation: "additive"
+    distribution: "uniform"
+  dof_armature_ig_property:
+    apply: True
+    range: [0.0, 0.015]
     operation: "additive"
     distribution: "uniform"
 
@@ -203,60 +225,93 @@ domain_rand:
   kick_interval_s: 4.0
   kick_lin_vel:
     apply: True
-    range: [0.0, 0.1]
+    range: [-1.5, 1.5]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [0.0, 0.02]
+    range: [-1.5, 1.5]
     operation: "additive"
-    distribution: "gaussian"
+    distribution: "uniform"
 
-  push_interval_s: 6.0
+  push_interval_s: 8.0
   push_duration_s: 1.0
   push_force:
     apply: True
-    range: [0.0, 10.0]
+    range: [0., 10.]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
     apply: True
-    range: [0.0, 2.0]
+    range: [0., 2.]
     operation: "additive"
     distribution: "gaussian"
 
+termination:
+  base_height_threshold: 0.5
+  projected_gravity_z_threshold: 0.0
+
 rewards:
   only_positive_rewards: True
-  tracking_sigma: 0.25
-  soft_dof_pos_limit: 1.0
-  soft_dof_vel_limit: 1.0
-  soft_torque_limit: 1.0
-  base_height_target: 0.5
-  max_contact_force: 500.0
-  terminate_height: 0.08
-  feet_air_time_min_time: 0.5
-  feet_air_time_max_time: 1.5
-  scales:
-    termination: -0.
-    tracking_lin_vel: 0.0
-    tracking_lin_vel_x: 1.0
-    tracking_lin_vel_y: 1.0
-    tracking_ang_vel: 0.5
-    lin_vel_z: -0.5
-    ang_vel_xy: -0.05
-    orientation: -0.
-    torques: -0.00001
-    dof_vel: -0.
-    dof_acc: -2.5e-7
-    base_height: -0. 
-    feet_air_time:  1.0
-    collision: -1.
-    feet_stumble: -0.0 
-    action_rate: -0.01
-    stand_still: -0.
+
+  tracking_lin_vel_x:
+    scale: 1.0
+    tracking_sigma: 0.25
+  tracking_lin_vel_y:
+    scale: 1.0
+    tracking_sigma: 0.25
+  tracking_ang_vel:
+    scale: 0.5
+    tracking_sigma: 0.25
+  lin_vel_z:
+    scale: -0.5
+  ang_vel_xy:
+    scale: -0.05
+  torques:
+    scale: -0.00001
+  dof_acc:
+    scale: -2.5e-7
+  feet_air_time:
+    scale: 1.0
+    min_air_time: 0.5
+    max_air_time: 1.5
+  collision:
+    scale: -1.0
+  action_rate:
+    scale: -0.01
+
+# rewards:
+#   only_positive_rewards: True
+#   tracking_sigma: 0.25
+#   soft_dof_pos_limit: 1.0
+#   soft_dof_vel_limit: 1.0
+#   soft_torque_limit: 1.0
+#   base_height_target: 0.5
+#   max_contact_force: 500.0
+#   terminate_height: 0.08
+#   feet_air_time_min_time: 0.5
+#   feet_air_time_max_time: 1.5
+#   scales:
+#     termination: -0.
+#     tracking_lin_vel: 0.0
+#     tracking_lin_vel_x: 1.0
+#     tracking_lin_vel_y: 1.0
+#     tracking_ang_vel: 0.5
+#     lin_vel_z: -0.5
+#     ang_vel_xy: -0.05
+#     orientation: -0.
+#     torques: -0.00001
+#     dof_vel: -0.
+#     dof_acc: -2.5e-7
+#     base_height: -0. 
+#     feet_air_time:  1.0
+#     collision: -1.
+#     feet_stumble: -0.0 
+#     action_rate: -0.01
+#     stand_still: -0.
 
 commands:
-  still_proportion: 0.1
+  still_proportion: 0.05
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
@@ -277,7 +332,6 @@ viewer:
   ref_env: 0
   pos: [10., 0., 6.]
   lookat: [11., 5., 3.]
-  record_video: False
 
 sim:
   physics_engine: "SIM_PHYSX" # or "SIM_FLEX"
@@ -307,8 +361,10 @@ policy:
   obs_key: "student_observations"
   params:
     layer_activation: "elu"
-    hidden_layer_sizes: [512, 256, 128]
+    recurrent_state_size: 256
+    hidden_layer_sizes: [256, 128]
     symlog_inputs: True
+    normalize_obs: True
     head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.5}
 
 value:
@@ -319,17 +375,17 @@ value:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
+    normalize_obs: True
     head: {output_type: mse, outscale: 1.0}
-  # value_head: {output_type: symexp_twohot, bins: 255, outscale: 1.0}
 
 algorithm:
-  learning_rate: 1.e-5
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
   symmetry: False
-  symmetric_coef: 3.0
+  symmetry_coef: 3.0
   num_learning_epochs: 20
+  num_mini_batches: 1
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
@@ -337,12 +393,17 @@ algorithm:
   normalize_advantage_per_minibatch: True
 
 runner:
+  record_video: False
+  record_distance: [-1.8, -1.8, 0.5]
   num_steps_per_env: 24
+  compile: True
   class_name: "Runner"
-  use_wandb: False
+  use_wandb: True
   description: ""
   log_every: 30.
   save_every: 150.
+  record_every: 600.
+  record_frames: 300.
   run_name: ""
   resume: False
   load_run: ""

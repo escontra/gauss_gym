@@ -85,10 +85,10 @@ init_state:
 control:
   control_type: "P"
   stiffness: {
-    "joint": 35.0
+    "joint": 50.0
   }
   damping: {
-    "joint": 0.5
+    "joint": 1.0
   }
   action_scale: 0.5
   decimation: 4
@@ -237,7 +237,7 @@ domain_rand:
     operation: "additive"
     distribution: "uniform"
 
-  kick_interval_s: 5.0
+  kick_interval_s: 4.0
   kick_lin_vel:
     apply: True
     range: [-1.5, 1.5]
@@ -262,40 +262,55 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
 
+termination:
+  base_height_threshold: 0.08
+  projected_gravity_z_threshold: 0.0
+
 rewards:
   only_positive_rewards: True
-  tracking_sigma: 0.15
-  soft_dof_pos_limit: 1.0
-  soft_dof_vel_limit: 1.0
-  soft_torque_limit: 1.0
-  base_height_target: 0.25
-  hip_height_target_max: 0.28
-  hip_height_target: 0.25 # 0.25
-  max_contact_force: 100.0
-  terminate_height: 0.08
-  terminate_rotation: 0.0
-  feet_air_time_min_time: 0.2
-  feet_air_time_max_time: 0.3
-  max_foot_height: 0.2
-  foot_clearance_height: 0.05
-  scales:
-    tracking_lin_vel_x: 2.0
-    tracking_lin_vel_y: 2.0
-    tracking_ang_vel: 1.0
-    lin_vel_z: -0.5
-    ang_vel_xy: -0.05
-    torques: -0.0001 # -0.0001 # -0.00005 # -0.000033 # -0.0001 # -0.00001
-    dof_acc: -2.5e-7
-    feet_air_time:  1.0
-    collision: -1.
-    action_rate: -0.01
-    hip_height_l1: 1.0
-    dof_pos_limits: -1.0
-    energy: -0.0005 # TODO: helps? 
-    feet_clearance_clipped: 0.1
+
+  tracking_lin_vel_x:
+    scale: 2.0
+    tracking_sigma: 0.15
+  tracking_lin_vel_y:
+    scale: 2.0
+    tracking_sigma: 0.15
+  tracking_ang_vel:
+    scale: 1.0
+    tracking_sigma: 0.15
+  lin_vel_z:
+    scale: -0.5
+  ang_vel_xy:
+    scale: -0.05
+  torques:
+    scale: -0.0001
+  feet_air_time:
+    scale: 1.0
+    min_air_time: 0.2
+    max_air_time: 0.3
+  collision:
+    scale: -1.0
+  action_rate:
+    scale: -0.01
+  hip_height_l1:
+    scale: 1.0
+    min_height: 0.3
+    max_height: 0.31
+  dof_pos_limits:
+    scale: -1.0
+    soft_dof_pos_limit: 1.0
+  energy_substeps:
+    scale: -0.0005
+  feet_clearance_clipped:
+    scale: 0.1
+    clearance_height: 0.05
+  delta_torques:
+    scale: -1.e-5
+  a1_pose:
+    scale: 0.05
 
 commands:
-  still_proportion: 0.0
+  still_proportion: 0.05
   heading_command: True
   num_commands: 4
   resampling_time: 10. # time before command are changed[s]
@@ -391,8 +406,8 @@ algorithm:
   entropy_coef: -0.01
   symmetry: True
   symmetry_coef: 3.0
-  num_learning_epochs: 5
-  num_mini_batches: 4
+  num_learning_epochs: 20
+  num_mini_batches: 1
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
