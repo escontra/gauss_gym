@@ -4,6 +4,7 @@ import time
 import yaml
 import logging
 import threading
+import pathlib
 
 from booster_robotics_sdk_python import (
     ChannelFactory,
@@ -16,15 +17,14 @@ from booster_robotics_sdk_python import (
     RobotMode,
 )
 
-from utils.command import create_prepare_cmd, create_first_frame_rl_cmd
-from utils.remote_control_service import RemoteControlService
-from utils.rotate import rotate_vector_inverse_rpy
-from utils.timer import TimerConfig, Timer
-from utils.policy import Policy
+from deployment.t1.utils.command import create_prepare_cmd, create_first_frame_rl_cmd
+from deployment.t1.utils.remote_control_service import RemoteControlService
+from deployment.t1.utils.rotate import rotate_vector_inverse_rpy
+from deployment.t1.utils.timer import TimerConfig, Timer
+from deployment.t1.utils.policy import Policy
 
 from legged_gym import GAUSS_GYM_ROOT_DIR
 from legged_gym.utils import flags, config
-import pathlib
 
 
 class Controller:
@@ -220,12 +220,6 @@ def main(argv=None):
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
-
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--config", default="T1.yaml", type=str, help="Name of the configuration file.")
-    # parser.add_argument("--net", type=str, default="127.0.0.1", help="Network interface for SDK communication.")
-    # args = parser.parse_args()
-    # cfg_file = os.path.join("configs", args.config)
 
     # Load from file
     log_root = pathlib.Path(os.path.join(GAUSS_GYM_ROOT_DIR, 'logs'))
