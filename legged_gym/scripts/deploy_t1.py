@@ -169,6 +169,7 @@ class Controller:
         )
 
         inference_time = time.perf_counter()
+        print((inference_time - start_time) * 1000)
         self.logger.debug(f"Inference took {(inference_time - start_time)*1000:.4f} ms")
         time.sleep(0.001)
 
@@ -181,7 +182,8 @@ class Controller:
             self.next_publish_time += self.cfg["sim"]["dt"]
             self.logger.debug(f"Next publish time: {self.next_publish_time}")
 
-            self.filtered_dof_target = self.filtered_dof_target * 0.8 + self.dof_target * 0.2
+            self.filtered_dof_target = self.dof_target
+            # self.filtered_dof_target = self.filtered_dof_target * 0.8 + self.dof_target * 0.2
 
             for i in range(B1JointCnt):
                 self.low_cmd.motor_cmd[i].q = self.filtered_dof_target[i]
