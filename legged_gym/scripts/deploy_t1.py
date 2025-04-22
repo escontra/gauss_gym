@@ -34,7 +34,8 @@ class Controller:
         self.logger = logging.getLogger(__name__)
 
         # Load config
-        with open('configs/' + onboard_cfg_file, "r", encoding="utf-8") as f:
+        onboard_cfg_path = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 't1' / 'configs' / onboard_cfg_file
+        with open(onboard_cfg_path, "r", encoding="utf-8") as f:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
         
         self.cfg = cfg
