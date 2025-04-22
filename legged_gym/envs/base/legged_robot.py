@@ -191,29 +191,32 @@ class LeggedRobot(base_task.BaseTask):
           self.gym.refresh_actor_root_state_tensor(self.sim)
           self.gym.refresh_net_contact_force_tensor(self.sim)
           self.gym.refresh_rigid_body_state_tensor(self.sim)
-          self.episode_length_buf += 1
-          self.common_step_counter += 1
 
-          # prepare quantities
           self.base_quat[:] = self.root_states[:, 3:7]
           self.base_lin_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
           self.base_ang_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
           self.projected_gravity[:] = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
+
+          with timer.section("update_sensors"):
+            for sensor in self.sensors.values():
+                sensor.update(-1)
+          if self.viewer and self.enable_viewer_sync and self.debug_viz:
+              self._draw_debug_vis()
+          self.feet_contact[:] = self.sensors["foot_contact_sensor"].get_data()
+
+          # Initialize buffers with initial values when necessary.
+          self._initialize_prev_reset_buffer(self.prev_reset)
+
+          self.episode_length_buf += 1
+          self.common_step_counter += 1
+
+          # prepare quantities
           self.filtered_lin_vel[:] = self.base_lin_vel[:] * self.cfg["normalization"]["filter_weight"] + self.filtered_lin_vel[:] * (
               1.0 - self.cfg["normalization"]["filter_weight"]
           )
           self.filtered_ang_vel[:] = self.base_ang_vel[:] * self.cfg["normalization"]["filter_weight"] + self.filtered_ang_vel[:] * (
               1.0 - self.cfg["normalization"]["filter_weight"]
           )
-
-        self._post_physics_step_callback()
-
-        with timer.section("update_sensors"):
-          for sensor in self.sensors.values():
-              sensor.update(-1)
-        if self.viewer and self.enable_viewer_sync and self.debug_viz:
-            self._draw_debug_vis()
-        self.feet_contact[:] = self.sensors["foot_contact_sensor"].get_data()
 
         # Check if is first contact.
         # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
@@ -229,7 +232,6 @@ class LeggedRobot(base_task.BaseTask):
         # compute observations, rewards, resets, ...
         self.check_termination()
         self.compute_reward()
-        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
 
         self.swing_peak *= ~contact_filt
         self.feet_air_time *= ~contact_filt
@@ -240,7 +242,11 @@ class LeggedRobot(base_task.BaseTask):
         self.last_contacts[:] = self.feet_contact[:]
         self.last_torques[:] = self.torques[:]
 
+        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
+        self.prev_reset = env_ids
+
+        self._post_physics_step_callback()
 
         self.obs_dict = self.obs_manager.compute_obs(self)        
 
@@ -649,6 +655,18 @@ class LeggedRobot(base_task.BaseTask):
         # Reset observation buffers.
         self.obs_manager.reset_buffers(env_ids)
 
+    def _initialize_prev_reset_buffer(self, env_ids):
+        # Prevent spikes in rewards caused by a reset buffer.
+        if len(env_ids) == 0:
+          return
+        self.last_root_vel[env_ids] = self.root_states[env_ids, 7:13]
+        self.last_actions[env_ids] = self.actions[env_ids]
+        self.last_dof_vel[env_ids] = self.dof_vel[env_ids]
+        self.last_contacts[env_ids] = self.feet_contact[env_ids]
+        self.last_torques[env_ids] = self.torques[env_ids]
+        self.filtered_lin_vel[env_ids] = self.base_lin_vel[env_ids]
+        self.filtered_ang_vel[env_ids] = self.base_ang_vel[env_ids]
+
     def _reset_dofs(self, env_ids):
         """ Resets DOF position and velocities of selected environmments
         Positions are randomly selected within 0.5:1.5 x default positions.
@@ -821,7 +839,7 @@ class LeggedRobot(base_task.BaseTask):
         self.max_power_per_timestep = torch.zeros(self.num_envs, dtype= torch.float32, device= self.device)
         self.still_envs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.init_positions = self.root_states[:, 0:3].clone()
-
+        self.prev_reset = torch.arange(self.num_envs, device=self.device)
 
     def _prepare_reward_function(self):
         """ Prepares a list of reward functions, whcih will be called to compute the total reward.
