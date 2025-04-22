@@ -21,14 +21,14 @@ env:
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
-  teacher_observations:
+  critic:
     observations: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
     ]
-  student_observations:
+  policy:
     add_noise: True
     add_latency: True
     latency_resampling_interval_s: 3.0
@@ -42,7 +42,7 @@ observations:
     ]
 
 symmetries:
-  student_observations:
+  policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS
@@ -283,7 +283,7 @@ rewards:
   ang_vel_xy:
     scale: -0.05
   torques:
-    scale: -0.0001
+    scale: -0.00005
   feet_air_time:
     scale: 1.0
     min_air_time: 0.2
@@ -292,28 +292,28 @@ rewards:
     scale: -1.0
   action_rate:
     scale: -0.01
-  hip_height_l1:
-    scale: 1.0
-    min_height: 0.3
-    max_height: 0.31
+  # hip_height_l1:
+  #   scale: 1.0
+  #   min_height: 0.3
+  #   max_height: 0.31
   dof_pos_limits:
     scale: -1.0
     soft_dof_pos_limit: 1.0
   energy_substeps:
     scale: -0.0005
   feet_clearance_clipped:
-    scale: 0.1
-    clearance_height: 0.05
-  delta_torques:
-    scale: -1.e-5
+    scale: 1.0
+    clearance_height: 0.1
+  # delta_torques:
+  #   scale: -1.e-5
   a1_pose:
-    scale: 0.05
+    scale: 0.5
 
 commands:
   still_proportion: 0.05
   heading_command: True
   num_commands: 4
-  resampling_time: 10. # time before command are changed[s]
+  resampling_time: 4. # time before command are changed[s]
   small_lin_vel_threshold: 0.1
   small_ang_vel_threshold: 0.1
   ranges:
@@ -379,7 +379,7 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
-  obs_key: "student_observations"
+  obs_key: "policy"
   params:
     layer_activation: "elu"
     recurrent_state_size: 256
@@ -391,7 +391,7 @@ policy:
 value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
-  obs_key: "teacher_observations"
+  obs_key: "critic"
   params:
     layer_activation: "elu"
     recurrent_state_size: 512
@@ -406,8 +406,8 @@ algorithm:
   entropy_coef: -0.01
   symmetry: True
   symmetry_coef: 3.0
-  num_learning_epochs: 20
-  num_mini_batches: 1
+  num_learning_epochs: 5 # 20
+  num_mini_batches: 4 # 1
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2

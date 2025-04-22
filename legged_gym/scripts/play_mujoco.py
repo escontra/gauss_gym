@@ -22,8 +22,8 @@ def compute_observation(env_cfg, obs_groups, mj_data, command, gait_frequency, g
     
     obs_dict = {}
     for group in obs_groups:
-        if "teacher" in group.name:
-            continue
+        if group.name != env_cfg['policy']['obs_key']:
+          continue
         obs_dict[group.name] = {}
         for observation in group.observations:
             if observation.name == "projected_gravity":

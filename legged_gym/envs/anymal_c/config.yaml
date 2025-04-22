@@ -21,14 +21,14 @@ env:
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
-  teacher_observations:
+  critic:
     observations: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
       RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES,
       PUSHING_FORCES, PUSHING_TORQUES]
-  student_observations:
+  policy:
     add_noise: True
     add_latency: True
     latency_resampling_interval_s: 2.0
@@ -358,7 +358,7 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
-  obs_key: "student_observations"
+  obs_key: "policy"
   params:
     layer_activation: "elu"
     recurrent_state_size: 256
@@ -370,7 +370,7 @@ policy:
 value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
-  obs_key: "teacher_observations"
+  obs_key: "critic"
   params:
     layer_activation: "elu"
     hidden_layer_sizes: [512, 256, 128]

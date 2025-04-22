@@ -23,8 +23,8 @@ def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_
     
     obs_dict = {}
     for group in observation_groups:
-        if "teacher" in group.name:
-            continue
+        if group.name != env_cfg['policy']['obs_key']:
+          continue
         obs_dict[group.name] = {}
         for observation in group.observations:
             if observation.name == "projected_gravity":
@@ -133,10 +133,8 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
-        # for key in self.obs['student_observations']:
-            # print(key, self.obs['student_observations'][key].dtype)
 
-        dist = self.runner.act(self.obs['student_observations'])
+        dist = self.runner.act(self.obs[self.cfg['policy']['obs_key']])
         self.actions[:] = dist.detach().cpu().numpy()
         self.actions[:] = np.clip(self.actions, -self.cfg["normalization"]["clip_actions"], self.cfg["normalization"]["clip_actions"])
         
