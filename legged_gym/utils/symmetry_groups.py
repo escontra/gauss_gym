@@ -66,13 +66,13 @@ def t1_actions_symmetry(env, obs):
   return t1_joint_symmetry(env, obs)
 
 
-def a1_joint_symmetry(env, joint_val):
+def a1_joint_symmetry(env, joint_val, use_multipliers=True):
   joint_map = {'FL': 'FR', 'RL': 'RR', 'FR': 'FL', 'RR': 'RL'}
   multipliers = {'calf': 1.0, 'hip': -1.0, 'thigh': 1.0}
   joint_val_sym = torch.zeros_like(joint_val)
   for dof_name in env.dof_names:
     new_name = dof_name.replace(dof_name[:2], joint_map[dof_name[:2]])
-    multiplier = multipliers[dof_name.split('_')[1]]
+    multiplier = multipliers[dof_name.split('_')[1]] if use_multipliers else 1.0
     # print(f'Mapping {new_name} (idx {env.dof_names.index(new_name)}) '
     #       f'to {dof_name} (idx {env.dof_names.index(dof_name)}) '
     #       f'with multiplier {multiplier}.')
@@ -90,6 +90,14 @@ def a1_dof_vel_symmetry(env, obs):
 
 def a1_actions_symmetry(env, obs):
   return a1_joint_symmetry(env, obs)
+
+
+def a1_stiffness_symmetry(env, obs):
+  return a1_joint_symmetry(env, obs, use_multipliers=False)
+
+
+def a1_damping_symmetry(env, obs):
+  return a1_joint_symmetry(env, obs, use_multipliers=False)
 
 
 BASE_ANG_VEL = SymmetryModifier(
@@ -120,6 +128,16 @@ A1_DOF_VEL = SymmetryModifier(
 A1_ACTIONS = SymmetryModifier(
   observation=observation_groups.ACTIONS,
   symmetry_fn=a1_actions_symmetry,
+)
+
+A1_STIFFNESS = SymmetryModifier(
+  observation=observation_groups.STIFFNESS,
+  symmetry_fn=a1_stiffness_symmetry,
+)
+
+A1_DAMPING = SymmetryModifier(
+  observation=observation_groups.DAMPING,
+  symmetry_fn=a1_damping_symmetry,
 )
 
 T1_DOF_POS = SymmetryModifier(

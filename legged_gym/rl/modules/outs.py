@@ -5,7 +5,7 @@ import torch.utils._pytree as pytree
 import torch
 import torch.nn as nn
 
-from legged_gym.utils import math
+from legged_gym.utils import math, space
 
 i32 = torch.int32
 f32 = torch.float32
@@ -337,7 +337,7 @@ class Head(torch.nn.Module):
   def __init__(
       self,
       input_size: int,
-      output_size: int,
+      output_space: space.Space,
       output_type: str,
       init_std: float = 1.0,
       minstd: float = 1.0,
@@ -348,7 +348,7 @@ class Head(torch.nn.Module):
       **kw):
     super().__init__()
     self.input_size = input_size
-    self.output_size = output_size
+    self.output_size = output_space.shape[0]
     self.impl = output_type
     self.kw = kw
     self.init_std = init_std
@@ -358,35 +358,37 @@ class Head(torch.nn.Module):
     self.bins = bins
     self.outscale = outscale
     if self.impl == 'mse':
-      self.projection_net = nn.Linear(input_size, output_size, **self.kw)
+      self.projection_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
       self._init_layer(self.projection_net)
     elif self.impl == 'symexp_twohot':
-      self.projection_net = nn.Linear(input_size, output_size * self.bins, **self.kw)
+      self.projection_net = nn.Linear(input_size, output_space.shape[0] * self.bins, **self.kw)
       self._init_layer(self.projection_net)
     elif self.impl == 'bounded_normal':
-      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
-      self.stddev_net = nn.Linear(input_size, output_size, **self.kw)
+      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.stddev_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
       self._init_layer(self.mean_net)
       self._init_layer(self.stddev_net)
     elif self.impl == 'normal_logstd':
-      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
-      self.stddev_net = nn.Linear(input_size, output_size, **self.kw)
+      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.stddev_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
       self._init_layer(self.mean_net)
       self._init_layer(self.stddev_net)
     elif self.impl == 'normal_logstdparam':
-      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
       self.logstd = torch.nn.parameter.Parameter(
-        torch.full((1, output_size), fill_value=np.log(self.init_std)), requires_grad=True
+        torch.full((1, output_space.shape[0]), fill_value=np.log(self.init_std)), requires_grad=True
       )
-    elif self.impl == 'normal_logstdparam_unclipped':
-      self.mean_net = nn.Linear(input_size, output_size, **self.kw)
+    elif self.impl in ('normal_logstdparam_unclipped', 'bounded_normal_logstdparam_unclipped'):
+      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
       self.logstd = torch.nn.parameter.Parameter(
         torch.full(
-          (1, output_size),
+          (1, output_space.shape[0]),
           fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
           dtype=torch.float32),
         requires_grad=True
       )
+    else:
+      raise NotImplementedError(self.impl)
 
   def _init_layer(self, layer):
     torch.nn.init.trunc_normal_(layer.weight)
@@ -451,6 +453,12 @@ class Head(torch.nn.Module):
 
   def normal_logstdparam_unclipped(self, x):
     mean = self.mean_net(x)
+    std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
+    output = Normal(mean, std)
+    return output
+
+  def bounded_normal_logstdparam_unclipped(self, x):
+    mean = torch.tanh(self.mean_net(x))
     std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
     output = Normal(mean, std)
     return output

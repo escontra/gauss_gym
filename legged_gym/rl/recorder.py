@@ -7,7 +7,7 @@ from typing import Dict, Any
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
 
-from legged_gym.utils import config, timer, when
+from legged_gym.utils import config, timer, when, space
 
 
 @timer.section('gif')
@@ -31,11 +31,18 @@ def _encode_gif(frames, fps):
 
 
 class Recorder:
-  def __init__(self, log_dir: pathlib.Path, cfg: Dict[str, Any], deploy_cfg: Dict[str, Any], obs_group_sizes):
+  def __init__(
+      self,
+      log_dir: pathlib.Path,
+      cfg: Dict[str, Any],
+      deploy_cfg: Dict[str, Any],
+      obs_space: Dict[str, Dict[str, space.Space]],
+      action_space: Dict[str, space.Space]):
     self.cfg = cfg
     self.deploy_cfg = deploy_cfg
     self.log_dir = log_dir
-    self.obs_group_sizes = obs_group_sizes
+    self.obs_space = obs_space
+    self.action_space = action_space
     self.initialized = False
     self.fps = int(1. / (self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"]))
 
@@ -132,8 +139,10 @@ class Recorder:
     config.Config(self.cfg).save(self.log_dir / "config.yaml")
     config.Config({'deploy': self.deploy_cfg}).save(self.log_dir / "deploy_config.yaml")
 
-    with open(self.log_dir / "obs_group_sizes.pkl", "wb") as file:
-      pickle.dump(self.obs_group_sizes, file)
+    with open(self.log_dir / "obs_space.pkl", "wb") as file:
+      pickle.dump(self.obs_space, file)
+    with open(self.log_dir / "action_space.pkl", "wb") as file:
+      pickle.dump(self.action_space, file)
     self.initialized = True
 
   @timer.section("record_episode_statistics")
@@ -178,6 +187,12 @@ class Recorder:
         tf.summary.scalar(key, float(value), it)
         if self.cfg["runner"]["use_wandb"]:
           wandb.log({key: float(value)}, step=it)
+      elif isinstance(value, np.ndarray) and value.ndim == 1:
+        if len(value) > 1024:
+          value = value.copy()
+          np.random.shuffle(value)
+          value = value[:1024]
+        tf.summary.histogram(key, value, it)
       elif isinstance(value, np.ndarray) and value.ndim == 4 and value.dtype == np.uint8:
         gif_bytes = self._video_summary(key, value, it)
         if self.cfg["runner"]["use_wandb"]:

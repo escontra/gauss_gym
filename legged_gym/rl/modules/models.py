@@ -2,9 +2,10 @@ import functools
 import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional, Union, Tuple, List, Callable
+
+from legged_gym.utils import math, space
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.actor_critic import get_activation
-from legged_gym.utils import math
 from legged_gym.rl.modules import normalizers
 
 
@@ -54,10 +55,10 @@ def get_mlp_cnn_keys(obs):
   mlp_keys, cnn_keys = [], []
   num_mlp_obs = 0
   for k, v in obs.items():
-    if len(v[0]) == 1:
+    if len(v.shape) == 1:
       mlp_keys.append(k)
-      num_mlp_obs += v[0][0]
-    elif len(v[0]) == 3:
+      num_mlp_obs += v.shape[0]
+    elif len(v.shape) == 3:
       cnn_keys.append(k)
     else:
       raise ValueError(f'Observation {k} has unexpected shape: {v.shape}')
@@ -71,8 +72,8 @@ class RecurrentModel(torch.nn.Module):
   is_recurrent = True
   def __init__(
         self,
-        output_size,
-        obs_space,
+        action_space: Dict[str, space.Space],
+        obs_space: Dict[str, space.Space],
         layer_activation="elu",
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
@@ -101,8 +102,9 @@ class RecurrentModel(torch.nn.Module):
       layers.append(torch.nn.Linear(input_size, size))
       layers.append(get_activation(layer_activation))
       input_size = size
-    layers.append(outs.Head(input_size, output_size, **head))
     self.model = torch.nn.Sequential(*layers)
+    heads = {k: outs.Head(input_size, v, **head[k]) for k, v in action_space.items()}
+    self.heads = nn.ModuleDict(heads)
     if self.cnn_keys:
       # self.cnn_c = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], num_classes=IMAGE_EMBEDDING_DIM)
       self.cnn = resnet.NatureCNN(3, IMAGE_EMBEDDING_DIM)
@@ -157,19 +159,23 @@ class RecurrentModel(torch.nn.Module):
                masks: Optional[torch.Tensor]=None,
                hidden_states: Optional[torch.Tensor]=None,
                update_state: bool=True,
-               return_states: bool=False) -> Union[outs.Output, Tuple[outs.Output, Dict[str, torch.Tensor]]]:
+               return_states: bool=False) -> Union[Dict[str, outs.Output], Tuple[Dict[str, outs.Output], Dict[str, torch.Tensor]]]:
     processed_obs = self.process_obs(obs)
     rnn_state = self.memory(processed_obs, masks, hidden_states, update_state)
-    dist = self.model(rnn_state.squeeze(0))
+    model_state = self.model(rnn_state.squeeze(0))
+    dists = {k: self.heads[k](model_state) for k in self.heads}
     if return_states:
-        return dist, {'recurrent_state': rnn_state.squeeze(0), 'obs': processed_obs}
-    return dist
+        return dists, {'recurrent_state': rnn_state.squeeze(0), 'obs': processed_obs}
+    return dists
 
   def stats(self):
     stats = {}
     for layer in self.model:
       if hasattr(layer, 'stats'):
         stats.update(layer.stats())
+    for name, head in self.heads.items():
+      if hasattr(head, 'stats'):
+        stats.update({f'{name}_{k}': v for k, v in head.stats().items()})
     return stats
 
 

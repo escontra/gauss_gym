@@ -69,6 +69,12 @@ def dof_vel(env: "ANY_ENV", params, is_real=False):
 def actions(env: "ANY_ENV", params, is_real=False):
     return env.actions
 
+def stiffness(env: "ANY_ENV", params, is_real=False):
+    return env.stiffness
+
+def damping(env: "ANY_ENV", params, is_real=False):
+    return env.damping
+
 def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     heights = env.root_states[:, 2].unsqueeze(1) - 0.5 - sensor.get_data()[..., 2]

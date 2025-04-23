@@ -26,7 +26,8 @@ observations:
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
-      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
+      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
+      # STIFFNESS, DAMPING
     ]
   policy:
     add_noise: True
@@ -49,7 +50,7 @@ symmetries:
     ]
   actions:
     symmetries: [
-      A1_ACTIONS
+      A1_ACTIONS, A1_STIFFNESS, A1_DAMPING
     ]
 
 terrain:
@@ -302,8 +303,8 @@ rewards:
   energy_substeps:
     scale: -0.0005
   feet_clearance_clipped:
-    scale: 1.0
-    clearance_height: 0.1
+    scale: 0.1
+    clearance_height: 0.05
   # delta_torques:
   #   scale: -1.e-5
   a1_pose:
@@ -311,9 +312,10 @@ rewards:
 
 commands:
   still_proportion: 0.05
+  command_gains: True
   heading_command: True
   num_commands: 4
-  resampling_time: 4. # time before command are changed[s]
+  resampling_time: 4.0 # time before command are changed[s]
   small_lin_vel_threshold: 0.1
   small_ang_vel_threshold: 0.1
   ranges:
@@ -379,39 +381,49 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
+  kl_key: "actions"
   obs_key: "policy"
+  weight_decay: 0.01
   params:
     layer_activation: "elu"
     recurrent_state_size: 256
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
+    # head: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
+    head:
+      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
+      stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
+      damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
 
 value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
   obs_key: "critic"
+  weight_decay: 0.01
   params:
     layer_activation: "elu"
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: {output_type: mse, outscale: 1.0}
+    head: 
+      value: {output_type: mse, outscale: 1.0}
 
 algorithm:
   gamma: 0.97
   lam: 0.95
   entropy_coef: -0.01
+  entropy_keys: ["actions"]
   symmetry: True
   symmetry_coef: 3.0
-  num_learning_epochs: 5 # 20
-  num_mini_batches: 4 # 1
+  num_learning_epochs: 5
+  num_mini_batches: 4
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
   bound_coef: 1.0
+  bound_loss_keys: ["actions"]
   normalize_advantage_per_minibatch: True
 
 runner:
@@ -423,7 +435,7 @@ runner:
   use_wandb: True
   description: ""
   log_every: 30.
-  save_every: 150.
+  save_every: 600.
   record_every: 600.
   record_frames: 300.
   run_name: ""

@@ -1,6 +1,6 @@
 import torch
 from typing import List
-from legged_gym.utils import observation_groups, math, timer
+from legged_gym.utils import observation_groups, math, timer, space
 
 
 class ObsManager:
@@ -41,7 +41,8 @@ class ObsManager:
                 obs_dtype = example_obs.dtype
                 delta = obs_shape[1]
                 self.obs_dims_per_group_func[obs_group.name][obs.name] = (obs_dim, obs_dim + delta)
-                self.obs_dims_per_group_obs[obs_group.name][obs.name] = (obs_shape[1:], obs_dtype)
+                self.obs_dims_per_group_obs[obs_group.name][obs.name] = space.Space(shape=obs_shape[1:], dtype=example_obs.cpu().numpy().dtype)
+                # (obs_shape[1:], obs_dtype)
                 obs_dim += delta
 
                 buffer_length = int(latency_range[1] / env.dt) + 1

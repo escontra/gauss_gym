@@ -23,8 +23,8 @@ class ExperienceBuffer:
         self.tensor_dict[name][obs_name] = torch.zeros(
           self.horizon_length,
           self.num_envs,
-          *obs_group[0],
-          dtype=obs_group[1],
+          *obs_group.shape,
+          dtype=getattr(torch, obs_group.dtype.name),
           device=self.device,
         )
 

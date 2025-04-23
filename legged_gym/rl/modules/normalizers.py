@@ -1,7 +1,9 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 import torch
 import torch.nn as nn
 import torch.utils._pytree as pytree
+
+from legged_gym.utils import space
 
 
 def _validate_batch_shapes(batch,
@@ -170,7 +172,7 @@ class PyTreeNormalizer(nn.Module):
 class DictNormalizer(nn.Module):
 
   def __init__(self,
-               obs_space,
+               obs_space: Dict[str, space.Space],
                max_abs_value: Optional[float] = None,
                std_min_value: float = 1e-6,
                std_max_value: float = 1e6,
@@ -183,9 +185,9 @@ class DictNormalizer(nn.Module):
     self.register_buffer('count', torch.zeros(size=(), dtype=torch.int32))
     self.obs_keys = list(obs_space.keys())
     for k, v in obs_space.items():
-      self.register_buffer(f'mean_{k}', torch.zeros(v[0], dtype=torch.float32))
-      self.register_buffer(f'std_{k}', torch.ones(v[0], dtype=torch.float32))
-      self.register_buffer(f'summed_variance_{k}', torch.zeros(v[0], dtype=torch.float32))
+      self.register_buffer(f'mean_{k}', torch.zeros(v.shape, dtype=torch.float32))
+      self.register_buffer(f'std_{k}', torch.ones(v.shape, dtype=torch.float32))
+      self.register_buffer(f'summed_variance_{k}', torch.zeros(v.shape, dtype=torch.float32))
     # self.mean = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
     # self.std = nn.ParameterDict({k: nn.Parameter(torch.ones(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
     # self.summed_variance = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
