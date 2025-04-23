@@ -303,8 +303,8 @@ rewards:
   energy_substeps:
     scale: -0.0005
   feet_clearance_clipped:
-    scale: 0.1
-    clearance_height: 0.05
+    scale: 1.0
+    clearance_height: 0.1
   # delta_torques:
   #   scale: -1.e-5
   a1_pose:
