@@ -7,9 +7,6 @@ class ObsManager:
     def __init__(self, env, obs_groups_cfg: List[observation_groups.ObservationGroup]):
         self.env = env
         self.device = env.device
-        self.obs_per_group = {}
-        self.obs_dims_per_group = {}
-        self.obs_dims_per_group_func = {}
         self.obs_dims_per_group_obs = {}
         self.obs_dict = {}
         self.obs_buffers_per_group = {}
@@ -19,9 +16,6 @@ class ObsManager:
         for obs_group in obs_groups_cfg:
             if obs_group is None:
                 continue
-            self.obs_per_group[obs_group.name] = []
-            obs_dim = 0
-            self.obs_dims_per_group_func[obs_group.name] = {}
             self.obs_dims_per_group_obs[obs_group.name] = {}
             self.obs_buffers_per_group[obs_group.name] = {}
             self.latency_buffers_per_group[obs_group.name] = {}
@@ -35,15 +29,10 @@ class ObsManager:
                 latency_range = obs.latency_range if obs_group.add_latency else (0., 0.)
                 function = obs.func
                 # if function is a string evaluate it, note: it must be imported in the manager module
-                self.obs_per_group[obs_group.name].append((obs.name, function, obs))
                 example_obs = function(env, obs)
                 obs_shape = example_obs.shape
                 obs_dtype = example_obs.dtype
-                delta = obs_shape[1]
-                self.obs_dims_per_group_func[obs_group.name][obs.name] = (obs_dim, obs_dim + delta)
                 self.obs_dims_per_group_obs[obs_group.name][obs.name] = space.Space(shape=obs_shape[1:], dtype=example_obs.cpu().numpy().dtype)
-                # (obs_shape[1:], obs_dtype)
-                obs_dim += delta
 
                 buffer_length = int(latency_range[1] / env.dt) + 1
                 buffer_length += int(obs.refresh_duration / env.dt)
@@ -65,7 +54,6 @@ class ObsManager:
                 self.delayed_frames_per_group[obs_group.name][obs.name] = torch.zeros_like(
                     self.latency_buffers_per_group[obs_group.name][obs.name],
                     dtype=torch.long, device=self.device)
-            self.obs_dims_per_group[obs_group.name] = obs_dim
   
     def _sample_latency_buffer(self, latency_range, size):
         return math.torch_rand_float(
