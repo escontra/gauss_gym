@@ -234,12 +234,14 @@ class LeggedRobot(base_task.BaseTask):
           self.gym.refresh_actor_root_state_tensor(self.sim)
           self.gym.refresh_net_contact_force_tensor(self.sim)
           self.gym.refresh_rigid_body_state_tensor(self.sim)
+          self.episode_length_buf += 1
+          self.common_step_counter += 1
 
+          # prepare quantities
           self.base_quat[:] = self.root_states[:, 3:7]
           self.base_lin_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
           self.base_ang_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
           self.projected_gravity[:] = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
-
           with timer.section("update_sensors"):
             for sensor in self.sensors.values():
                 sensor.update(-1)
@@ -250,10 +252,7 @@ class LeggedRobot(base_task.BaseTask):
           # Initialize buffers with initial values when necessary.
           self._initialize_prev_reset_buffer(self.prev_reset)
 
-          self.episode_length_buf += 1
-          self.common_step_counter += 1
-
-          # prepare quantities
+          # Update base velocity moving average.
           self.filtered_lin_vel[:] = self.base_lin_vel[:] * self.cfg["normalization"]["filter_weight"] + self.filtered_lin_vel[:] * (
               1.0 - self.cfg["normalization"]["filter_weight"]
           )
