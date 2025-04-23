@@ -315,7 +315,7 @@ commands:
   command_gains: True
   heading_command: True
   num_commands: 4
-  resampling_time: 4.0 # time before command are changed[s]
+  resampling_time: 4. # time before command are changed[s]
   small_lin_vel_threshold: 0.1
   small_ang_vel_threshold: 0.1
   ranges:
@@ -383,7 +383,6 @@ policy:
   desired_kl: 0.01
   kl_key: "actions"
   obs_key: "policy"
-  weight_decay: 0.01
   params:
     layer_activation: "elu"
     recurrent_state_size: 256
@@ -400,7 +399,6 @@ value:
   class_name: "RecurrentModel"
   learning_rate: 3.e-4
   obs_key: "critic"
-  weight_decay: 0.01
   params:
     layer_activation: "elu"
     recurrent_state_size: 512

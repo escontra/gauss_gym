@@ -76,11 +76,11 @@ class Runner:
       **self.cfg["value"]["params"]
     ).to(self.device)
 
-    self.policy_optimizer = torch.optim.AdamW(
-      self.policy.parameters(), lr=self.policy_learning_rate, weight_decay=self.cfg["policy"]["weight_decay"]
+    self.policy_optimizer = torch.optim.Adam(
+      self.policy.parameters(), lr=self.policy_learning_rate
     )
-    self.value_optimizer = torch.optim.AdamW(
-      self.value.parameters(), lr=self.value_learning_rate, weight_decay=self.cfg["value"]["weight_decay"]
+    self.value_optimizer = torch.optim.Adam(
+      self.value.parameters(), lr=self.value_learning_rate
     )
 
     if self.cfg["algorithm"]["symmetry"]:
