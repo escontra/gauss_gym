@@ -182,8 +182,8 @@ class Runner:
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
-    self.policy(obs_dict[self.policy_key], update_state=False)
-    self.value(obs_dict[self.value_key], update_state=False)
+    policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+    value_hidden_states = self.value.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     if init_at_random_ep_len:
         self.env.episode_length_buf = torch.randint_like(
           self.env.episode_length_buf,
@@ -204,9 +204,9 @@ class Runner:
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
     if self.policy.is_recurrent:
-      self.buffer.add_hidden_state_buffers("policy_hidden_states", self.policy.get_hidden_states())
+      self.buffer.add_hidden_state_buffers("policy_hidden_states", (policy_hidden_states,))
     if self.value.is_recurrent:
-      self.buffer.add_hidden_state_buffers("value_hidden_states", self.value.get_hidden_states())
+      self.buffer.add_hidden_state_buffers("value_hidden_states", (value_hidden_states,))
 
     for it in range(num_learning_iterations):
       start = time.time()
@@ -220,43 +220,31 @@ class Runner:
           self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
           if self.policy.is_recurrent:
             self.buffer.update_hidden_state_buffers(
-              "policy_hidden_states", n, self.policy.get_hidden_states()
+              "policy_hidden_states", n, (policy_hidden_states,)
             )
           if self.value.is_recurrent:
             self.buffer.update_hidden_state_buffers(
-              "value_hidden_states", n, self.value.get_hidden_states()
+              "value_hidden_states", n, (value_hidden_states,)
             )
         with timer.section("model_act"):
           with torch.no_grad():
-            dists = self.policy(obs_dict[self.policy_key])
-            value = self.value(obs_dict[self.value_key])
+            dists, policy_hidden_states = self.policy(obs_dict[self.policy_key], policy_hidden_states)
+            value, value_hidden_states = self.value(obs_dict[self.value_key], value_hidden_states)
             actions = {k: dist.sample() for k, dist in dists.items()}
         with timer.section("env_step"):
           # Scale actions to the environment range.
-          actions_env = {}
-          for k, v in self.env.action_space().items():
-            action = actions[k]
-            low = torch.tensor(v.low, device=self.device)[None]
-            high = torch.tensor(v.high, device=self.device)[None]
-            needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
-            if needs_scaling:
-              scaled_action = (action + 1) / 2 * (high - low) + low
-              scaled_action = torch.clamp(scaled_action, low, high)
-              actions_env[k] = scaled_action
-            else:
-              actions_env[k] = action
+          actions_scaled = self.scale_actions(actions)
+          for k, v in actions_scaled.items():
             self.action_agg.add(
-              {f'{dof_name}_{k}': actions_env[k][:, dof_idx].cpu().numpy()
+              {f'{dof_name}_{k}': v[:, dof_idx].cpu().numpy()
                for dof_idx, dof_name in enumerate(self.env.dof_names)},
               agg='concat'
             )
-          # Make sure all actions are processed
-          assert len(actions_env) == len(actions), f"Missing actions in actions_env. Expected {len(actions)}, got {len(actions_env)}"
 
-          obs_dict, rew, done, infos = self.env.step(actions_env)
+          obs_dict, rew, done, infos = self.env.step(actions_scaled)
           obs_dict, rew, done = self.to_device((obs_dict, rew, done))
-        self.policy.reset(done)
-        self.value.reset(done)
+        policy_hidden_states = self.policy.reset(done, policy_hidden_states)
+        value_hidden_states = self.value.reset(done, value_hidden_states)
         with timer.section("buffer_update_data"):
           self.buffer.update_data("actions", n, actions)
           self.buffer.update_data("rewards", n, rew)
@@ -277,7 +265,7 @@ class Runner:
           ))
 
       # We skip the first gradient update to initialize the observation normalizers.
-      learn_stats = self._learn(last_privileged_obs=obs_dict[self.value_key], is_first=it == 0)
+      learn_stats = self._learn(last_privileged_obs=obs_dict[self.value_key], last_value_hidden_states=value_hidden_states, is_first=it == 0)
       self.learn_agg.add(learn_stats)
 
       if self.should_log(it):
@@ -315,7 +303,7 @@ class Runner:
       )
       start = time.time()
 
-  def reccurent_mini_batch_generator(self, last_value_obs):
+  def reccurent_mini_batch_generator(self, last_value_obs, last_value_hidden_states):
       policy_obs = self.buffer[self.policy_key]
       value_obs = self.buffer[self.value_key]
       policy_obs_split = pytree.tree_map(
@@ -364,7 +352,7 @@ class Runner:
           first_traj = 0
           with torch.no_grad():
             # Used for value bootstrap.
-            last_value = self.value(last_value_obs, update_state=False)['value'].pred().detach()
+            last_value = self.value(last_value_obs, last_value_hidden_states)[0]['value'].pred().detach()
           for i in range(self.cfg["algorithm"]["num_mini_batches"]):
               start = i * mini_batch_size
               stop = (i + 1) * mini_batch_size
@@ -389,11 +377,11 @@ class Runner:
               last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
               old_values_batch = self.buffer["values"][:, start:stop]
               with torch.no_grad():
-                old_dist_batch = self.old_policy(
+                old_dist_batch, _ = self.old_policy(
                   policy_obs_batch, masks=masks_batch, hidden_states=hid_a_batch
                 )
                 if self.cfg["algorithm"]["symmetry"]:
-                  symmetry_obs_batch['old_dists_sym'] = self.old_policy(
+                  symmetry_obs_batch['old_dists_sym'], _ = self.old_policy(
                     symmetry_obs_batch['policy_obs_sym'], masks=masks_batch, hidden_states=hid_a_batch
                   )
 
@@ -416,10 +404,10 @@ class Runner:
               first_traj = last_traj
 
   @timer.section("learn")
-  def _learn(self, last_privileged_obs, is_first):
+  def _learn(self, last_privileged_obs, last_value_hidden_states, is_first):
       learn_step_agg = agg.Agg()
-      for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs)):
-        values = self.value(
+      for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs, last_value_hidden_states)):
+        values, _ = self.value(
           batch["value_obs"], masks=batch["masks"], hidden_states=batch["hid_c"]
         )
         # Compute returns and advantages.
@@ -457,14 +445,13 @@ class Runner:
         learn_step_agg.add({'value_loss': value_loss.item()})
 
         # Actor loss.
-        # actor_loss_coef = 0.5 if self.cfg["algorithm"]["symmetry"] else 1.0
-        actor_loss_coef = 1.0
-        dists = self.policy(batch["policy_obs"], masks=batch["masks"], hidden_states=batch["hid_a"])
+        dists, _ = self.policy(batch["policy_obs"], masks=batch["masks"], hidden_states=batch["hid_a"])
         if self.cfg["algorithm"]["symmetry"]:
-          dists_sym = self.policy(batch["policy_obs_sym"], masks=batch["masks"], hidden_states=batch["hid_a"])
+          dists_sym, _ = self.policy(batch["policy_obs_sym"], masks=batch["masks"], hidden_states=batch["hid_a"])
         kl_means = {}
 
         for name, dist in dists.items():
+          actor_loss_coef = self.cfg["algorithm"]["actor_loss_coefs"][name]
           actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
           with torch.no_grad():
             old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
@@ -494,7 +481,7 @@ class Runner:
             learn_step_agg.add({f'bound_loss_{name}': bound_loss.item()})
 
 
-          if self.cfg["algorithm"]["symmetry"]:
+          if self.cfg["algorithm"]["symmetry"] and name in self.cfg["algorithm"]["symmetry_keys"]:
             # Symmetry loss.
             dist_act_sym = self.symmetry_groups["actions"][name](self.env, dist.pred())
             symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
@@ -502,7 +489,7 @@ class Runner:
             if self.cfg["algorithm"]["symmetry_coef"] <= 0.0:
               symmetry_loss = symmetry_loss.detach()
             learn_step_agg.add({f'symmetry_loss_{name}': symmetry_loss.item()})
-            total_loss += self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
+            total_loss += actor_loss_coef * self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
             # TODO(alescontrela): Adding symmetric actor losses causes instability. Why?
             # # Actor loss with symmetric data.
             # actions_sym = self.symmetry_groups["actions"]["actions"](self.env, batch["actions"])
@@ -568,57 +555,35 @@ class Runner:
           "value_lr": self.value_learning_rate,
       }
 
+  def scale_actions(self, actions):
+    actions_env = {}
+    for k, v in self.env.action_space().items():
+      action = actions[k]
+      low = torch.tensor(v.low, device=self.device)[None]
+      high = torch.tensor(v.high, device=self.device)[None]
+      needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
+      if needs_scaling:
+        scaled_action = (action + 1) / 2 * (high - low) + low
+        scaled_action = torch.clamp(scaled_action, low, high)
+        actions_env[k] = scaled_action
+      else:
+        actions_env[k] = action
+    return actions_env
+
   def play(self):
     obs_dict = self.to_device(self.env.reset())
-
-    policy = models.get_policy_jitted(self.policy)
-    # Alternatively can use torch.compile. Not sure if this is available on all machines.
-    # opt_policy = torch.compile(self.policy)
+    policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
 
     inference_time, step = 0., 0
-    step_agg = agg.Agg()
     while True:
       with torch.no_grad():
         start = time.time()
-        act = policy(obs_dict[self.policy_key])
-        # act = opt_policy(obs_dict_normalized[self.policy_key]).pred()
+        dists, policy_hidden_states = self.policy(obs_dict[self.policy_key], policy_hidden_states)
+        actions = {k: dist.pred() for k, dist in dists.items()}
+        actions_scaled = self.scale_actions(actions)
         inference_time += time.time() - start
-        obs_dict, _, dones, infos = self.env.step(act)
+        obs_dict, _, _, _ = self.env.step(actions_scaled)
         obs_dict = self.to_device(obs_dict)
-        step_reward = infos["step_reward"]
-        step_agg.add(pytree.tree_map(lambda x: x.cpu().numpy()[0], step_reward), agg='stack')
-        done = dones[0].item()
-        if done:
-          import matplotlib.pyplot as plt
-          results = step_agg.result()
-          keys = list(results.keys())
-          num_keys = len(keys)
-          num_rows = 3
-          num_cols = (num_keys + num_rows - 1) // num_rows  # Ceiling division
-
-          fig, axs = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4, num_rows * 3), squeeze=False)
-          axs_flat = axs.flatten()
-
-          for i, key in enumerate(keys):
-              print(key, results[key].shape)
-              value = results[key]
-              if value.ndim > 0: # Check if value is plottable (e.g., not scalar)
-                  axs_flat[i].plot(np.squeeze(value)) # Assuming value is a torch tensor
-                  axs_flat[i].set_title(key)
-              else:
-                   axs_flat[i].text(0.5, 0.5, f'{key}: {value.item():.4f}', horizontalalignment='center', verticalalignment='center')
-                   axs_flat[i].set_title(key)
-                   axs_flat[i].axis('off')
-
-
-          # Hide any unused subplots
-          for j in range(i + 1, num_rows * num_cols):
-              axs_flat[j].axis('off')
-
-          plt.tight_layout()
-          plt.show() # Or plt.savefig("step_agg_plot.png")
-
-          step_agg = agg.Agg()
 
       step += 1
       if step % 100 == 0:

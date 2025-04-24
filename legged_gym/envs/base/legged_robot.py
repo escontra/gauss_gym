@@ -208,7 +208,7 @@ class LeggedRobot(base_task.BaseTask):
                     self.gym.refresh_dof_state_tensor(self.sim)
                 self.post_decimation_step(dec_i)
         self.post_physics_step()
-        return self.obs_dict, self.rew_buf, self.reset_buf, {**self.extras, "step_reward": self.step_reward}
+        return self.obs_dict, self.rew_buf, self.reset_buf, self.extras
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
@@ -227,7 +227,6 @@ class LeggedRobot(base_task.BaseTask):
     @timer.section("post_physics_step")
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
-            calls self._post_physics_step_callback() for common computations 
             calls self._draw_debug_vis() if needed
         """
         with timer.section("refresh_sim"):
@@ -260,6 +259,12 @@ class LeggedRobot(base_task.BaseTask):
               1.0 - self.cfg["normalization"]["filter_weight"]
           )
 
+          # log max power across current env step
+          self.max_power_per_timestep = torch.maximum(
+              self.max_power_per_timestep,
+              torch.max(torch.sum(self.substep_torques * self.substep_dof_vel, dim= -1), dim= -1)[0],
+          )
+
         # Check if is first contact.
         # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
         contact_filt = torch.logical_or(self.feet_contact[:], self.last_contacts) 
@@ -288,7 +293,22 @@ class LeggedRobot(base_task.BaseTask):
         self.reset_idx(env_ids)
         self.prev_reset = env_ids
 
-        self._post_physics_step_callback()
+        # Resample command scales. Commands are updated every timestep to guide
+        # the robot along the camera trajectory.
+        resample_command_env_ids = (self.episode_length_buf % int(self.cfg["commands"]["resampling_time"] / self.dt)==0).nonzero(as_tuple=False).flatten()
+        self._resample_commands(resample_command_env_ids)
+
+        # Resample sensor latency.
+        self.obs_manager.resample_sensor_latency()
+
+        # Update physics curriculum.
+        self._update_physics_curriculum()
+
+        # Push and kick robots.
+        self._push_robots()
+        self._kick_robots()
+
+        # Compute observations.
         self.obs_dict = self.obs_manager.compute_obs(self)        
 
     def _update_physics_curriculum(self):
@@ -391,14 +411,12 @@ class LeggedRobot(base_task.BaseTask):
             Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
             adds each terms to the episode sums and to the total reward
         """
-        self.step_reward = {}
         self.rew_buf[:] = 0.
         for name, scale, function in zip(self.reward_names, self.reward_scales, self.reward_functions):
             orig_rew = function()
             assert orig_rew.shape == self.rew_buf.shape, f'{orig_rew.shape} != {self.rew_buf.shape}'
             rew = orig_rew * scale
             self.rew_buf += rew
-            self.step_reward[name] = rew
             self.episode_sums[name] += rew
         if self.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
@@ -407,8 +425,7 @@ class LeggedRobot(base_task.BaseTask):
             rew = self._reward_termination() * self.cfg["rewards"]["termination"]["scale"] * self.dt
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
-            self.step_reward["termination"] = rew
-    
+
     def create_sim(self):
         """ Creates simulation, terrain and evironments
         """
@@ -579,31 +596,6 @@ class LeggedRobot(base_task.BaseTask):
                     props[j].invMass = 1.0 / props[j].mass
         return props
     
-    @timer.section("post_physics_step_callback")
-    def _post_physics_step_callback(self):
-        """ Callback called before computing terminations, rewards, and observations
-            Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
-        """
-
-        # Resample command scales. Commands are updated every timestep to guide
-        # the robot along the camera trajectory.
-        resample_command_env_ids = (self.episode_length_buf % int(self.cfg["commands"]["resampling_time"] / self.dt)==0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(resample_command_env_ids)
-
-        self._update_physics_curriculum()
-
-        # Resample sensor latency.
-        self.obs_manager.resample_sensor_latency()
-
-        # log max power across current env step
-        self.max_power_per_timestep = torch.maximum(
-            self.max_power_per_timestep,
-            torch.max(torch.sum(self.substep_torques * self.substep_dof_vel, dim= -1), dim= -1)[0],
-        )
-
-        self._push_robots()
-        self._kick_robots()
-
     def get_small_command_mask(self):
         small_lin_vel_mask = torch.norm(self.commands[:, :2], dim=-1) < self.cfg["commands"]["small_lin_vel_threshold"]
         small_ang_vel_mask = torch.norm(self.commands[:, 2:3], dim=-1) < self.cfg["commands"]["small_ang_vel_threshold"]
@@ -645,6 +637,7 @@ class LeggedRobot(base_task.BaseTask):
         #pd controller
         actions_scaled = actions * self.cfg["control"]["action_scale"]
         control_type = self.cfg["control"]["control_type"]
+        actions_scaled = actions_scaled * self.motor_strength_multiplier
         if control_type=="P":
           torques = (
             (dof_stiffness * self.dof_stiffness_multiplier)
@@ -665,6 +658,7 @@ class LeggedRobot(base_task.BaseTask):
         if not self.cfg["control"]["computer_clip_torque"]:
             return self._compute_torques_original(actions, dof_stiffness, dof_damping)
         else:
+            actions_scaled_clipped = actions_scaled_clipped * self.motor_strength_multiplier
             if self.cfg["control"]["control_type"] == "P":
                 torques = (
                   (dof_stiffness * self.dof_stiffness_multiplier)
@@ -1070,8 +1064,13 @@ class LeggedRobot(base_task.BaseTask):
         if self.cfg["normalization"]["clip_actions_method"] == 'hard':
             self.clip_actions_low = torch.tensor(clip_actions_low, device=self.device)
             self.clip_actions_high = torch.tensor(clip_actions_high, device=self.device)
+        self.motor_strength_multiplier = torch.ones_like(self.dof_friction)
+        if self.cfg["domain_rand"]["motor_strength"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
+            self.motor_strength_multiplier = math.apply_randomization(self.motor_strength_multiplier, self.cfg["domain_rand"]["motor_strength"])
+        self.dof_stiffness_multiplier = torch.ones_like(self.dof_friction)
         if self.cfg["domain_rand"]["dof_stiffness"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-            self.dof_stiffness_multiplier = math.apply_randomization(torch.ones_like(self.dof_friction), self.cfg["domain_rand"]["dof_stiffness"])
+            self.dof_stiffness_multiplier = math.apply_randomization(self.dof_stiffness_multiplier, self.cfg["domain_rand"]["dof_stiffness"])
+        self.dof_damping_multiplier = torch.ones_like(self.dof_friction)
         if self.cfg["domain_rand"]["dof_damping"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             self.dof_damping_multiplier = math.apply_randomization(torch.ones_like(self.dof_friction), self.cfg["domain_rand"]["dof_damping"])
         if self.cfg["domain_rand"]["dof_damping_ankles"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:

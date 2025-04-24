@@ -70,10 +70,13 @@ def actions(env: "ANY_ENV", params, is_real=False):
     return env.actions
 
 def stiffness(env: "ANY_ENV", params, is_real=False):
-    return env.stiffness
+    return env.stiffness * env.dof_stiffness_multiplier
 
 def damping(env: "ANY_ENV", params, is_real=False):
-    return env.damping
+    return env.damping * env.dof_damping_multiplier
+
+def motor_strength(env: "ANY_ENV", params, is_real=False):
+    return env.motor_strength_multiplier
 
 def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]

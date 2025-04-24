@@ -379,7 +379,13 @@ class Head(torch.nn.Module):
         torch.full((1, output_space.shape[0]), fill_value=np.log(self.init_std)), requires_grad=True
       )
     elif self.impl in ('normal_logstdparam_unclipped', 'bounded_normal_logstdparam_unclipped'):
-      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      if self.impl == 'bounded_normal_logstdparam_unclipped':
+        mean_net = nn.Sequential(
+          mean_net,
+          nn.Tanh()
+        )
+      self.mean_net = mean_net
       self.logstd = torch.nn.parameter.Parameter(
         torch.full(
           (1, output_space.shape[0]),
@@ -458,7 +464,7 @@ class Head(torch.nn.Module):
     return output
 
   def bounded_normal_logstdparam_unclipped(self, x):
-    mean = torch.tanh(self.mean_net(x))
+    mean = self.mean_net(x)
     std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
     output = Normal(mean, std)
     return output

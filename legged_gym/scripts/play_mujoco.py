@@ -10,7 +10,7 @@ import mujoco.viewer
 
 import legged_gym
 from legged_gym.utils import flags, config, helpers, observation_groups, math
-from legged_gym.rl.deployment_runner import DeploymentRunner
+from legged_gym.rl.deployment_runner_onnx import DeploymentRunner
 
 
 def apply_map(data, map):
@@ -182,8 +182,7 @@ def main(argv=None):
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
             if it % cfg["control"]["decimation"] == 0:
                 obs = compute_observation(cfg, obs_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos_mj, actions, mj_ig_map)
-                dist = runner.act(obs[cfg["policy"]["obs_key"]])
-                actions[:] = dist.detach().cpu().numpy()
+                actions[:] = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
                 actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
                 actions[:] = actions * cfg["control"]["action_scale"]
                 actions[:] = apply_map(actions, ig_mj_map)

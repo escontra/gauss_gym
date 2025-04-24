@@ -53,14 +53,12 @@ def observation_groups_from_dict(config: Dict) -> List[ObservationGroup]:
 BASE_LIN_VEL = Observation(
   name="base_lin_vel",
   func=O.base_lin_vel,
-  # scale=2.0,
 )
 
 BASE_ANG_VEL = Observation(
   name="base_ang_vel",
   func=O.base_ang_vel,
   noise=0.2,
-  # scale=0.25,
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -73,7 +71,6 @@ PROJECTED_GRAVITY = Observation(
 
 VELOCITY_COMMANDS = Observation(
   name="velocity_commands", func=O.velocity_commands,
-  # scale=[2.0, 2.0, 0.25],
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -81,7 +78,6 @@ DOF_POS = Observation(
   name="dof_pos",
   func=O.dof_pos,
   noise=0.01,
-  # scale=1.0,
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -89,7 +85,6 @@ DOF_VEL = Observation(
   name="dof_vel",
   func=O.dof_vel,
   noise=1.5,
-  # scale=0.1,
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -101,13 +96,16 @@ ACTIONS = Observation(
 STIFFNESS = Observation(
   name="stiffness",
   func=O.stiffness,
-  # scale=0.01,
 )
 
 DAMPING = Observation(
   name="damping",
   func=O.damping,
-  # scale=1.,
+)
+
+MOTOR_STRENGTH = Observation(
+  name="motor_strength",
+  func=O.motor_strength,
 )
 
 CAMERA_IMAGES = Observation(
@@ -143,26 +141,22 @@ DOF_FRICTION_CURRICULUM_VALUES = Observation(
 PUSHING_FORCES = Observation(
   name="pushing_forces",
   func=O.pushing_forces,
-  # scale=0.1,
 )
 
 PUSHING_TORQUES = Observation(
   name="pushing_torques",
   func=O.pushing_torques,
-  # scale=0.5,
 )
 
 BASE_HEIGHT = Observation(
   name="base_height",
   func=O.base_height,
-  # scale=1.0,
   sensor="base_height_raycaster",
 )
 
 HIP_HEIGHTS = Observation(
   name="hip_heights",
   func=O.hip_heights,
-  # scale=1.0,
   sensor="hip_height_raycaster",
 )
 

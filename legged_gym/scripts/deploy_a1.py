@@ -13,7 +13,7 @@ from sensor_msgs.msg import Image
 from deployment.a1.a1_real import UnitreeA1Real
 import legged_gym
 from legged_gym.utils import flags, config
-from legged_gym.rl import deployment_runner
+from legged_gym.rl import deployment_runner_onnx
 
 
 def standup_procedure(
@@ -109,7 +109,7 @@ def main(argv = None):
         raise ValueError("Must specify logdir as 'default' or a path.")
 
     model_device = torch.device("cpu") if parsed.mode == "upboard" else torch.device("cuda")
-    runner = deployment_runner.DeploymentRunner(deploy_cfg, cfg, device=model_device)
+    runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg, device=model_device)
 
     if cfg["runner"]["resume"]:
         assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
@@ -149,8 +149,7 @@ def main(argv = None):
         while not rospy.is_shutdown():
             inference_start_time = rospy.get_time()
             obs = unitree_real_env.get_obs()
-            actions = runner.act(obs[cfg["policy"]["obs_key"]])
-            # actions = torch.zeros_like(actions)
+            actions = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
             unitree_real_env.send_action(actions)
             inference_duration = rospy.get_time() - inference_start_time
             motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]

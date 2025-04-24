@@ -27,7 +27,7 @@ observations:
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
-      # STIFFNESS, DAMPING
+      STIFFNESS, DAMPING, MOTOR_STRENGTH
     ]
   policy:
     add_noise: True
@@ -190,6 +190,12 @@ domain_rand:
     operation: "scaling"
     distribution: "uniform"
 
+  motor_strength:
+    apply: True
+    range: [0.9, 1.1]
+    operation: "scaling"
+    distribution: "uniform"
+
   dof_stiffness:
     apply: True
     range: [0.9, 1.1]
@@ -292,7 +298,7 @@ rewards:
   collision:
     scale: -1.0
   action_rate:
-    scale: -0.01
+    scale: -0.005
   # hip_height_l1:
   #   scale: 1.0
   #   min_height: 0.3
@@ -308,7 +314,7 @@ rewards:
   # delta_torques:
   #   scale: -1.e-5
   a1_pose:
-    scale: 0.5
+    scale: 0.25
 
 commands:
   still_proportion: 0.05
@@ -411,10 +417,15 @@ value:
 algorithm:
   gamma: 0.97
   lam: 0.95
+  actor_loss_coefs:
+    actions: 1.0
+    stiffness: 0.25
+    damping: 0.25
   entropy_coef: -0.01
   entropy_keys: ["actions"]
   symmetry: True
   symmetry_coef: 3.0
+  symmetry_keys: ["actions", "stiffness", "damping"]
   num_learning_epochs: 5
   num_mini_batches: 4
   value_loss_coef: 1.0

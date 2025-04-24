@@ -37,38 +37,39 @@ class DeploymentRunner:
     load_run = self.cfg["runner"]["load_run"]
     checkpoint = self.cfg["runner"]["checkpoint"]
     if (load_run == "-1") or (load_run == -1):
-      resume_path = sorted(
+      self.resume_path = sorted(
         [item for item in resume_root.iterdir() if item.is_dir()],
         key=lambda path: path.stat().st_mtime,
       )[-1]
     else:
-      resume_path = resume_root / load_run
-    print(f"Loading checkpoint from: {resume_path}")
-    print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}')
+      self.resume_path = resume_root / load_run
+    print(f"Loading checkpoint from: {self.resume_path}")
+    print(f'\tNum checkpoints: {len(list((self.resume_path / "nn").glob("*.pth")))}')
     print(f'\tLoading checkpoint: {checkpoint}')
     if (checkpoint == "-1") or (checkpoint == -1):
       model_path = sorted(
-        (resume_path / "nn").glob("*.pth"),
+        (self.resume_path / "nn").glob("*.pth"),
         key=lambda path: path.stat().st_mtime,
       )[-1]
     else:
-      model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
+      model_path = self.resume_path / "nn" / f"model_{checkpoint}.pth"
     print(f'\tLoading model weights from: {model_path}')
     model_dict = torch.load(
       model_path, map_location=self.device
     )
 
     # Create policy and observation normalizer.
-    obs_group_sizes = pickle.load(open(resume_path / "obs_group_sizes.pkl", "rb"))
+    # obs_group_sizes = pickle.load(open(resume_path / "obs_group_sizes.pkl", "rb"))
+    self.obs_space = pickle.load(open(self.resume_path / "obs_space.pkl", "rb"))
+    self.action_space = pickle.load(open(self.resume_path / "action_space.pkl", "rb"))
     self.policy = getattr(models, self.cfg["policy"]["class_name"])(
-      self.deploy_cfg["deploy"]["num_actions"],
-      obs_group_sizes[self.policy_key],
+      self.action_space,
+      self.obs_space[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
 
     # Load policy and observation normalizer.
-    self.policy.load_state_dict(model_dict["policy"], strict=False)
-    self.jit_policy = models.get_policy_jitted(self.policy)
+    self.policy.load_state_dict(model_dict["policy"], strict=True)
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)

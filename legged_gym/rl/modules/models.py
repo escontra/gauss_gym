@@ -1,7 +1,7 @@
 import functools
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional, Union, Tuple, List, Callable
+from typing import Dict, Any, Optional, Tuple, List, Callable, Union
 
 from legged_gym.utils import math, space
 from legged_gym.rl.modules import resnet, outs
@@ -82,6 +82,8 @@ class RecurrentModel(torch.nn.Module):
         max_abs_value=None,
         head: Dict[str, Any] = None):
     super().__init__()
+    self.obs_space = obs_space
+    self.action_space = action_space
     self.mlp_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
     self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
     self.recurrent_state_size = recurrent_state_size
@@ -113,11 +115,8 @@ class RecurrentModel(torch.nn.Module):
 
     self.symlog_inputs = symlog_inputs
 
-  def reset(self, dones=None):
-    self.memory.reset(dones)
-
-  def get_hidden_states(self):
-    return (self.memory.hidden_states,)
+  def reset(self, dones: torch.Tensor, hidden_states: Optional[Tuple[torch.Tensor, ...]]=None) -> Tuple[torch.Tensor, ...]:
+    return self.memory.reset(dones, hidden_states)
 
   def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
 
@@ -154,19 +153,22 @@ class RecurrentModel(torch.nn.Module):
     if self.normalize_obs:
       self.obs_normalizer.update(obs)
 
-  def __call__(self,
-               obs: Dict[str, torch.Tensor],
-               masks: Optional[torch.Tensor]=None,
-               hidden_states: Optional[torch.Tensor]=None,
-               update_state: bool=True,
-               return_states: bool=False) -> Union[Dict[str, outs.Output], Tuple[Dict[str, outs.Output], Dict[str, torch.Tensor]]]:
+  def forward(self,
+              obs: Dict[str, torch.Tensor],
+              hidden_states: Tuple[torch.Tensor, ...],
+              masks: Optional[torch.Tensor]=None,
+              mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
-    rnn_state = self.memory(processed_obs, masks, hidden_states, update_state)
+    rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks)
     model_state = self.model(rnn_state.squeeze(0))
-    dists = {k: self.heads[k](model_state) for k in self.heads}
-    if return_states:
-        return dists, {'recurrent_state': rnn_state.squeeze(0), 'obs': processed_obs}
-    return dists
+    if mean_only:
+        outs = []
+        for k in self.heads:
+          outs.append(self.heads[k].mean_net(model_state))
+        return tuple(outs), new_hidden_states
+    else:
+        dists = {k: self.heads[k](model_state) for k in self.heads}
+        return dists, new_hidden_states
 
   def stats(self):
     stats = {}
@@ -193,56 +195,40 @@ class Memory(torch.nn.Module):
         if self.rnn_cls is nn.LSTM:
             self.initial_cell_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
 
-        # Initialize hidden_states to None for lazy initialization
-        self.hidden_states = None
-
-    @torch.jit.ignore
-    def _process_batch_mode(self, input: torch.Tensor, masks: Optional[torch.Tensor], hidden_states: Optional[torch.Tensor]):
-        assert hidden_states is not None, "Hidden states not passed to memory module during policy update"
-        assert masks is not None, "Masks not passed to memory module during policy update"
-        out, _ = self.rnn(input, hidden_states)
-        out = unpad_trajectories(out, masks)
-        return out
-
-    def forward(self, input: torch.Tensor, masks: Optional[torch.Tensor]=None, hidden_states: Optional[torch.Tensor]=None, upd_state: bool=True) -> torch.Tensor:
-        batch_mode = masks is not None
-        if batch_mode:  # Batch (update) mode.
-            return self._process_batch_mode(input, masks, hidden_states)
+    def forward(
+          self,
+          input: torch.Tensor,
+          hidden_states: Tuple[torch.Tensor, ...],
+          masks: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+        if masks is not None:  # Batch (update) mode.
+            out, _ = self.rnn(input, hidden_states)
+            out = unpad_trajectories(out, masks)
+            return out, None
         else:  # Inference mode
-            if self.hidden_states is None:
-                num_envs = input.shape[0]
-                init_h = self.initial_hidden_state.to(input.device)
-                if self.rnn_cls is nn.LSTM:
-                    init_c = self.initial_cell_state.to(input.device)
-                    self.hidden_states = (
-                        init_h.repeat(1, num_envs, 1),
-                        init_c.repeat(1, num_envs, 1)
-                    )
-                else: # GRU
-                    self.hidden_states = init_h.repeat(1, num_envs, 1)
+            out, new_hidden_states = self.rnn(input.unsqueeze(0), hidden_states)
+            return out, new_hidden_states
 
-            out, new_hidden_states = self.rnn(input.unsqueeze(0), self.hidden_states)
-            if upd_state:
-                self.hidden_states = new_hidden_states
-            return out
-
-    def reset(self, dones=None):
-        assert self.hidden_states is not None, "Reset called before forward pass! Hidden states not initialized."
-
-        if dones is None or dones.sum() == 0:
-            return
-
-        if isinstance(self.hidden_states, tuple): # LSTM
-            init_h = self.initial_hidden_state.detach().clone().to(self.hidden_states[0].device)
-            init_c = self.initial_cell_state.detach().clone().to(self.hidden_states[1].device)
-            self.hidden_states[0][..., dones, :] = init_h
-            self.hidden_states[1][..., dones, :] = init_c
-        else: # GRU
-            init_h = self.initial_hidden_state.detach().clone().to(self.hidden_states.device)
-            self.hidden_states[..., dones, :] = init_h
+    def reset(self, dones, hidden_states=None):
+        if self.rnn_cls == nn.LSTM:
+          if hidden_states is not None:
+            hidden_states[0][..., dones, :] = self.initial_hidden_state.detach().clone().to(hidden_states[0].device)
+            hidden_states[1][..., dones, :] = self.initial_cell_state.detach().clone().to(hidden_states[1].device)
+            return hidden_states
+          else:
+            return(
+              self.initial_hidden_state.repeat(1, dones.shape[0], 1),
+              self.initial_cell_state.repeat(1, dones.shape[0], 1)
+            )
+        elif self.rnn_cls == nn.GRU:
+          if hidden_states is not None:
+            hidden_states[0][..., dones, :] = self.initial_hidden_state.detach().clone().to(hidden_states[0].device)
+            return hidden_states
+          else:
+            return (self.initial_hidden_state.repeat(1, dones.shape[0], 1),)
+        else:
+          raise ValueError(f"Unknown RNN class: {self.rnn_cls}")
 
 
-@torch.jit.script
 def apply_normalizer(
         observations: Dict[str, torch.Tensor],
         normalizer_mean: Optional[Dict[str, torch.Tensor]],
@@ -262,7 +248,6 @@ def apply_normalizer(
     return normalized_observations
     
 
-@torch.jit.script
 def process_mlp_features(observations: Dict[str, torch.Tensor], mlp_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
     features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
     if symlog_inputs:
@@ -270,7 +255,6 @@ def process_mlp_features(observations: Dict[str, torch.Tensor], mlp_keys: List[s
     return features
 
 
-@torch.jit.script
 def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
     if x.dim() == 5:
         return x.permute(0, 1, 4, 2, 3)  # [B, T, H, W, C] -> [B, T, C, H, W]
