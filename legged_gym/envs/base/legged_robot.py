@@ -204,6 +204,13 @@ class LeggedRobot(base_task.BaseTask):
               torch.max(torch.sum(self.substep_torques * self.substep_dof_vel, dim= -1), dim= -1)[0],
           )
 
+        # Push and kick robots.
+        self._push_robots()
+        self._kick_robots()
+
+        # Update physics curriculum.
+        self._update_physics_curriculum()
+
         # Check if is first contact.
         # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
         contact_filt = torch.logical_or(self.feet_contact[:], self.last_contacts) 
@@ -240,13 +247,6 @@ class LeggedRobot(base_task.BaseTask):
 
         # Resample sensor latency.
         self.obs_manager.resample_sensor_latency()
-
-        # Update physics curriculum.
-        self._update_physics_curriculum()
-
-        # Push and kick robots.
-        self._push_robots()
-        self._kick_robots()
 
         # Compute observations.
         self.obs_dict = self.obs_manager.compute_obs(self)        
@@ -569,12 +569,15 @@ class LeggedRobot(base_task.BaseTask):
         assert control_type == "P", "Only P controller is supported for now."
 
         actions = actions * self.action_scale
+
+        # Perturbation of DOF stiffness and damping.
         pert_dof_stiffness = dof_stiffness * self.dof_stiffness_multiplier
         pert_dof_damping = dof_damping * self.dof_damping_multiplier
 
         if self.cfg["control"]["computer_clip_torque"]:
             actions = self.clip_position_action_by_torque_limit(actions, pert_dof_stiffness, pert_dof_damping)
 
+        # Perturbation of motor strength.
         actions = actions * self.motor_strength_multiplier
 
         torques = (
@@ -990,7 +993,7 @@ class LeggedRobot(base_task.BaseTask):
             self.dof_stiffness_multiplier = math.apply_randomization(self.dof_stiffness_multiplier, self.cfg["domain_rand"]["dof_stiffness"])
         self.dof_damping_multiplier = torch.ones_like(self.dof_friction)
         if self.cfg["domain_rand"]["dof_damping"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-            self.dof_damping_multiplier = math.apply_randomization(torch.ones_like(self.dof_friction), self.cfg["domain_rand"]["dof_damping"])
+            self.dof_damping_multiplier = math.apply_randomization(self.dof_damping_multiplier, self.cfg["domain_rand"]["dof_damping"])
         if self.cfg["domain_rand"]["dof_damping_ankles"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             ankle_names = self.cfg["domain_rand"]["dof_damping_ankles"]["ankle_names"]
             ankle_indices = torch.zeros(len(ankle_names), dtype=torch.long, device=self.device, requires_grad=False)
