@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 # solves circular imports of LeggedEnv
@@ -6,14 +7,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from legged_gym.envs.locomotion import LeggedEnv, NavEnv
 
-from legged_gym.utils.math import quat_rotate_inverse
+
+def quat_rotate_inverse_np(q, v):
+    q_w = q[:, -1]
+    q_vec = q[:, :3]
+    a = v * (2.0 * q_w ** 2 - 1.0)[..., None]
+    b = np.cross(q_vec, v, axis=-1) * q_w[..., None] * 2.0
+    c = q_vec * np.sum(q_vec * v, axis=-1, keepdims=True) * 2.0
+    return a - b + c
 
 def projected_gravity(env: "LeggedEnv", params, is_real=False):
     if is_real:
-        return quat_rotate_inverse(
-            torch.tensor(env.low_state_buffer.imu.quaternion).unsqueeze(0),
+        return quat_rotate_inverse_np(
+            np.array(env.low_state_buffer.imu.quaternion)[None],
             env.gravity_vec,
-        ).to(env.model_device)
+        )
     else:
       return env.projected_gravity
 
@@ -40,7 +48,7 @@ def base_lin_vel(env: "LeggedEnv", params, is_real=False):
 
 def base_ang_vel(env: "LeggedEnv", params, is_real=False):
     if is_real:
-        return torch.tensor(env.low_state_buffer.imu.gyroscope, device= env.model_device).unsqueeze(0)
+        return np.array(env.low_state_buffer.imu.gyroscope)[None]
     else:
         return env.base_ang_vel
 
@@ -52,17 +60,17 @@ def velocity_commands(env: "LeggedEnv", params, is_real=False):
 
 def dof_pos(env: "ANY_ENV", params, is_real=False):
     if is_real:
-        return torch.tensor([
+        return np.array([
             env.low_state_buffer.motorState[env.dof_map[i]].q for i in range(12)
-        ], dtype= torch.float32, device= env.model_device).unsqueeze(0) - env.default_dof_pos
+        ], dtype=np.float32)[None] - env.default_dof_pos
     else:
         return env.dof_pos - env.default_dof_pos
 
 def dof_vel(env: "ANY_ENV", params, is_real=False):
     if is_real:
-      return torch.tensor([
+      return np.array([
           env.low_state_buffer.motorState[env.dof_map[i]].dq for i in range(12)
-      ], dtype= torch.float32, device= env.model_device).unsqueeze(0)
+      ], dtype=np.float32)[None]
     else:
       return env.dof_vel
 

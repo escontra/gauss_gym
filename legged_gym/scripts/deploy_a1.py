@@ -1,14 +1,8 @@
 import os
-import os.path as osp
-import torch
-from typing import Tuple
-from functools import partial
 import pathlib
 import types
-
+import numpy as np
 import rospy
-from std_msgs.msg import Float32MultiArray
-from sensor_msgs.msg import Image
 
 from deployment.a1.a1_real import UnitreeA1Real
 import legged_gym
@@ -24,7 +18,6 @@ def standup_procedure(
         kp= None,
         kd= None,
         warmup_timesteps= 25,
-        device= "cpu",
         policy=None,
     ):
     """
@@ -33,7 +26,7 @@ def standup_procedure(
     """
     rospy.loginfo("Robot standing up, please wait ...")
 
-    target_pos = torch.zeros((1, 12), device= device, dtype= torch.float32)
+    target_pos = np.zeros((1, 12), dtype= np.float32)
     standup_timestep_i = 0
     while not rospy.is_shutdown():
         dof_pos = [env.low_state_buffer.motorState[env.dof_map[i]].q for i in range(12)]
@@ -108,8 +101,7 @@ def main(argv = None):
     else:
         raise ValueError("Must specify logdir as 'default' or a path.")
 
-    model_device = torch.device("cpu") if parsed.mode == "upboard" else torch.device("cuda")
-    runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg, device=model_device)
+    runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg)
 
     if cfg["runner"]["resume"]:
         assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
@@ -127,38 +119,35 @@ def main(argv = None):
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
         move_by_gamepad=True,
-        model_device= model_device,
     )
 
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
     rate = rospy.Rate(1 / duration)
 
-    with torch.no_grad():
-        standup_procedure(
-            unitree_real_env,
-            rate,
-            cfg,
-            angle_tolerance= 0.2,
-            kp= 80,
-            kd= 1.5,
-            warmup_timesteps= 100,
-            policy=runner.act,
-            device= model_device,
-        )
-        while not rospy.is_shutdown():
-            inference_start_time = rospy.get_time()
-            obs = unitree_real_env.get_obs()
-            actions = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
-            unitree_real_env.send_action(actions)
-            inference_duration = rospy.get_time() - inference_start_time
-            motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
-            rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
-            rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
-            rate.sleep()
-            if unitree_real_env.quit_pressed:
-                unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
-                rospy.signal_shutdown("Controller send stop signal, exiting")
+    standup_procedure(
+        unitree_real_env,
+        rate,
+        cfg,
+        angle_tolerance= 0.2,
+        kp= 80,
+        kd= 1.5,
+        warmup_timesteps= 100,
+        policy=runner.act,
+    )
+    while not rospy.is_shutdown():
+        inference_start_time = rospy.get_time()
+        obs = unitree_real_env.get_obs()
+        actions = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
+        unitree_real_env.send_action(actions)
+        inference_duration = rospy.get_time() - inference_start_time
+        motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
+        rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
+        rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
+        rate.sleep()
+        if unitree_real_env.quit_pressed:
+            unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
+            rospy.signal_shutdown("Controller send stop signal, exiting")
     return
 
 

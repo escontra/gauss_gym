@@ -28,7 +28,8 @@ observations:
       RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES,
       PUSHING_FORCES, PUSHING_TORQUES, GAIT_PROGRESS,
-      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT
+      HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
+      STIFFNESS, DAMPING, MOTOR_STRENGTH
       ]
   policy:
     add_noise: True
@@ -52,7 +53,7 @@ symmetries:
     ]
   actions:
     symmetries: [
-      T1_ACTIONS
+      T1_ACTIONS, T1_STIFFNESS, T1_DAMPING
     ]
 
 terrain:
@@ -201,6 +202,12 @@ domain_rand:
     operation: "scaling"
     distribution: "uniform"
 
+  motor_strength:
+    apply: True
+    range: [0.9, 1.1]
+    operation: "scaling"
+    distribution: "uniform"
+
   dof_stiffness:
     apply: True
     range: [0.9, 1.1]
@@ -252,12 +259,12 @@ domain_rand:
   kick_interval_s: 4.0
   kick_lin_vel:
     apply: True
-    range: [-1.5, 1.5]
+    range: [-1.0, 1.0]
     operation: "additive"
     distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [-1.5, 1.5]
+    range: [-1.0, 1.0]
     operation: "additive"
     distribution: "uniform"
 
@@ -342,6 +349,9 @@ rewards:
     
 commands:
   still_proportion: 0.05
+  command_gains: False
+  command_gains_stiffness_range: [0.8, 1.2]
+  command_gains_damping_range: [0.8, 1.2]
   heading_command: True
   num_commands: 4
   resampling_time: 4. # time before command are changed[s]
@@ -388,6 +398,7 @@ policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
+  kl_key: "actions"
   obs_key: "policy"
   params:
     layer_activation: "elu"
@@ -395,7 +406,10 @@ policy:
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.30}
+    head:
+      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
+      stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
+      damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
 
 value:
   class_name: "RecurrentModel"
@@ -407,20 +421,28 @@ value:
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: {output_type: mse, outscale: 1.0}
+    head: 
+      value: {output_type: mse, outscale: 1.0}
 
 algorithm:
   gamma: 0.97
   lam: 0.95
+  actor_loss_coefs:
+    actions: 1.0
+    stiffness: 0.25
+    damping: 0.25
   entropy_coef: -0.01
+  entropy_keys: ["actions"]
   symmetry: True
   symmetry_coef: 3.0
+  symmetry_keys: ["actions", "stiffness", "damping"]
   num_learning_epochs: 5
   num_mini_batches: 4
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
   bound_coef: 1.0
+  bound_loss_keys: ["actions"]
   normalize_advantage_per_minibatch: True
 
 runner:
@@ -431,7 +453,7 @@ runner:
   use_wandb: True
   description: ""
   log_every: 30.
-  save_every: 150.
+  save_every: 600.
   record_every: 600.
   record_frames: 300.
   run_name: ""

@@ -3,18 +3,17 @@ import sys
 import select
 import types
 import numpy as np
-import torch
 import pathlib
 import mujoco
 import mujoco.viewer
 
 import legged_gym
-from legged_gym.utils import flags, config, helpers, observation_groups, math
+from legged_gym.utils import flags, config, helpers, observation_groups, observations
 from legged_gym.rl.deployment_runner_onnx import DeploymentRunner
 
 
 def apply_map(data, map):
-    return torch.tensor(data[list(map.keys())], dtype=torch.float32)[list(map.values())]
+    return data[..., list(map.keys())][..., list(map.values())]
 
 
 """ Get obs components and cat to a single obs input """
@@ -28,43 +27,53 @@ def compute_observation(env_cfg, obs_groups, mj_data, command, gait_frequency, g
         for observation in group.observations:
             if observation.name == "projected_gravity":
                 quat = mj_data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.float32)
-                obs = math.quat_rotate_inverse(
-                    torch.from_numpy(quat[None]),
-                    torch.from_numpy(np.array([0.0, 0.0, -1.0]).astype(np.float32)[None]))[0].numpy()
-                obs = torch.tensor(obs, dtype=torch.float32)
+                obs = observations.quat_rotate_inverse_np(
+                    quat[None],
+                    np.array([0.0, 0.0, -1.0], dtype=np.float32)[None])[0]
             elif observation.name == "base_ang_vel":
-                obs = torch.tensor(mj_data.sensor("angular-velocity").data.astype(np.float32))
+                obs = mj_data.sensor("angular-velocity").data.astype(np.float32)
             elif observation.name == "lin_vel":
-                obs = torch.tensor(mj_data.sensor("velocity").data.astype(np.float32))
+                obs = mj_data.sensor("velocity").data.astype(np.float32)
             elif observation.name == "dof_pos":
-                obs = torch.tensor(mj_data.qpos.astype(np.float32)[7:]) - torch.tensor(default_dof_pos)
+                obs = mj_data.qpos.astype(np.float32)[7:] - default_dof_pos
                 obs = apply_map(obs, mj_ig_map)
             elif observation.name == "dof_vel":
-                obs = torch.tensor(mj_data.qvel.astype(np.float32)[6:])
+                obs = mj_data.qvel.astype(np.float32)[6:]
                 obs = apply_map(obs, mj_ig_map)
             elif observation.name == "velocity_commands":
-                obs = torch.tensor(command)
+                obs = np.array(command, dtype=np.float32)
             elif observation.name == "gait_progress":
-                obs = torch.cat((
-                    (torch.cos(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                    (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                ), dim = -1)
+                obs = np.concatenate((
+                    (np.cos(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
+                    (np.sin(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
+                ), axis=-1).astype(np.float32)
             elif observation.name == "actions":
-                obs = torch.tensor(actions)
+                obs = actions.astype(np.float32)
                 obs = apply_map(obs, mj_ig_map)
             else:
                 raise ValueError(f"Observation {observation.name} not found")
-            obs = obs.unsqueeze(0)
+            obs = obs[None]
             if observation.clip:
                 obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
             if observation.scale is not None:
                 scale = observation.scale
                 if isinstance(scale, list):
-                    scale = torch.tensor(scale, device=obs.device)[None]
+                    scale = np.array(scale)[None]
                 obs = scale * obs
             obs_dict[group.name][observation.name] = obs
 
     return obs_dict
+
+
+def clip_by_torque_limit(actions_scaled, torque_limits, dof_pos, dof_vel, p_gains, d_gains, default_dof_pos):
+    """ Different from simulation, we reverse the process and clip the actions directly,
+    so that the PD controller runs in robot but not our script.
+    """
+    p_limits_low = (-torque_limits) + d_gains * dof_vel
+    p_limits_high = (torque_limits) + d_gains * dof_vel
+    actions_low = (p_limits_low/p_gains) - default_dof_pos + dof_pos
+    actions_high = (p_limits_high/p_gains) - default_dof_pos + dof_pos
+    return np.clip(actions_scaled, actions_low, actions_high)
 
 
 def main(argv=None):
@@ -142,7 +151,7 @@ def main(argv=None):
     )
     mujoco.mj_forward(mj_model, mj_data)
 
-    runner = DeploymentRunner(deploy_cfg, cfg, device=cfg["rl_device"])
+    runner = DeploymentRunner(deploy_cfg, cfg)
     runner.load(log_root)
     obs_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
     use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"][cfg["policy"]["obs_key"]]["observations"]
@@ -182,10 +191,17 @@ def main(argv=None):
             dof_vel = mj_data.qvel.astype(np.float32)[6:]
             if it % cfg["control"]["decimation"] == 0:
                 obs = compute_observation(cfg, obs_groups, mj_data, [lin_vel_x, lin_vel_y, ang_vel_yaw], gait_frequency, gait_process, default_dof_pos_mj, actions, mj_ig_map)
-                actions[:] = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
+                outs = runner.act(obs[cfg["policy"]["obs_key"]])
+                actions[:] = outs['actions']
+                if 'stiffness' in outs:
+                    dof_stiffness_mj[:] = apply_map(outs['stiffness'], ig_mj_map)
+                if 'damping' in outs:
+                    dof_damping_mj[:] = apply_map(outs['damping'], ig_mj_map)
                 actions[:] = np.clip(actions, -cfg["normalization"]["clip_actions"], cfg["normalization"]["clip_actions"])
                 actions[:] = actions * cfg["control"]["action_scale"]
                 actions[:] = apply_map(actions, ig_mj_map)
+                if cfg["control"]["computer_clip_torque"]:
+                  actions[:] = clip_by_torque_limit(actions, cfg["control"]["torque_limits"], dof_pos, dof_vel, dof_stiffness_mj, dof_damping_mj, default_dof_pos_mj)
                 dof_targets[:] = default_dof_pos_mj + actions
             mj_data.ctrl = np.clip(
                 dof_stiffness_mj * (dof_targets - dof_pos) - dof_damping_mj * dof_vel,

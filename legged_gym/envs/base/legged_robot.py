@@ -1,35 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: BSD-3-Clause
-# 
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-# list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-# this list of conditions and the following disclaimer in the documentation
-# and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Copyright (c) 2021 ETH Zurich, Nikita Rudin
-
-# from tkinter import Image
-from warnings import WarningMessage
 import numpy as np
 import copy
 import functools
@@ -120,54 +88,17 @@ class LeggedRobot(base_task.BaseTask):
         if self.cfg["commands"]["command_gains"]:
             act_space['stiffness'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_stiffness[0].cpu().numpy() / 2,
-                high=self.default_dof_stiffness[0].cpu().numpy() * 1.5,
+                low=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][0],
+                high=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][1],
                 dtype=np.float32
             )
             act_space['damping'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_damping[0].cpu().numpy() / 2,
-                high=self.default_dof_damping[0].cpu().numpy() * 1.5,
+                low=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][0],
+                high=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][1],
                 dtype=np.float32
             )
         return act_space
-
-    @timer.section("pre_physics_step")
-    def pre_physics_step(self, actions, dof_stiffness, dof_damping):
-
-        if "clip_actions_delta" in self.cfg["normalization"]:
-            actions = torch.clip(
-                actions,
-                self.last_actions - self.cfg["normalization"]["clip_actions_delta"],
-                self.last_actions + self.cfg["normalization"]["clip_actions_delta"],
-            )
-        
-        # some customized action clip methods to bound the action output
-        if self.cfg["normalization"]["clip_actions_method"] == "normal":
-            actions = torch.clip(actions, -self.clip_actions, self.clip_actions)
-        elif self.cfg["normalization"]["clip_actions_method"] == "tanh":
-            actions = (torch.tanh(actions) * self.clip_actions).to(self.device)
-        elif self.cfg["normalization"]["clip_actions_method"] == "hard":
-            actions = torch.clip(
-                actions, self.clip_actions_low, self.clip_actions_high,
-            )
-        else:
-            raise NotImplementedError(f"Clip action method {self.cfg['normalization']['clip_actions_method']} is not implemented")
-
-        action_scale = self.cfg["control"]["action_scale"]
-        if isinstance(action_scale, (tuple, list)):
-            action_scale = torch.tensor(action_scale, device= self.sim_device)
-
-        actions_scaled_clipped = actions * action_scale
-        if self.cfg["control"]["computer_clip_torque"]:
-            if self.cfg["control"]["control_type"] == "P":
-                actions_scaled_clipped = self.clip_position_action_by_torque_limit(actions_scaled_clipped, dof_stiffness, dof_damping)
-            else:
-                raise NotImplementedError
-
-        self.last_contact_forces[:] = self.contact_forces
-
-        return actions, actions_scaled_clipped
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -189,17 +120,27 @@ class LeggedRobot(base_task.BaseTask):
             act = actions
             dof_stiffness = self.default_dof_stiffness.expand(self.num_envs, -1)
             dof_damping = self.default_dof_damping.expand(self.num_envs, -1)
-              
-        act, actions_scaled_clipped = self.pre_physics_step(act, dof_stiffness, dof_damping)
+
+        # some customized action clip methods to bound the action output
+        if self.cfg["normalization"]["clip_actions_method"] == "normal":
+            act = torch.clip(act, -self.clip_actions, self.clip_actions)
+        elif self.cfg["normalization"]["clip_actions_method"] == "tanh":
+            act = (torch.tanh(act) * self.clip_actions).to(self.device)
+        elif self.cfg["normalization"]["clip_actions_method"] == "hard":
+            act = torch.clip(act, self.clip_actions_low, self.clip_actions_high)
+        else:
+            raise NotImplementedError(f"Clip action method {self.cfg['normalization']['clip_actions_method']} is not implemented")
+
         self.actions[:] = act
         self.stiffness[:] = dof_stiffness
         self.damping[:] = dof_damping
+
         # step physics and render each frame
         self.render()
         with timer.section("physics_step"):
             for dec_i in range(self.cfg["control"]["decimation"]):
                 self.pre_decimation_step(dec_i)
-                self.torques = self._compute_torques(act, actions_scaled_clipped, dof_stiffness, dof_damping).view(self.torques.shape)
+                self.torques = self._compute_torques(act, dof_stiffness, dof_damping).view(self.torques.shape)
                 with timer.section("simulate"):
                     self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
                     self.gym.simulate(self.sim)
@@ -288,6 +229,7 @@ class LeggedRobot(base_task.BaseTask):
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_contacts[:] = self.feet_contact[:]
         self.last_torques[:] = self.torques[:]
+        self.last_contact_forces[:] = self.contact_forces
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
@@ -623,59 +565,37 @@ class LeggedRobot(base_task.BaseTask):
         self.commands[self.still_envs, :] = 0.0
         self.commands[self.get_small_command_mask(), :3] = 0.0
 
-    def _compute_torques_original(self, actions, dof_stiffness, dof_damping):
-        """ Compute torques from actions.
-            Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
-            [NOTE]: torques must have the same dimension as the number of DOFs, even if some DOFs are not actuated.
-
-        Args:
-            actions (torch.Tensor): Actions
-
-        Returns:
-            [torch.Tensor]: Torques sent to the simulation
-        """
-        #pd controller
-        actions_scaled = actions * self.cfg["control"]["action_scale"]
-        control_type = self.cfg["control"]["control_type"]
-        actions_scaled = actions_scaled * self.motor_strength_multiplier
-        if control_type=="P":
-          torques = (
-            (dof_stiffness * self.dof_stiffness_multiplier)
-            * (actions_scaled + self.default_dof_pos - self.dof_pos)
-            - (dof_damping * self.dof_damping_multiplier)
-            * self.dof_vel
-          )
-          friction = torch.min(self.dof_friction, torques.abs()) * torch.sign(
-            torques
-          )
-          torques = torques - friction
-        else:
-            raise NameError(f"Unknown controller type: {control_type}")
-        return torch.clip(torques, -self.torque_limits, self.torque_limits)
-
     @timer.section("compute_torques")
-    def _compute_torques(self, actions, actions_scaled_clipped, dof_stiffness, dof_damping):
-        if not self.cfg["control"]["computer_clip_torque"]:
-            return self._compute_torques_original(actions, dof_stiffness, dof_damping)
-        else:
-            actions_scaled_clipped = actions_scaled_clipped * self.motor_strength_multiplier
-            if self.cfg["control"]["control_type"] == "P":
-                torques = (
-                  (dof_stiffness * self.dof_stiffness_multiplier)
-                  * (actions_scaled_clipped + self.default_dof_pos - self.dof_pos)
-                  - (dof_damping * self.dof_damping_multiplier)
-                  * self.dof_vel)
-                friction = torch.min(self.dof_friction, torques.abs()) * torch.sign(torques)
-                torques = torques - friction
-            else:
-                raise NotImplementedError
-            if self.cfg["control"]["motor_clip_torque"]:
-                torques = torch.clip(
-                    torques,
-                    -self.torque_limits * self.cfg["control"]["motor_clip_torque"],
-                    self.torque_limits * self.cfg["control"]["motor_clip_torque"],
-                )
-            return torques
+    def _compute_torques(self, actions, dof_stiffness, dof_damping):
+        control_type = self.cfg["control"]["control_type"]
+        assert control_type == "P", "Only P controller is supported for now."
+
+        actions = actions * self.action_scale
+        pert_dof_stiffness = dof_stiffness * self.dof_stiffness_multiplier
+        pert_dof_damping = dof_damping * self.dof_damping_multiplier
+
+        if self.cfg["control"]["computer_clip_torque"]:
+            actions = self.clip_position_action_by_torque_limit(actions, pert_dof_stiffness, pert_dof_damping)
+
+        actions = actions * self.motor_strength_multiplier
+
+        torques = (
+            pert_dof_stiffness
+            * (actions + self.default_dof_pos - self.dof_pos)
+            - pert_dof_damping
+            * self.dof_vel
+        )
+        friction = torch.min(self.dof_friction, torques.abs()) * torch.sign(torques)
+        torques = torques - friction
+
+        if self.cfg["control"]["motor_clip_torque"]:
+            torques = torch.clip(
+                torques,
+                -self.torque_limits * self.cfg["control"]["motor_clip_torque"],
+                self.torque_limits * self.cfg["control"]["motor_clip_torque"],
+            )
+
+        return torques
 
     def _reset_buffers(self, env_ids):
         # reset buffers
@@ -1082,9 +1002,14 @@ class LeggedRobot(base_task.BaseTask):
             self.dof_damping_multiplier[:, ankle_indices] = math.apply_randomization(self.dof_damping_multiplier[:, ankle_indices], self.cfg["domain_rand"]["dof_damping_ankles"])
         if self.cfg["domain_rand"]["dof_friction"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             self.dof_friction = math.apply_randomization(self.dof_friction, self.cfg["domain_rand"]["dof_friction"])
+
+        # Action clipping and scaling.
         self.clip_actions = self.cfg["normalization"]["clip_actions"]
         if isinstance(self.clip_actions, (tuple, list)):
             self.clip_actions = torch.tensor(self.clip_actions, device=self.device)
+        self.action_scale = self.cfg["control"]["action_scale"]
+        if isinstance(self.action_scale, (tuple, list)):
+            self.action_scale = torch.tensor(self.action_scale, device=self.device)
 
         self._get_env_origins()
         env_lower = gymapi.Vec3(0., 0., 0.)
@@ -1346,8 +1271,10 @@ class LeggedRobot(base_task.BaseTask):
       # Stay close to the default pose.
       weights = []
       for name in self.dof_names:
-          if 'thigh' in name or 'hip' in name:
+          if 'hip' in name:
               weights.append(1.0)
+          elif 'thigh' in name:
+              weights.append(0.5)
           elif 'calf' in name:
               weights.append(0.1)
           else:

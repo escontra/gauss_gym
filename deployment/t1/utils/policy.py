@@ -1,59 +1,47 @@
 import numpy as np
-import torch
-
-from legged_gym.utils.task_registry import task_registry
-from legged_gym.utils import helpers
-from legged_gym.utils import observation_groups as observation_groups_teacher
-
-from legged_gym import GAUSS_GYM_ROOT_DIR
 import pathlib
-from legged_gym.rl.deployment_runner import DeploymentRunner
-import dataclasses
 
-def quat_rotate_inverse(q, v):
-    q_w = q[-1]
-    q_vec = q[:3]
-    a = v * (2.0 * q_w**2 - 1.0)
-    b = np.cross(q_vec, v) * (q_w * 2.0)
-    c = q_vec * (np.dot(q_vec, v) * 2.0)
-    return a - b + c
+import legged_gym
+from legged_gym.utils import helpers
+from legged_gym.utils import observation_groups
+from legged_gym.rl.deployment_runner_onnx import DeploymentRunner
+
 
 """ Get obs components and cat to a single obs input """
-def compute_observation(env_cfg, observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, default_dof_pos, gait_frequency, gait_process, actions):
+def compute_observation(env_cfg, obs_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, default_dof_pos, gait_frequency, gait_process, actions):
     
     obs_dict = {}
-    for group in observation_groups:
+    for group in obs_groups:
         if group.name != env_cfg['policy']['obs_key']:
           continue
         obs_dict[group.name] = {}
         for observation in group.observations:
             if observation.name == "projected_gravity":
-                obs = projected_gravity
-                obs = torch.tensor(obs, dtype=torch.float32)
+                obs = np.array(projected_gravity, dtype=np.float32)
             elif observation.name == "base_ang_vel":
-                obs = torch.tensor(base_ang_vel, dtype=torch.float32)
+                obs = np.array(base_ang_vel, dtype=np.float32)
             elif observation.name == "dof_pos":
-                obs = torch.tensor((dof_pos - default_dof_pos)[11:], dtype=torch.float32)
+                obs = np.array((dof_pos - default_dof_pos)[11:], dtype=np.float32)
             elif observation.name == "dof_vel":
-                obs = torch.tensor(dof_vel[11:], dtype=torch.float32)
+                obs = np.array(dof_vel[11:], dtype=np.float32)
             elif observation.name == "velocity_commands":
-                obs = torch.tensor([vx, vy, vyaw], dtype=torch.float32)
+                obs = np.array([vx, vy, vyaw], dtype=np.float32)
             elif observation.name == "gait_progress":
-                obs = torch.cat((
-                    (torch.cos(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                    (torch.sin(2 * torch.pi * torch.tensor(gait_process)) * (torch.tensor(gait_frequency) > 1.0e-8).float()).unsqueeze(-1),
-                ), dim = -1).to(torch.float32)
+                obs = np.concatenate((
+                    (np.cos(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
+                    (np.sin(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
+                ), axis=-1)
             elif observation.name == "actions":
-                obs = torch.tensor(actions, dtype=torch.float32)
+                obs = np.array(actions, dtype=np.float32)
             else:
                 raise ValueError(f"Observation {observation.name} not found")
-            obs = obs.unsqueeze(0)
+            obs = obs[None]
             if observation.clip:
-                obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
+                obs = np.clip(obs, observation.clip[0], observation.clip[1])
             if observation.scale is not None:
                 scale = observation.scale
                 if isinstance(scale, list):
-                    scale = torch.tensor(scale, device=obs.device, dtype=torch.float32)[None]
+                    scale = np.array(scale)[None]
                 obs = scale * obs
             obs_dict[group.name][observation.name] = obs
 
@@ -67,18 +55,18 @@ class Policy:
         try:
             helpers.set_seed(cfg["seed"])
             if cfg["logdir"] == "default":
-                log_root = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 'logs'
+                log_root = pathlib.Path(legged_gym.GAUSS_GYM_ROOT_DIR) / 'logs'
             elif cfg["logdir"] != "":
                 log_root = pathlib.Path(cfg["logdir"])
             else:
                 raise ValueError("Must specify logdir as 'default' or a path.")
             
-            self.runner = eval(cfg["runner"]["class_name"])(deploy_cfg, cfg, device=cfg["rl_device"])
+            self.runner = DeploymentRunner(deploy_cfg, cfg)
 
             if cfg["runner"]["resume"]:
                 assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
                 self.runner.load(log_root)
-            self.observation_groups = observation_groups_teacher.observation_groups_from_dict(cfg["observations"])
+            self.observation_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
         except Exception as e:
             print(f"Failed to start runner: {e}")
             raise
@@ -133,9 +121,8 @@ class Policy:
         # self.obs[35:47] = self.actions
 
         self.obs = compute_observation(self.cfg, self.observation_groups, dof_pos, dof_vel, base_ang_vel, projected_gravity, vx, vy, vyaw, self.default_dof_pos, self.gait_frequency, self.gait_process, self.actions)
-
-        dist = self.runner.act(self.obs[self.cfg['policy']['obs_key']])
-        self.actions[:] = dist.detach().cpu().numpy()
+        outs = self.runner.act(self.obs[self.cfg['policy']['obs_key']])
+        self.actions[:] = outs['actions']
         self.actions[:] = np.clip(self.actions, -self.cfg["normalization"]["clip_actions"], self.cfg["normalization"]["clip_actions"])
         
         self.dof_targets[:] = self.default_dof_pos

@@ -36,7 +36,7 @@ def identity_symmetry(env, obs):
   return obs
 
 
-def t1_joint_symmetry(env, joint_val):
+def t1_joint_symmetry(env, joint_val, use_multipliers=True):
   joint_map = {'Left': 'Right', 'Right': 'Left'}
   multipliers = {
     'Ankle_Pitch': 1.0,
@@ -49,7 +49,7 @@ def t1_joint_symmetry(env, joint_val):
   for dof_name in env.dof_names:
     name_parts = dof_name.split('_')
     new_name = dof_name.replace(name_parts[0], joint_map[name_parts[0]])
-    multiplier = multipliers['_'.join(name_parts[1:])]
+    multiplier = multipliers['_'.join(name_parts[1:])] if use_multipliers else 1.0
     joint_val_sym[..., env.dof_names.index(dof_name)] = multiplier * joint_val[..., env.dof_names.index(new_name)]
   return joint_val_sym
 
@@ -64,6 +64,12 @@ def t1_dof_vel_symmetry(env, obs):
 
 def t1_actions_symmetry(env, obs):
   return t1_joint_symmetry(env, obs)
+
+def t1_stiffness_symmetry(env, obs):
+  return t1_joint_symmetry(env, obs, use_multipliers=False)
+
+def t1_damping_symmetry(env, obs):
+  return t1_joint_symmetry(env, obs, use_multipliers=False)
 
 
 def a1_joint_symmetry(env, joint_val, use_multipliers=True):
@@ -153,6 +159,16 @@ T1_DOF_VEL = SymmetryModifier(
 T1_ACTIONS = SymmetryModifier(
   observation=observation_groups.ACTIONS,
   symmetry_fn=t1_actions_symmetry,
+)
+
+T1_STIFFNESS = SymmetryModifier(
+  observation=observation_groups.STIFFNESS,
+  symmetry_fn=t1_stiffness_symmetry,
+)
+
+T1_DAMPING = SymmetryModifier(
+  observation=observation_groups.DAMPING,
+  symmetry_fn=t1_damping_symmetry,
 )
 
 GAIT_PROGRESS = SymmetryModifier(

@@ -1,5 +1,4 @@
 from typing import Dict
-import torch
 import pickle
 import torch.utils._pytree as pytree
 import pathlib
@@ -7,8 +6,7 @@ import onnxruntime
 
 
 class DeploymentRunner:
-  def __init__(self, deploy_cfg: Dict, cfg: Dict, device="cpu"):
-    self.device = device
+  def __init__(self, deploy_cfg: Dict, cfg: Dict):
     self.deploy_cfg = deploy_cfg
     self.cfg = cfg
     self.policy_key = self.cfg["policy"]["obs_key"]
@@ -40,9 +38,6 @@ class DeploymentRunner:
     with open(hidden_states_path, 'rb') as f:
       self.onnx_init_hidden_states = pickle.load(f)
 
-  def to_numpy(self, x):
-    return pytree.tree_map(lambda x: x.cpu().numpy(), x)
-
   def get_input_dict(self, obs_dict, policy_hidden_states):
     return {
       **obs_dict,
@@ -54,15 +49,8 @@ class DeploymentRunner:
     hidden_states = outputs[len(act_keys):]
     return actions, hidden_states
 
-  def to_device(self, obs):
-    return pytree.tree_map(lambda x: x.to(self.device), obs)
-
   def act(self, obs):
-    input_dict = self.get_input_dict(self.to_numpy(obs), self.onnx_init_hidden_states)
+    input_dict = self.get_input_dict(obs, self.onnx_init_hidden_states)
     outputs = self.onnx_session.run(self.onnx_output_names, input_dict)
     actions, self.onnx_init_hidden_states = self.get_actions_and_hidden_states(outputs, self.action_space.keys())
     return actions
-
-  def interrupt_handler(self, signal, frame):
-    print("\nInterrupt received, waiting for video to finish...")
-    self.interrupt = True

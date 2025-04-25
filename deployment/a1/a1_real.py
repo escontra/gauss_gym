@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 import os
 import pygame
 
@@ -8,11 +7,8 @@ os.environ["SDL_VIDEODRIVER"] = "dummy"
 import rospy
 from unitree_legged_msgs.msg import LowState
 from unitree_legged_msgs.msg import LegsCmd
-from unitree_legged_msgs.msg import Float32MultiArrayStamped
-from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image
 
 from legged_gym.utils import observation_groups
 
@@ -32,7 +28,6 @@ class UnitreeA1Real:
             move_by_gamepad=True, # if True, command will not listen to move_cmd_subscriber, but gamepad.
             cfg= dict(),
             extra_cfg= dict(),
-            model_device= torch.device("cpu"),
         ):
         """
         NOTE:
@@ -46,7 +41,6 @@ class UnitreeA1Real:
             cfg: same config from a1_config but a dict object.
             extra_cfg: some other configs that is hard to load from file.
         """
-        self.model_device = model_device
         self.num_envs = 1
         self.robot_namespace = robot_namespace
         self.low_state_topic = low_state_topic
@@ -61,8 +55,7 @@ class UnitreeA1Real:
         assert not (self.move_by_wireless_remote and self.move_by_gamepad), "Cannot move by both wireless remote and gamepad at the same time."
         self.cfg = cfg
         self.extra_cfg = dict(
-            torque_limits= torch.tensor([33.5] * 12, dtype= torch.float32, device= self.model_device, requires_grad= False), # Nm
-            # torque_limits= torch.tensor([1, 5, 5] * 4, dtype= torch.float32, device= self.model_device, requires_grad= False), # Nm
+            torque_limits= np.array([33.5] * 12, dtype=np.float32), # Nm
             dof_map= [ # from isaacgym simulation joint order to URDF order
                 3, 4, 5,
                 0, 1, 2,
@@ -87,7 +80,7 @@ class UnitreeA1Real:
                 "RR_calf_joint",
             ],
             # motor strength is multiplied directly to the action.
-            motor_strength= torch.ones(12, dtype= torch.float32, device= self.model_device, requires_grad= False),
+            motor_strength= np.ones(12, dtype=np.float32),
         ); self.extra_cfg.update(extra_cfg)
         if "torque_limits" in self.cfg["control"]:
             if isinstance(self.cfg["control"]["torque_limits"], (tuple, list)):
@@ -95,8 +88,8 @@ class UnitreeA1Real:
                     self.extra_cfg["torque_limits"][i] = self.cfg["control"]["torque_limits"][i]
             else:
                 self.extra_cfg["torque_limits"][:] = self.cfg["control"]["torque_limits"]
-        self.command_buf = torch.zeros((self.num_envs, 3,), device= self.model_device, dtype= torch.float32) # zeros for initialization
-        self.actions = torch.zeros((1, 12), device=model_device, dtype= torch.float32)
+        self.command_buf = np.zeros((self.num_envs, 3,), dtype=np.float32) # zeros for initialization
+        self.actions = np.zeros((1, 12), dtype=np.float32)
 
         self.process_configs()
 
@@ -153,7 +146,7 @@ class UnitreeA1Real:
     def start_ros(self):
         # initialze several buffers so that the system works even without message update.
         # self.low_state_buffer = LowState() # not initialized, let input message update it.
-        self.base_position_buffer = torch.zeros((self.num_envs, 3), device= self.model_device, requires_grad= False)
+        self.base_position_buffer = np.zeros((self.num_envs, 3), dtype=np.float32)
         self.legs_cmd_publisher = rospy.Publisher(
             self.robot_namespace + self.legs_cmd_topic,
             LegsCmd,
@@ -199,7 +192,7 @@ class UnitreeA1Real:
         
     def process_configs(self):
         self.up_axis_idx = 2 # 2 for z, 1 for y -> adapt gravity accordingly
-        self.gravity_vec = torch.zeros((self.num_envs, 3), dtype= torch.float32)
+        self.gravity_vec = np.zeros((self.num_envs, 3), dtype=np.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
         self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
@@ -208,12 +201,12 @@ class UnitreeA1Real:
             self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12
         if not isinstance(self.cfg["control"]["stiffness"]["joint"], (list, tuple)):
             self.cfg["control"]["stiffness"]["joint"] = [self.cfg["control"]["stiffness"]["joint"]] * 12
-        self.d_gains = torch.tensor(self.cfg["control"]["damping"]["joint"], device= self.model_device, dtype= torch.float32)
-        self.p_gains = torch.tensor(self.cfg["control"]["stiffness"]["joint"], device= self.model_device, dtype= torch.float32)
+        self.d_gains = np.array(self.cfg["control"]["damping"]["joint"], dtype=np.float32)
+        self.p_gains = np.array(self.cfg["control"]["stiffness"]["joint"], dtype=np.float32)
         print(f"P Gains: {self.p_gains}")
         print(f"D Gains: {self.d_gains}")
 
-        self.default_dof_pos = torch.zeros(12, device= self.model_device, dtype= torch.float32)
+        self.default_dof_pos = np.zeros(12, dtype=np.float32)
         for i in range(12):
             name = self.extra_cfg["dof_names"][i]
             default_joint_angle = self.cfg["init_state"]["default_joint_angles"][name]
@@ -238,18 +231,18 @@ class UnitreeA1Real:
             rospy.loginfo("clip_actions_method with hard mode")
             rospy.loginfo("clip_actions: " + str(self.cfg["normalization"]["clip_actions"]))
             self.clip_actions_method = "hard"
-            self.clip_actions_low = torch.tensor(self.cfg["normalization"]["clip_actions_low"], device= self.model_device, dtype= torch.float32)
-            self.clip_actions_high = torch.tensor(self.cfg["normalization"]["clip_actions_high"], device= self.model_device, dtype= torch.float32)
+            self.clip_actions_low = np.array(self.cfg["normalization"]["clip_actions_low"], dtype=np.float32)
+            self.clip_actions_high = np.array(self.cfg["normalization"]["clip_actions_high"], dtype=np.float32)
         else:
             rospy.loginfo("clip_actions_method is " + str(self.cfg["normalization"]["clip_actions_method"]))
         self.dof_map = self.extra_cfg["dof_map"]
 
         # get ROS params for hardware configs
-        self.joint_limits_high = torch.tensor([
+        self.joint_limits_high = np.array([
             rospy.get_param(self.robot_namespace + "/joint_limits/{}_max".format(s)) \
             for s in ["hip", "thigh", "calf"] * 4
         ])
-        self.joint_limits_low = torch.tensor([
+        self.joint_limits_low = np.array([
             rospy.get_param(self.robot_namespace + "/joint_limits/{}_min".format(s)) \
             for s in ["hip", "thigh", "calf"] * 4
         ])
@@ -258,9 +251,9 @@ class UnitreeA1Real:
     
     def clip_action_before_scale(self, actions):
         if getattr(self, "clip_actions_method", None) == "hard":
-            actions = torch.clip(actions, self.clip_actions_low, self.clip_actions_high)
+            actions = np.clip(actions, self.clip_actions_low, self.clip_actions_high)
         else:
-            actions = torch.clip(actions, -self.clip_actions, self.clip_actions)
+            actions = np.clip(actions, -self.clip_actions, self.clip_actions)
         return actions
 
     def clip_by_torque_limit(self, actions_scaled):
@@ -278,7 +271,7 @@ class UnitreeA1Real:
         else:
             raise NotImplementedError
 
-        return torch.clip(actions_scaled, actions_low, actions_high)
+        return np.clip(actions_scaled, actions_low, actions_high)
 
     """ Get obs components and cat to a single obs input """
     def compute_observation(self):
@@ -302,7 +295,7 @@ class UnitreeA1Real:
               if observation.scale is not None:
                   scale = observation.scale
                   if isinstance(scale, list):
-                      scale = torch.tensor(scale, device=obs.device)[None]
+                      scale = np.array(scale)[None]
                   obs = scale * obs
               obs_dict[group.name][observation.name] = obs
 
@@ -322,31 +315,14 @@ class UnitreeA1Real:
             rospy.logwarn_throttle(60, "You are using control without any torque clip. The network might output torques larger than the system can provide.")
             robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos.unsqueeze(0)
 
-        # debugging and logging
-        # transfered_action = torch.zeros_like(self.actions[0])
-        # for i in range(12):
-        #     transfered_action[self.dof_map[i]] = self.actions[0, i] + self.default_dof_pos[i]
-        # self.debug_publisher.publish(Float32MultiArray(data=
-        #     transfered_action\
-        #     .cpu().numpy().astype(np.float32).tolist()
-        # ))
-
-        # restrict the target action delta in order to avoid robot shutdown (maybe there is another solution)
-        # robot_coordinates_action = torch.clip(
-        #     robot_coordinates_action,
-        #     self.dof_pos - 0.3,
-        #     self.dof_pos + 0.3,
-        # )
-
-        # wrap the message and publish
         self.publish_legs_cmd(robot_coordinates_action)
 
     def publish_legs_cmd(self, robot_coordinates_action, kp= None, kd= None):
         """ publish the joint position directly to the robot. NOTE: The joint order from input should
         be in simulation order. The value should be absolute value rather than related to dof_pos.
         """
-        robot_coordinates_action = torch.clip(
-            robot_coordinates_action.cpu(),
+        robot_coordinates_action = np.clip(
+            robot_coordinates_action,
             self.joint_limits_low,
             self.joint_limits_high,
         )
