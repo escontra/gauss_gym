@@ -64,8 +64,6 @@ class LeggedRobot(base_task.BaseTask):
       """For position control, scaled actions should be in the coordinate of robot default dof pos"""
       dof_vel = self.dof_vel
       dof_pos_ = self.dof_pos - self.default_dof_pos
-      dof_stiffness = dof_stiffness * self.dof_stiffness_multiplier
-      dof_damping = dof_damping * self.dof_damping_multiplier
       p_limits_low = (-self.torque_limits) + dof_damping * dof_vel
       p_limits_high = (self.torque_limits) + dof_damping * dof_vel
       actions_low = (p_limits_low / dof_stiffness) + dof_pos_
