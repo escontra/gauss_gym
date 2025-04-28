@@ -30,7 +30,7 @@ def compute_observation(env_cfg, obs_groups, dof_pos, dof_vel, base_ang_vel, pro
                 obs = np.concatenate((
                     (np.cos(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
                     (np.sin(2 * np.pi * gait_process) * (gait_frequency > 1.0e-8))[..., None],
-                ), axis=-1)
+                ), axis=-1).astype(np.float32)
             elif observation.name == "actions":
                 obs = np.array(actions, dtype=np.float32)
             else:
