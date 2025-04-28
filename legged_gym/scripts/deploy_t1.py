@@ -37,7 +37,7 @@ class Controller:
         onboard_cfg_path = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 'deployment' / 't1' / 'configs' / onboard_cfg_file
         with open(onboard_cfg_path, "r", encoding="utf-8") as f:
             self.onboard_cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
-        
+
         self.cfg = cfg
 
         # Initialize components
