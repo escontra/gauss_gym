@@ -4,19 +4,20 @@ from ml_collections import config_dict
 def get_config():
   config = config_dict.ConfigDict()
 
+  config.format = "ns"
   config.json_path = '/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/transforms.json'
-  config.output_dir = 'slices'
+  config.output_dir = 'meshes'
 
   # Visualization parameters.
   config.visualize = True
 
   # Size of slices to generate.
-  config.num_slices = 30
   config.bbox_slice_size = 1.5
   config.buffer_distance = 1.0
   config.slice_distance = 4.0
   config.slice_overlap = 3.0
   config.min_poses_per_segment = 10
+  config.slice_direction = None
 
   # Mesh generation parameters.
   config.voxel_size = 0.02

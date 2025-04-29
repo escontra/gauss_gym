@@ -62,6 +62,16 @@ terrain:
   dynamic_friction: 1.0
   restitution: 0.
 
+  # Path to each scene, where each scene is a folder containing subfolders
+  # 'meshes' and 'splatfacto'.
+  scenes: [
+    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43895956/,
+    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43649417/,
+    /home/root-desktop/legged_gym/scenes/apartment_to_grace,
+    /home/root-desktop/legged_gym/scenes/bridge,
+    /home/root-desktop/legged_gym/scenes/stairwell,
+  ]
+
 
 init_state:
   pos: [0.0, 0.0, 0.5]

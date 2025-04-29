@@ -87,7 +87,8 @@ class T1(LeggedRobot):
             torch.cos(base_yaw) * (self.get_feet_state()[0][:, 1, 1] - self.get_feet_state()[0][:, 0, 1])
             - torch.sin(base_yaw) * (self.get_feet_state()[0][:, 1, 0] - self.get_feet_state()[0][:, 0, 0])
         )
-        return torch.clip(feet_distance_ref - feet_distance, min=0.0, max=0.1)
+        distance_diff = torch.clip(feet_distance - feet_distance_ref, max=0.)
+        return distance_diff
 
     def _reward_feet_swing(self, swing_period):
         left_swing = (torch.abs(self.gait_process - 0.25) < 0.5 * swing_period) & (self.gait_frequency > 1.0e-8)

@@ -591,7 +591,7 @@ class RayCaster():
         self.ray_hits_world[env_ids] = ray_cast(ray_starts_world, ray_directions_world, self.terrain_mesh)
 
     def get_data(self):
-        return torch.nan_to_num(self.ray_hits_world, posinf=self.default_hit_value)
+        return torch.nan_to_num(self.ray_hits_world, posinf=self.default_hit_value, neginf=-self.default_hit_value)
     
     def debug_vis(self, env):
         if self.sphere_geom is None:
@@ -710,7 +710,7 @@ class GaussianSplattingRenderer():
         self.terrain = scene_manager._terrain
 
         print('Loading Gaussian Splatting Renderer...')
-        self.scene_path_map = {s: os.path.join(os.path.dirname(os.path.dirname(self.terrain.get_mesh(s, f).filepath)), 'splat', 'splat.ply') for s, f in self.terrain.mesh_keys}
+        self.scene_path_map = {s: os.path.join(os.path.dirname(os.path.dirname(self.terrain.get_mesh(s, f).filepath)), 'splatfacto', 'splat.ply') for s, f in self.terrain.mesh_keys}
         self.path_scene_map = {v: k for k, v in self.scene_path_map.items()}
         print(torch.cuda.device_count())
         self._gs_renderer = MultiSceneRenderer(
@@ -750,8 +750,6 @@ class GaussianSplattingRenderer():
         cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
 
         # From OpenCV to OpenGL camera convention for GS renderer.
-        R_x = vtf.SO3.from_x_radians(-np.pi / 2)
-        R_z = vtf.SO3.from_z_radians(np.pi)
         cam_trans -= self.env.env_origins.cpu().numpy()
         # TODO: FIX THIS.
         # cam_trans = np.dot(cam_trans, R_z.as_matrix())
@@ -778,7 +776,14 @@ class GaussianSplattingRenderer():
             t = poses.translation()
             end = start + t.shape[0]
             q = poses.rotation()
-            if 'stairwell' not in k:
+            if 'ARKitScenes' in k:
+              R_x = vtf.SO3.from_x_radians(np.pi)
+              t = np.dot(t, R_x.as_matrix())
+              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
+              q = R_x.inverse() @ q
+            elif 'stairwell' not in k:
+              R_x = vtf.SO3.from_x_radians(-np.pi / 2)
+              R_z = vtf.SO3.from_z_radians(np.pi)
               t = np.dot(t, R_z.as_matrix())
               t = np.dot(t, R_x.as_matrix())
               t += self.scene_manager.cam_offset.cpu().numpy()[start:end]

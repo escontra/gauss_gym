@@ -53,7 +53,7 @@ class GaussianTerrain:
   def __init__(self, cfg: Dict, num_robots) -> None:
     self.cfg = cfg
     self.num_robots = num_robots
-    self.scene_root = pathlib.Path(self.cfg["terrain"]["scene_root"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR))
+    self.scene_paths = self.cfg["terrain"]["scenes"]
 
     self._mesh_dict = {}
     self._load_meshes()
@@ -87,8 +87,8 @@ class GaussianTerrain:
       )
     return values
 
-  def _load_mesh(self, scene: str, filename: str):
-    filepath = self.scene_root / scene / "meshes" / filename
+  def _load_mesh(self, scene_path: pathlib.Path, scene: str, filename: str):
+    filepath = scene_path / "meshes" / filename
     with open(filepath, "rb") as f:
       mesh_dict = pickle.load(f)
 
@@ -98,7 +98,7 @@ class GaussianTerrain:
     curr_cam_trans = np.array(mesh_dict["cam_trans"]).astype(np.float32)
     curr_cam_trans = self.smooth_path(
       curr_cam_trans, smoothing_factor=10,
-      resample_num_points=20)
+      resample_num_points=30)
 
     return RawMesh(
       scene_name=scene,
@@ -111,12 +111,16 @@ class GaussianTerrain:
     )
 
   def _load_meshes(self):
-    for scene_name in self.scene_root.iterdir():
-      scene_name = scene_name.name
-      for filename in (self.scene_root / scene_name / "meshes").iterdir():
+    for scene_path in self.scene_paths:
+      scene_path = pathlib.Path(scene_path)
+      scene_name = scene_path.name
+      print(scene_name, scene_path)
+      print(scene_path / "meshes")
+      print(list((scene_path / "meshes").iterdir()))
+      for filename in (scene_path / "meshes").iterdir():
         filename = filename.name
         self._mesh_dict[os.path.join(scene_name, filename)] = self._load_mesh(
-          scene_name, filename
+          scene_path, scene_name, filename
         )
 
   def _process_poses(self):

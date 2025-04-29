@@ -14,9 +14,9 @@ env:
   episode_length_s: 20
 
   camera_params:
-    focal_length: 100
-    cam_height: 48
-    cam_width: 48
+    focal_length: 500
+    cam_height: 512
+    cam_width: 512
     cam_xyz_offset: [0., 0., 0.]
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
@@ -65,6 +65,16 @@ terrain:
   dynamic_friction: 1.0
   restitution: 0.
 
+  # Path to each scene, where each scene is a folder containing subfolders
+  # 'meshes' and 'splatfacto'.
+  scenes: [
+    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43895956/,
+    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43649417/,
+    /home/root-desktop/legged_gym/scenes/apartment_to_grace,
+    /home/root-desktop/legged_gym/scenes/bridge,
+    /home/root-desktop/legged_gym/scenes/stairwell,
+  ]
+
 
 init_state:
   pos: [0.0, 0.0, 0.86]
@@ -100,7 +110,7 @@ control:
     'Head': 1.0,
     'Hip': 5.0, 
     'Knee': 5.0,
-    'Ankle': 1.0
+    'Ankle': 2.0
   }
   action_scale: 1.0
   decimation: 10
@@ -259,12 +269,12 @@ domain_rand:
   kick_interval_s: 4.0
   kick_lin_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
   kick_ang_vel:
     apply: True
-    range: [-1.0, 1.0]
+    range: [-1.5, 1.5]
     operation: "additive"
     distribution: "uniform"
 
@@ -294,13 +304,13 @@ rewards:
     scale: 0.25
   tracking_lin_vel_x:
     scale: 2.0
-    tracking_sigma: 0.15
+    tracking_sigma: 0.25
   tracking_lin_vel_y:
     scale: 2.0
-    tracking_sigma: 0.15
+    tracking_sigma: 0.25
   tracking_ang_vel:
     scale: 1.0
-    tracking_sigma: 0.15
+    tracking_sigma: 0.25
   lin_vel_z:
     scale: -0.5
   ang_vel_xy:
@@ -314,7 +324,7 @@ rewards:
   torques:
     scale: -2.e-4
   action_rate:
-    scale: -1.
+    scale: -0.5
   dof_acc:
     scale: -1.e-7
   dof_pos_limits:
@@ -341,7 +351,7 @@ rewards:
   feet_roll:
     scale: -0.1
   feet_distance:
-    scale: -1.
+    scale: 1.5
     feet_distance_ref: 0.2
   feet_swing:
     scale: 3.
