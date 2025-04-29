@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import os
 from absl import app
 import pickle
@@ -12,6 +12,7 @@ from pathlib import Path
 import viser.transforms as vtf
 import copy
 import cv2
+import torch
 
 from ml_collections import config_flags
 from configs.base import get_config
@@ -19,7 +20,6 @@ from PIL import Image
 
 from rendering import batch_gs_renderer
 
-# _CONFIG = config_flags.DEFINE_config_dict("config", get_config())
 _CONFIG = config_flags.DEFINE_config_file("config")
 
 
@@ -181,7 +181,6 @@ def exp_map_SO3xR3(tangent_vector):
     Returns:
         [R|t] transformation matrices.
     """
-    import torch
     # code for SO3 map grabbed from pytorch3d and stripped down to bare-bones
     log_rot = tangent_vector[:, 3:]
     nrms = (log_rot * log_rot).sum(1)
@@ -213,7 +212,6 @@ def load_ns_optimized_traj(splatfacto_dir: Path, transforms: list[dict]):
   ckpt_dir = splatfacto_dir / 'nerfstudio_models'
   ckpt = list(ckpt_dir.glob('*.ckpt'))[-1]
   print(f'Loading NS optimized trajectory from {ckpt}')
-  import torch
   pose_adjustment = torch.load(ckpt)['pipeline']['_model.camera_optimizer.pose_adjustment']
   pose_adjustment = exp_map_SO3xR3(pose_adjustment).cpu().numpy()
   dataparser_transform = np.array(json.load(open(splatfacto_dir / 'dataparser_transforms.json'))['transform'])
@@ -271,8 +269,8 @@ def load_ns_optimized_traj(splatfacto_dir: Path, transforms: list[dict]):
   return new_transforms
 
 
-def process_transforms_arkit(
-  arkit_dir: Path,
+def process_transforms(
+  transforms: List[dict],
   vbg: o3d.t.geometry.VoxelBlockGrid,
   integrate_color: bool,
   depth_scale: float,
@@ -283,24 +281,6 @@ def process_transforms_arkit(
   device: o3d.core.Device,
 ):
 
-  frames_path = None
-  for file in arkit_dir.iterdir():
-    if file.name.endswith("frames"):
-      frames_path = file
-
-
-  # Path to the trajectory file
-  traj_path = frames_path / "lowres_wide.traj"
-  depth_path = frames_path / 'lowres_depth'
-  color_path = frames_path / 'lowres_wide'
-  intrinsics_path = frames_path / 'lowres_wide_intrinsics'
-  transforms = load_arkit_data(
-    traj_path, depth_path, color_path, intrinsics_path
-  )
-
-  splatfacto_dir = arkit_dir / "splatfacto"
-  transforms = load_ns_optimized_traj(splatfacto_dir, transforms)
-
   start = time.time()
   # Bounding boxes used to extract slices from input pointcloud.
   bounding_boxes = []
@@ -310,9 +290,7 @@ def process_transforms_arkit(
   camera_positions = []
   camera_orientations = []
   for frame in tqdm(transforms):
-    depth_path = frame["depth_file_path"]
-    if "right" in str(depth_path):
-      continue  # TODO: Use both
+    depth_path = Path(frame["depth_file_path"])
     if depth_path.suffix == '.png':
       depth = np.array(Image.open(depth_path))  # Reads as 16-bit integer
       depth = depth.astype(float) / 1000.0  # Convert millimeters to meters
@@ -346,7 +324,7 @@ def process_transforms_arkit(
     )
 
     if integrate_color:
-      color_path = frame["file_path"]
+      color_path = Path(frame["file_path"])
       color = o3d.t.io.read_image(str(color_path)).as_tensor().numpy()
       color = color.astype(np.float32) / 255.0
       color = o3d.t.geometry.Image(color).to(device)
@@ -393,132 +371,48 @@ def process_transforms_arkit(
     camera_orientations,
   )
 
-def preprocess_transforms_ns(
-  json_path: Path,
-  output_dir: Path,
+
+def maybe_apply_optimized_poses(
+    load_dir: Path,
+    transforms: List[dict],
 ):
-  json_path = Path(json_path)
-  parent_dir = json_path.parents[0]
-  save_dir = parent_dir / output_dir
-  if not Path.exists(save_dir):
-    Path.mkdir(save_dir)
+  if (load_dir / "splatfacto").exists():
+    return load_ns_optimized_traj(load_dir / "splatfacto", transforms)
+  return transforms
+
+def preprocess_transforms_ns(
+  load_dir: Path,
+):
+  json_path = load_dir / 'transforms.json'
   transforms = load_transforms_ns(json_path)
   transforms = [frame for frame in transforms["frames"]]
 
   for frame in transforms:
+    frame['transform_matrix'] = np.array(frame['transform_matrix'])
     frame["depth_file_path"] = str(json_path.parents[0] / frame["depth_file_path"])
     frame["file_path"] = str(json_path.parents[0] / frame["file_path"])
 
-    
-
-  return transforms, save_dir
+  return transforms
 
 
-def process_transforms_ns(
-  json_path: Path,
-  transforms: dict,
-  vbg: o3d.t.geometry.VoxelBlockGrid,
-  integrate_color: bool,
-  depth_scale: float,
-  depth_max: float,
-  bbox_slice_size: float,
-  up_axis: str,
-  device: o3d.core.Device,
+def preprocess_transforms_arkit(
+  load_dir: Path,
 ):
-  start = time.time()
-  # Bounding boxes used to extract slices from input pointcloud.
-  bounding_boxes = []
-  # Bounding boxes used to check if slices have enough points.
-  point_checking_bounding_boxes = []
-  # Camera positions and orientations.
-  camera_positions = []
-  camera_orientations = []
-  for frame in tqdm(transforms["frames"]):
-    depth_path = json_path.parents[0] / frame["depth_file_path"]
-    if "right" in str(depth_path):
-      continue  # TODO: Use both
-    if depth_path.suffix == '.png':
-      depth = np.array(Image.open(depth_path))  # Reads as 16-bit integer
-      depth = depth.astype(float) / 1000.0  # Convert millimeters to meters
-    elif depth_path.suffix in ('.npy', '.npz'):
-      depth = np.load(depth_path)
-    H, W = depth.shape
-    depth = o3d.t.geometry.Image(
-      o3d.core.Tensor(depth, dtype=o3d.core.Dtype.Float32)
-    ).to(device)
-    intrinsic = o3d.camera.PinholeCameraIntrinsic()
-    intrinsic.set_intrinsics(
-      width=W,
-      height=H,
-      fx=frame["fl_x"],
-      fy=frame["fl_y"],
-      cx=frame["cx"],
-      cy=frame["cy"],
-    )
-    intrinsic = o3d.core.Tensor(
-      intrinsic.intrinsic_matrix, o3d.core.Dtype.Float64
-    )
-    extrinsic = np.array(frame["transform_matrix"])
-    extrinsic = vtf.SE3.from_matrix(extrinsic)
-    extrinsic = vtf.SE3.from_rotation_and_translation(
-      translation=extrinsic.translation(),
-      rotation=extrinsic.rotation() @ vtf.SO3.from_x_radians(-np.pi),
-    ).inverse()
-    extrinsic = extrinsic.as_matrix()
-    extrinsic = o3d.core.Tensor(extrinsic, dtype=o3d.core.Dtype.Float64)
-    color_path = json_path.parents[0] / frame["file_path"]
-    color = o3d.t.io.read_image(str(color_path)).as_tensor().numpy()
-    color = color.astype(np.float32) / 255.0
-    color = o3d.t.geometry.Image(color).to(device)
-    frustum_block_coords = vbg.compute_unique_block_coordinates(
-      depth, intrinsic, extrinsic, depth_scale, depth_max
-    )
+  frames_path = None
+  for file in load_dir.iterdir():
+    if file.name.endswith("frames"):
+      frames_path = file
 
-    if integrate_color:
-      vbg.integrate(
-        frustum_block_coords,
-        depth,
-        color,
-        intrinsic,
-        intrinsic,
-        extrinsic,
-        depth_scale,
-        depth_max,
-      )
-    else:
-      vbg.integrate(
-        frustum_block_coords,
-        depth,
-        intrinsic,
-        extrinsic,
-        depth_scale,
-        depth_max,
-      )
-    dt = time.time() - start
-
-    pose = vtf.SE3.from_matrix(np.array(frame["transform_matrix"]))
-    camera_positions.append(pose.translation())
-    camera_orientations.append(pose.rotation().as_quaternion_xyzw())
-
-    # Bounding boxes used to extract slices from input pointcloud.
-    bounding_boxes.append(rectangular_prism(pose,bbox_slice_size, 3., up_axis, (1.0, 0.0, 0.0)))
-    point_checking_bounding_boxes.append(rectangular_prism(pose, 0.5, 3., up_axis, (0.0, 0.0, 1.0)))
-
-  print(
-    "Finished integrating {} frames in {} seconds".format(
-      len(transforms["frames"]), dt
-    )
+  # Path to the trajectory file
+  traj_path = frames_path / "lowres_wide.traj"
+  depth_path = frames_path / 'lowres_depth'
+  color_path = frames_path / 'lowres_wide'
+  intrinsics_path = frames_path / 'lowres_wide_intrinsics'
+  transforms = load_arkit_data(
+    traj_path, depth_path, color_path, intrinsics_path
   )
 
-  # THIS IS WHAT WE USE
-  pcd = vbg.extract_point_cloud().cpu().to_legacy()
-  return (
-    pcd,
-    bounding_boxes,
-    point_checking_bounding_boxes,
-    camera_positions,
-    camera_orientations,
-  )
+  return transforms
 
 
 def visualize_geometries(geometries: list[o3d.geometry.Geometry]):
@@ -727,53 +621,33 @@ def main(_):
   device = o3d.core.Device("CUDA:0")
   vbg = get_voxel_block_grid(device, config.integrate_color, config.voxel_size)
 
-  if config.format == "ns":
-    json_path = Path(config.json_path)
-    parent_dir = json_path.parents[0]
-    save_dir = parent_dir / config.output_dir
-    if not Path.exists(save_dir):
-      Path.mkdir(save_dir)
-    transforms = load_transforms_ns(json_path)
-    (
-      pcd,
-      bounding_boxes,
-      point_checking_bounding_boxes,
-      camera_positions,
-      camera_orientations,
-    ) = process_transforms_ns(
-      json_path,
-      transforms,
-      vbg,
-      config.integrate_color,
-      config.depth_scale,
-      config.depth_max,
-      config.bbox_slice_size,
-      config.up_axis,
-      device,
-    )
-  elif config.format == "arkit":
-    arkit_dir = Path(os.path.expandvars(config.arkit_path))
-    # parent_dir = arkit_dir.parents[0]
-    save_dir = arkit_dir / config.output_dir
-    if not Path.exists(save_dir):
-      Path.mkdir(save_dir)
-    (
-      pcd,
-      bounding_boxes,
-      point_checking_bounding_boxes,
-      camera_positions,
-      camera_orientations,
-    ) = process_transforms_arkit(
-      arkit_dir,
-      vbg,
-      config.integrate_color,
-      config.depth_scale,
-      config.depth_max,
-      config.bbox_slice_size,
-      config.up_axis,
-      config.slice_direction,
-      device,
-    )
+  load_dir = Path(os.path.expandvars(config.load_dir))
+  save_dir = load_dir / config.output_dir
+  if not Path.exists(save_dir):
+    Path.mkdir(save_dir)
+  
+  transforms = {
+    "ns": preprocess_transforms_ns,
+    "arkit": preprocess_transforms_arkit,
+  }[config.format](load_dir)
+  transforms = maybe_apply_optimized_poses(load_dir, transforms)
+  (
+    pcd,
+    bounding_boxes,
+    point_checking_bounding_boxes,
+    camera_positions,
+    camera_orientations,
+  ) = process_transforms(
+    transforms,
+    vbg,
+    config.integrate_color,
+    config.depth_scale,
+    config.depth_max,
+    config.bbox_slice_size,
+    config.up_axis,
+    config.slice_direction,
+    device,
+  )
 
   if config.visualize:
     camera_point_cloud = o3d.geometry.PointCloud()

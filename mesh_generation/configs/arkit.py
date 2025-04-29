@@ -5,9 +5,9 @@ from configs.base import get_config as base_get_config
 
 def get_config():
   config = base_get_config()
-  # config.arkit_path = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/43895956'
-  # config.arkit_path = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/43649417'
-  config.arkit_path = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/47334672'
+  config.load_dir = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/43895956'
+  # config.load_dir = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/43649417'
+  # config.load_dir = '$HOME/ARKitScenes/raw_ARKitScenes/3dod/Training/47334672'
   config.format = "arkit"
   config.visualize=True
   config.up_axis = 'z'

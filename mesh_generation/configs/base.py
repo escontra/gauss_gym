@@ -5,7 +5,7 @@ def get_config():
   config = config_dict.ConfigDict()
 
   config.format = "ns"
-  config.json_path = '/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data/transforms.json'
+  config.load_dir = '/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data'
   config.output_dir = 'meshes'
 
   # Visualization parameters.
