@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Union
 import os
 from absl import app
 import pickle
@@ -15,10 +15,8 @@ import cv2
 import torch
 
 from ml_collections import config_flags
-from configs.base import get_config
 from PIL import Image
 
-from rendering import batch_gs_renderer
 
 _CONFIG = config_flags.DEFINE_config_file("config")
 
@@ -45,7 +43,7 @@ def load_transforms_ns(json_path: Path) -> dict:
 
 
 def get_voxel_block_grid(
-  device: o3d.core.Device, integrate_color: bool, voxel_size: float
+  device: o3d.core.Device, integrate_color: bool, voxel_size: float, block_resolution: int, block_count: int
 ) -> o3d.t.geometry.VoxelBlockGrid:
   if integrate_color:
     return o3d.t.geometry.VoxelBlockGrid(
@@ -53,8 +51,8 @@ def get_voxel_block_grid(
       attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
       attr_channels=((1), (1), (3)),
       voxel_size=voxel_size,
-      block_resolution=18,
-      block_count=100000,
+      block_resolution=block_resolution,
+      block_count=block_count,
       device=device,
     )
   else:
@@ -63,13 +61,13 @@ def get_voxel_block_grid(
       attr_dtypes=(o3c.float32, o3c.float32),
       attr_channels=((1), (1)),
       voxel_size=voxel_size,
-      block_resolution=18,
-      block_count=100000,
+      block_resolution=block_resolution,
+      block_count=block_count,
       device=device,
     )
 
 
-def rectangular_prism(init_pose, width, height, up_axis, color, slice_direction: Optional[str] = None):
+def rectangular_prism(init_position, width, height, up_axis, color, slice_direction: Optional[str] = None):
   w, h = width / 2, height / 2
   min_bound = np.array([-w] * 3)
   max_bound = np.array([w] * 3)
@@ -84,8 +82,8 @@ def rectangular_prism(init_pose, width, height, up_axis, color, slice_direction:
     else:
       raise ValueError(f"Invalid slice direction: {slice_direction}")
 
-  min_bound = init_pose.translation() + min_bound
-  max_bound = init_pose.translation() + max_bound
+  min_bound = init_position + min_bound
+  max_bound = init_position + max_bound
 
   bbox = o3d.geometry.AxisAlignedBoundingBox(
     min_bound=min_bound, max_bound=max_bound
@@ -122,7 +120,7 @@ def load_arkit_data(
     depth_path: Path,
     color_path: Path,
     intrinsics_path: Path,
-) -> tuple[list[Path], list[Path], list[Path]]:
+):
 
   traj_poses = load_arkit_poses(traj_path)
   depth_files = list(depth_path.glob('*.png'))
@@ -208,47 +206,34 @@ def exp_map_SO3xR3(tangent_vector):
     ret[:, :3, 3] = tangent_vector[:, :3]
     return ret
 
-def load_ns_optimized_traj(splatfacto_dir: Path, transforms: list[dict]):
+def load_ns_optimized_traj(splatfacto_dir: Path, transforms: List[dict]):
   ckpt_dir = splatfacto_dir / 'nerfstudio_models'
   ckpt = list(ckpt_dir.glob('*.ckpt'))[-1]
   print(f'Loading NS optimized trajectory from {ckpt}')
   pose_adjustment = torch.load(ckpt)['pipeline']['_model.camera_optimizer.pose_adjustment']
   pose_adjustment = exp_map_SO3xR3(pose_adjustment).cpu().numpy()
-  dataparser_transform = np.array(json.load(open(splatfacto_dir / 'dataparser_transforms.json'))['transform'])
-  dataparser_transform = vtf.SE3.from_rotation_and_translation(
-    rotation=vtf.SO3.from_matrix(dataparser_transform[:, :3]),
-    translation=dataparser_transform[:, 3:].squeeze()
-  )
-  # renderer = batch_gs_renderer.BatchPLYRenderer(
-  #   ply_path=splatfacto_dir / 'splat.ply',
-  #   device='cuda'
-  # )
+  with open(splatfacto_dir / 'dataparser_transforms.json', 'r') as f:
+    json_data = json.load(f)
+    dataparser_transform = np.array(json_data['transform'])
+    dataparser_transform = vtf.SE3.from_rotation_and_translation(
+      rotation=vtf.SO3.from_matrix(dataparser_transform[:, :3]),
+      translation=dataparser_transform[:, 3:].squeeze()
+    )
+    dataparser_transform_matrix = torch.from_numpy(dataparser_transform.as_matrix()).float().to('cuda')
+    dataparser_transform_inverse_matrix = torch.from_numpy(dataparser_transform.inverse().as_matrix()).float().to('cuda')
+    dataparser_scale = json_data['scale']
   new_transforms = []
   for i, transform in enumerate(transforms):
-
-    # render_pose = vtf.SE3.from_matrix(transform['transform_matrix'])
-    # render_pose = vtf.SE3.from_rotation_and_translation(
-    #   translation=render_pose.translation(),
-    #   rotation=render_pose.rotation() @ vtf.SO3.from_x_radians(-np.pi),
-    # )
-    # if i % 25 == 0:
-    #   render_pose = torch.tensor(render_pose.as_matrix(), device='cuda', dtype=torch.float32)[None]
-    #   render = renderer.batch_render(
-    #     render_pose, focal=500, h=512, w=512, out_device='cuda'
-    #   )
-    #   print(render.shape)
-    #   import matplotlib.pyplot as plt
-    #   plt.imshow(render[0].cpu().numpy())
-    #   plt.show()
-
+    # Apply the pose adjustment to the transform.
     adj = torch.tensor(vtf.SE3.from_rotation_and_translation(
       rotation=vtf.SO3.from_matrix(pose_adjustment[i, :, :3]),
       translation=pose_adjustment[i, :, 3:].squeeze()
     ).as_matrix(), device='cuda', dtype=torch.float32)[None]
     transform_matrix = vtf.SE3.from_matrix(transform['transform_matrix']).as_matrix()
     c2ws = torch.tensor(transform_matrix, device='cuda', dtype=torch.float32)[None]
-    # c2ws = torch.bmm(renderer.dataparser_transform.repeat(c2ws.shape[0], 1, 1), c2ws)
-    # c2ws[:, :3, 3] *= renderer.dataparser_scale
+    # Apply the dataparser transform to the camera.
+    c2ws = torch.bmm(dataparser_transform_matrix.repeat(c2ws.shape[0], 1, 1), c2ws)
+    c2ws[:, :3, 3] *= dataparser_scale
     c2ws = torch.cat(
             [
                 # Apply rotation to directions in world coordinates, without touching the origin.
@@ -260,6 +245,14 @@ def load_ns_optimized_traj(splatfacto_dir: Path, transforms: list[dict]):
             ],
             dim=-1,
     ).cpu().numpy()[0]
+    # Apply the inverse of the dataparser transform to the camera.
+    c2ws = torch.from_numpy(vtf.SE3.from_rotation_and_translation(
+      rotation=vtf.SO3.from_matrix(c2ws[:3, :3]),
+      translation=c2ws[:3, 3:].squeeze()
+    ).as_matrix()[None]).float().to('cuda')
+    c2ws[:, :3, 3] /= dataparser_scale
+    c2ws = torch.bmm(dataparser_transform_inverse_matrix.repeat(c2ws.shape[0], 1, 1), c2ws)
+    c2ws = c2ws.cpu().numpy()[0]
     transform['transform_matrix'] = vtf.SE3.from_rotation_and_translation(
       rotation=vtf.SO3.from_matrix(c2ws[:3, :3]),
       translation=c2ws[:3, 3:].squeeze()
@@ -278,14 +271,13 @@ def process_transforms(
   bbox_slice_size: float,
   up_axis: str,
   slice_direction: str,
+  filter_keys: List[str],
+  smoothing_factor: int,
+  num_poses_after_smoothing: int,
   device: o3d.core.Device,
 ):
 
   start = time.time()
-  # Bounding boxes used to extract slices from input pointcloud.
-  bounding_boxes = []
-  # Bounding boxes used to check if slices have enough points.
-  point_checking_bounding_boxes = []
   # Camera positions and orientations.
   camera_positions = []
   camera_orientations = []
@@ -348,19 +340,32 @@ def process_transforms(
         depth_max,
       )
 
+    invalid_key = False
+    for key in filter_keys:
+      # Don't add these keys to the camera_positions and camera_orientations.
+      if key in str(depth_path):
+        invalid_key = True
+    if invalid_key:
+      continue
     pose = vtf.SE3.from_matrix(np.array(frame["transform_matrix"]))
     camera_positions.append(pose.translation())
     camera_orientations.append(pose.rotation().as_quaternion_xyzw())
 
-    # Bounding boxes used to extract slices from input pointcloud.
-    bounding_boxes.append(rectangular_prism(pose,bbox_slice_size, 4., up_axis, (1.0, 0.0, 0.0), slice_direction))
-    point_checking_bounding_boxes.append(rectangular_prism(pose, 0.5, 4., up_axis, (0.0, 0.0, 1.0), slice_direction))
 
   print(
     "Finished integrating {} frames in {} seconds".format(
       len(transforms), time.time() - start
     )
   )
+
+  # Bounding boxes used to extract slices from input pointcloud.
+  bounding_boxes = []
+  # Bounding boxes used to check if slices have enough points.
+  point_checking_bounding_boxes = []
+  for i in range(len(camera_positions)):
+    # Bounding boxes used to extract slices from input pointcloud.
+    bounding_boxes.append(rectangular_prism(camera_positions[i], bbox_slice_size, 4., up_axis, (1.0, 0.0, 0.0), slice_direction))
+    point_checking_bounding_boxes.append(rectangular_prism(camera_positions[i], 0.2, 4., up_axis, (0.0, 0.0, 1.0), slice_direction))
 
   pcd = vbg.extract_point_cloud().cpu().to_legacy()
   return (
@@ -415,7 +420,7 @@ def preprocess_transforms_arkit(
   return transforms
 
 
-def visualize_geometries(geometries: list[o3d.geometry.Geometry]):
+def visualize_geometries(geometries: List[o3d.geometry.Geometry]):
   vis = o3d.visualization.Visualizer()
   vis.create_window()
   for geometry in geometries:
@@ -431,16 +436,17 @@ def enough_points(pcd, bbox, num_points):
 
 
 def march_idx_along_distance(positions, idx, distance, increment, up_axis):
-  new_idx = idx
-  # dist_sum = 0.0
-  # while dist_sum < distance:
-  while _distance(positions[idx], positions[new_idx], up_axis) < distance:
-    # dist_sum += _distance(positions[idx], positions[new_idx], up_axis)
+  prev_idx = new_idx = idx
+  dist_sum = 0.0
+  while dist_sum < distance:
+  # while _distance(positions[idx], positions[new_idx], up_axis) < distance:
+    prev_idx = new_idx
     new_idx += increment
     if new_idx == -1:
       return 0
     if new_idx == len(positions):
       return len(positions) - 1
+    dist_sum += _distance(positions[prev_idx], positions[new_idx], up_axis)
   return new_idx
 
 
@@ -464,17 +470,21 @@ def get_mesh_at_frac(
   to_ig_euler_xyz,
   up_axis,
   visualize,
+  device,
 ):
-  num_cameras_after_buffer = 1 + march_idx_along_distance(
-    camera_positions, len(camera_positions) - 1, buffer_distance, -1, up_axis
+  min_bbox_start_idx = 0
+  while not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100):
+    min_bbox_start_idx += 1
+
+  max_bbox_start_idx = len(camera_positions) - 1
+  while not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100):
+    max_bbox_start_idx -= 1
+  max_bbox_start_idx = march_idx_along_distance(
+    camera_positions, max_bbox_start_idx, buffer_distance + slice_distance, -1, up_axis
   )
 
   # Indices along which to slice pointcloud.
-  bbox_start_idx = min(
-    int(num_cameras_after_buffer * frac), num_cameras_after_buffer - 1
-  )
-  while not enough_points(pcd, point_checking_bounding_boxes[bbox_start_idx], 100):
-    bbox_start_idx += 1
+  bbox_start_idx = int((max_bbox_start_idx - min_bbox_start_idx) * frac + min_bbox_start_idx)
 
   start_idx = end_idx = march_idx_along_distance(
     camera_positions, bbox_start_idx, buffer_distance, 1, up_axis
@@ -494,29 +504,45 @@ def get_mesh_at_frac(
   # Slice pointcloud.
   curr_pcd = o3d.geometry.PointCloud()
   for box_idx in tqdm(range(bbox_start_idx, bbox_end_idx), leave=False):
-    if not enough_points(pcd, point_checking_bounding_boxes[box_idx], 100):
+    if not enough_points(pcd, point_checking_bounding_boxes[box_idx], 20):
       raise ValueError(
         f"Segment {frac} has insufficient points in slice for box {box_idx}"
       )
     curr_pcd += pcd.crop(bounding_boxes[box_idx])
 
   curr_pcd = curr_pcd.voxel_down_sample(voxel_size)
-  mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-    curr_pcd, depth=poisson_depth
+  # mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+  #   curr_pcd,
+  #   # depth=poisson_depth
+  #   # depth=0,
+  #   width=voxel_size,
+  #   n_threads=os.cpu_count()
+  # )
+  # vertices_to_remove = densities < np.quantile(densities, density_threshold)
+  # mesh.remove_vertices_by_mask(vertices_to_remove)
+  # distances = curr_pcd.compute_nearest_neighbor_distance()
+  # print(distances)
+  # radii = [0.005, 0.01, 0.02, 0.04]
+  radii = [
+    voxel_size / 2.,
+    voxel_size,
+    voxel_size * 2.,
+  ]
+  mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+    curr_pcd,
+    radii=o3d.utility.DoubleVector(radii)
   )
-  vertices_to_remove = densities < np.quantile(densities, density_threshold)
-  mesh.remove_vertices_by_mask(vertices_to_remove)
   triangle_clusters, cluster_n_triangles, cluster_area = (
     mesh.cluster_connected_triangles()
   )
   largest_cluster_idx = np.argmax(cluster_n_triangles)
   triangles_to_remove = triangle_clusters != largest_cluster_idx
   mesh.remove_triangles_by_mask(triangles_to_remove)
-
   mesh.remove_degenerate_triangles()
   mesh.remove_duplicated_triangles()
   mesh.remove_duplicated_vertices()
   mesh.remove_non_manifold_edges()
+  mesh.remove_unreferenced_vertices()
   if decimation_factor > 1:
     mesh = mesh.simplify_quadric_decimation(
       len(mesh.triangles) // decimation_factor
@@ -525,6 +551,9 @@ def get_mesh_at_frac(
     mesh = mesh.filter_sharpen(
       number_of_iterations=sharpen_iterations, strength=sharpen_strength
     )
+  new_mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh, device=device)
+  filled = new_mesh.fill_holes()
+  mesh = filled.to_legacy()
   mesh = mesh.compute_vertex_normals()
 
   curr_camera_positions = camera_positions[start_idx:end_idx]
@@ -537,29 +566,15 @@ def get_mesh_at_frac(
   mesh.translate((-1 * mean_vertex[0]).tolist())
   curr_camera_positions -= mean_vertex
 
-  # To IsaacGym coordinate frame.
+  rotation = (vtf.SO3.from_x_radians(to_ig_euler_xyz[0]).inverse()
+              @ vtf.SO3.from_y_radians(to_ig_euler_xyz[1]).inverse()
+              @ vtf.SO3.from_z_radians(to_ig_euler_xyz[2]).inverse())
   mesh, curr_camera_positions, curr_camera_orientations = (
     rotate_mesh_and_cameras(
       mesh,
       curr_camera_positions,
       curr_camera_orientations,
-      vtf.SO3.from_x_radians(to_ig_euler_xyz[0]),
-    )
-  )
-  mesh, curr_camera_positions, curr_camera_orientations = (
-    rotate_mesh_and_cameras(
-      mesh,
-      curr_camera_positions,
-      curr_camera_orientations,
-      vtf.SO3.from_y_radians(to_ig_euler_xyz[1]),
-    )
-  )
-  mesh, curr_camera_positions, curr_camera_orientations = (
-    rotate_mesh_and_cameras(
-      mesh,
-      curr_camera_positions,
-      curr_camera_orientations,
-      vtf.SO3.from_z_radians(to_ig_euler_xyz[2]),
+      rotation,
     )
   )
 
@@ -575,6 +590,7 @@ def get_mesh_at_frac(
     cam_trans=curr_camera_positions,
     cam_quat=curr_camera_orientations,
     offset=mean_vertex,
+    from_ig_rotation=np.array(rotation.inverse().as_matrix())
   )
 
   if visualize:
@@ -619,7 +635,11 @@ def main(_):
 
 
   device = o3d.core.Device("CUDA:0")
-  vbg = get_voxel_block_grid(device, config.integrate_color, config.voxel_size)
+  vbg = get_voxel_block_grid(device,
+                             config.integrate_color,
+                             config.voxel_size,
+                             config.block_resolution,
+                             config.block_count)
 
   load_dir = Path(os.path.expandvars(config.load_dir))
   save_dir = load_dir / config.output_dir
@@ -646,8 +666,12 @@ def main(_):
     config.bbox_slice_size,
     config.up_axis,
     config.slice_direction,
+    config.filter_keys,
+    config.smoothing_factor,
+    config.num_poses_after_smoothing,
     device,
   )
+  pcd = pcd.voxel_down_sample(config.voxel_size)
 
   if config.visualize:
     camera_point_cloud = o3d.geometry.PointCloud()
@@ -666,6 +690,12 @@ def main(_):
       ]
     )
 
+  # Save the point cloud to the output directory
+  print(f"Saving point cloud with {len(pcd.points)} points to {save_dir}")
+  o3d.io.write_point_cloud(str(save_dir / "pointcloud.ply"), pcd)
+  if config.save_pc_only:
+    return
+  
   num_slices = estimate_num_slices(
     camera_positions,
     config.up_axis,
@@ -675,7 +705,7 @@ def main(_):
   )
 
   for i in tqdm(range(0, num_slices)):
-    progress = float(i) / num_slices
+    progress = float(i) / (num_slices - 1) if num_slices > 1 else 0.
 
     try:
       curr_vals = get_mesh_at_frac(
@@ -698,6 +728,7 @@ def main(_):
         config.to_ig_euler_xyz,
         config.up_axis,
         config.visualize,
+        device,
       )
 
       print(

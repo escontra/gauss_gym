@@ -114,11 +114,8 @@ class GaussianTerrain:
     for scene_path in self.scene_paths:
       scene_path = pathlib.Path(scene_path)
       scene_name = scene_path.name
-      print(scene_name, scene_path)
-      print(scene_path / "meshes")
-      print(list((scene_path / "meshes").iterdir()))
-      for filename in (scene_path / "meshes").iterdir():
-        filename = filename.name
+      filenames = [f.name for f in (scene_path / "meshes").iterdir() if f.suffix == '.pkl']
+      for filename in filenames:
         self._mesh_dict[os.path.join(scene_name, filename)] = self._load_mesh(
           scene_path, scene_name, filename
         )

@@ -241,7 +241,8 @@ class LeggedRobot(base_task.BaseTask):
         self.prev_reset = env_ids
 
         # Resample command scales. Commands are updated every timestep to guide
-        # the robot along the camera trajectory.
+        # the robot along the camera trajectory. Call after `reset_idx` to
+        # sample a new command at the start of each episode.
         resample_command_env_ids = (self.episode_length_buf % int(self.cfg["commands"]["resampling_time"] / self.dt)==0).nonzero(as_tuple=False).flatten()
         self._resample_commands(resample_command_env_ids)
 
@@ -1228,7 +1229,7 @@ class LeggedRobot(base_task.BaseTask):
         _, _, feet_vel, _ = self.get_feet_state()
         vel_xy = feet_vel[..., :2]
         vel_xy_norm_sq = torch.sum(torch.square(vel_xy), dim=-1)
-        return torch.sum(vel_xy_norm_sq * self.feet_contact, dim=-1) * ~self.get_small_command_mask()
+        return torch.sum(vel_xy_norm_sq * self.feet_contact, dim=-1) # * ~self.get_small_command_mask()
 
     def _reward_root_acc(self):
         # Penalize root accelerations

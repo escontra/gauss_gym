@@ -5,8 +5,9 @@ def get_config():
   config = config_dict.ConfigDict()
 
   config.format = "ns"
-  config.load_dir = '/home/root-desktop/ULI_DATA/apartment_to_grace/processed_data'
+  config.load_dir = '$HOME/ULI_DATA/apartment_to_grace/processed_data'
   config.output_dir = 'meshes'
+  config.save_pc_only = False
 
   # Visualization parameters.
   config.visualize = True
@@ -19,14 +20,21 @@ def get_config():
   config.min_poses_per_segment = 10
   config.slice_direction = None
 
+  # Position filtering.
+  config.filter_keys = ['right']
+  config.num_poses_after_smoothing = 40
+  config.smoothing_factor = 12
+
   # Mesh generation parameters.
   config.voxel_size = 0.02
-  config.sharpen_mesh = True
+  config.block_resolution = 18
+  config.block_count = 100_000
+  config.sharpen_mesh = False
   config.sharpen_iterations = 1
   config.sharpen_strength = 0.05
   config.decimation_factor = 4
   config.density_threshold = 0.07
-  config.poisson_depth = 9
+  config.poisson_depth = 8
   config.integrate_color = True
   config.depth_max = 2.5
   config.depth_scale = 1.0
