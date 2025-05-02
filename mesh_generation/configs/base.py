@@ -8,15 +8,16 @@ def get_config():
   config.load_dir = '$HOME/ULI_DATA/apartment_to_grace/processed_data'
   config.output_dir = 'meshes'
   config.save_pc_only = False
+  config.load_mesh = False
 
   # Visualization parameters.
-  config.visualize = True
+  config.visualize = False
 
   # Size of slices to generate.
   config.bbox_slice_size = 1.5
   config.buffer_distance = 1.0
   config.slice_distance = 4.0
-  config.slice_overlap = 3.0
+  config.slice_overlap = 2.0
   config.min_poses_per_segment = 10
   config.slice_direction = None
 

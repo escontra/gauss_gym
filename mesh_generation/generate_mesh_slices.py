@@ -450,7 +450,7 @@ def march_idx_along_distance(positions, idx, distance, increment, up_axis):
   return new_idx
 
 
-def get_mesh_at_frac(
+def get_mesh_at_frac_from_pcd(
   pcd,
   bounding_boxes,
   point_checking_bounding_boxes,
@@ -510,19 +510,22 @@ def get_mesh_at_frac(
       )
     curr_pcd += pcd.crop(bounding_boxes[box_idx])
 
+  # curr_pcd = curr_pcd.remove_duplicated_points()
   curr_pcd = curr_pcd.voxel_down_sample(voxel_size)
+
+  # # From point cloud poisson
   # mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
   #   curr_pcd,
-  #   # depth=poisson_depth
+  #   depth=poisson_depth,
   #   # depth=0,
-  #   width=voxel_size,
+  #   # width=voxel_size,
   #   n_threads=os.cpu_count()
   # )
   # vertices_to_remove = densities < np.quantile(densities, density_threshold)
   # mesh.remove_vertices_by_mask(vertices_to_remove)
+
+  # From point cloud ball pivoting
   # distances = curr_pcd.compute_nearest_neighbor_distance()
-  # print(distances)
-  # radii = [0.005, 0.01, 0.02, 0.04]
   radii = [
     voxel_size / 2.,
     voxel_size,
@@ -532,6 +535,11 @@ def get_mesh_at_frac(
     curr_pcd,
     radii=o3d.utility.DoubleVector(radii)
   )
+
+  # # From point cloud alpha shape
+  # alpha = 0.03
+  # mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pcd, alpha)
+
   triangle_clusters, cluster_n_triangles, cluster_area = (
     mesh.cluster_connected_triangles()
   )
@@ -608,6 +616,143 @@ def get_mesh_at_frac(
   return curr_vals
 
 
+def get_mesh_at_frac_from_mesh(
+  pcd,
+  mesh,
+  bounding_boxes,
+  point_checking_bounding_boxes,
+  camera_positions,
+  camera_orientations,
+  frac,
+  buffer_distance,
+  slice_distance,
+  min_poses_per_segment,
+  decimation_factor,
+  sharpen_mesh,
+  sharpen_iterations,
+  sharpen_strength,
+  to_ig_euler_xyz,
+  up_axis,
+  visualize,
+  device,
+):
+  min_bbox_start_idx = 0
+  while not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100):
+    min_bbox_start_idx += 1
+
+  max_bbox_start_idx = len(camera_positions) - 1
+  while not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100):
+    max_bbox_start_idx -= 1
+  max_bbox_start_idx = march_idx_along_distance(
+    camera_positions, max_bbox_start_idx, buffer_distance + slice_distance, -1, up_axis
+  )
+
+  # Indices along which to slice pointcloud.
+  bbox_start_idx = int((max_bbox_start_idx - min_bbox_start_idx) * frac + min_bbox_start_idx)
+
+  start_idx = end_idx = march_idx_along_distance(
+    camera_positions, bbox_start_idx, buffer_distance, 1, up_axis
+  )
+  bbox_end_idx = march_idx_along_distance(
+    camera_positions, start_idx, slice_distance + buffer_distance, 1, up_axis
+  )
+  end_idx = march_idx_along_distance(
+    camera_positions, bbox_end_idx, buffer_distance, -1, up_axis
+  )
+
+  if (end_idx - start_idx) < min_poses_per_segment:
+    raise ValueError(
+      f"Segment {frac} only has {1 + (end_idx - start_idx)} poses."
+    )
+
+  # Slice pointcloud.
+  for box_idx in tqdm(range(bbox_start_idx, bbox_end_idx), leave=False):
+    if not enough_points(pcd, point_checking_bounding_boxes[box_idx], 20):
+      raise ValueError(
+        f"Segment {frac} has insufficient points in slice for box {box_idx}"
+      )
+
+  meshes = [mesh.crop(bounding_boxes[i]) for i in range(bbox_start_idx, bbox_end_idx)]
+  curr_mesh = meshes[0]
+  for m in meshes[1:]:
+    curr_mesh += m
+  curr_mesh.compute_vertex_normals()
+  curr_mesh.merge_close_vertices(0.001)
+
+  curr_mesh.remove_degenerate_triangles()
+  curr_mesh.remove_unreferenced_vertices()
+  curr_mesh.remove_duplicated_triangles()
+  curr_mesh.remove_duplicated_vertices()
+  curr_mesh.remove_non_manifold_edges()
+  curr_mesh.remove_unreferenced_vertices()
+
+  triangle_clusters, cluster_n_triangles, cluster_area = (
+    curr_mesh.cluster_connected_triangles()
+  )
+  largest_cluster_idx = np.argmax(cluster_n_triangles)
+  triangles_to_remove = triangle_clusters != largest_cluster_idx
+  curr_mesh.remove_triangles_by_mask(triangles_to_remove)
+  if decimation_factor > 1:
+    curr_mesh = curr_mesh.simplify_quadric_decimation(
+      len(curr_mesh.triangles) // decimation_factor
+    )
+  if sharpen_mesh:
+    curr_mesh = curr_mesh.filter_sharpen(
+      number_of_iterations=sharpen_iterations, strength=sharpen_strength
+    )
+
+  curr_camera_positions = camera_positions[start_idx:end_idx]
+  curr_camera_orientations = camera_orientations[start_idx:end_idx]
+  curr_camera_orientations = vtf.SO3.from_quaternion_xyzw(
+    np.array(curr_camera_orientations)
+  ).as_matrix()
+
+  mean_vertex = np.mean(np.array(curr_mesh.vertices), axis=0, keepdims=True)
+  curr_mesh.translate((-1 * mean_vertex[0]).tolist())
+  curr_camera_positions -= mean_vertex
+
+  rotation = (vtf.SO3.from_x_radians(to_ig_euler_xyz[0]).inverse()
+              @ vtf.SO3.from_y_radians(to_ig_euler_xyz[1]).inverse()
+              @ vtf.SO3.from_z_radians(to_ig_euler_xyz[2]).inverse())
+  curr_mesh, curr_camera_positions, curr_camera_orientations = (
+    rotate_mesh_and_cameras(
+      curr_mesh,
+      curr_camera_positions,
+      curr_camera_orientations,
+      rotation,
+    )
+  )
+
+  curr_camera_orientations = vtf.SO3.from_matrix(
+    curr_camera_orientations
+  ).as_quaternion_xyzw()
+
+  triangles = np.array(curr_mesh.triangles)
+  vertices = np.array(curr_mesh.vertices)
+  curr_vals = dict(
+    vertices=vertices,
+    triangles=triangles,
+    cam_trans=curr_camera_positions,
+    cam_quat=curr_camera_orientations,
+    offset=mean_vertex,
+    from_ig_rotation=np.array(rotation.inverse().as_matrix())
+  )
+
+  if visualize:
+    camera_point_cloud = o3d.geometry.PointCloud()
+    camera_point_cloud.points = o3d.utility.Vector3dVector(
+      np.array(curr_camera_positions)
+    )
+    colors = np.zeros_like(
+      np.array(curr_camera_positions)
+    )  # All black for example
+    colors[:, 1] = 1  # Set green color
+    camera_point_cloud.colors = o3d.utility.Vector3dVector(colors)
+    visualize_geometries([camera_point_cloud, curr_mesh])
+
+  return curr_vals
+
+
 def rotate_mesh_and_cameras(
   mesh, camera_positions, camera_orientations, rotation
 ):
@@ -672,6 +817,75 @@ def main(_):
     device,
   )
   pcd = pcd.voxel_down_sample(config.voxel_size)
+  if config.load_mesh:
+    # pcd = o3d.io.read_point_cloud(load_dir / 'point_cloud.ply')
+    mesh = o3d.io.read_triangle_mesh(load_dir / 'raw.glb', enable_post_processing=True)
+    # mesh = mesh.subdivide_midpoint(number_of_iterations=1)
+    mesh_info_json = json.load(open(load_dir / "mesh_info.json"))
+    transform = np.array(mesh_info_json["alignmentTransform"]).reshape(4, 4).T
+    mesh = mesh.transform(np.linalg.inv(transform))
+    mesh.vertices = o3d.utility.Vector3dVector(np.array(mesh.vertices)[:, [2, 0, 1]])
+  
+    # # cropped_mesh = o3d.geometry.crop_triangle_mesh(mesh, bounding_boxes[0].get_min_bound(), bounding_boxes[0].get_max_bound())
+    # cropped_meshes = []
+    # for box in bounding_boxes[0:20]:
+    #   cropped_meshes.append(mesh.crop(box))
+    # mesh_sum = cropped_meshes[0]
+    # for m in cropped_meshes[1:]:
+    #   mesh_sum += m
+    # mesh = mesh_sum
+    # mesh.compute_vertex_normals()
+    # # mesh.remove_degenerate_triangles()
+    # # mesh.remove_duplicated_triangles()
+    # # mesh.remove_duplicated_vertices()
+    # # mesh.remove_non_manifold_edges()
+    # # mesh.remove_unreferenced_vertices()
+    # visualize_geometries([mesh])
+
+    # mesh_info_path = load_dir / 'mesh_info.json'
+    # with open(mesh_info_path, 'r') as f:
+    #   mesh_info = json.load(f)
+    # print(mesh_info.keys())
+    # pcd = pcd.rotate(vtf.SO3.from_x_radians(-np.pi / 2).as_matrix())
+    # transform = np.array(mesh_info["alignmentTransform"]).reshape(4, 4).T
+    # pcd = pcd.transform(np.linalg.inv(transform))
+    # pcd.points = o3d.utility.Vector3dVector(np.array(pcd.points)[:, [2, 0, 1]])
+    # pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=config.voxel_size, max_nn=50))
+    
+    # textures = np.asarray(mesh.textures[0])  # 2D images of color
+    # vert_points = np.asarray(mesh.vertices)  # 3D positions of verts
+    # tri_ids = np.asarray(mesh.triangles)  # indices of the vertices
+    # points = vert_points[tri_ids.flatten()]  # get the 3D positions of the vertices
+    # uvs = np.asarray(mesh.triangle_uvs)  # get the uv coords of the vertices
+    # # convert uv coord to texture integer index
+    # tex_ids = (uvs[:, 1] * textures.shape[0]).astype(int), (uvs[:, 0] * textures.shape[1]).astype(int)
+    # colors = textures[tex_ids[0], tex_ids[1]]
+    # pointcloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    # pointcloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
+    # pointcloud = pointcloud.remove_duplicated_points()
+    # # align the pointcloud to the coord system of cameras, which is provided inside the mesh_info.json file
+    # mesh_info_json = json.load(open(load_dir / "mesh_info.json"))
+    # transform = np.array(mesh_info_json["alignmentTransform"]).reshape(4, 4).T
+    # pointcloud = pointcloud.transform(np.linalg.inv(transform))
+    # # shift the axes coordinates to match the nerfstudio ones (same as the cameras' coord system)
+    # pointcloud.points = o3d.utility.Vector3dVector(np.array(pointcloud.points)[:, [2, 0, 1]])
+    # pcd = pointcloud
+    # # pcd, ind = pcd.remove_statistical_outlier(
+    # #   nb_neighbors=20,
+    # #   std_ratio=2.0)
+    # pcd.estimate_normals()
+
+    # pcd = o3d.io.read_point_cloud(load_dir / 'raw.ply')
+    # mesh_info_path = load_dir / 'mesh_info.json'
+    # with open(mesh_info_path, 'r') as f:
+    #   mesh_info = json.load(f)
+    # print(mesh_info.keys())
+    # pcd = pcd.rotate(vtf.SO3.from_x_radians(-np.pi / 2).as_matrix())
+    # transform = np.array(mesh_info["alignmentTransform"]).reshape(4, 4).T
+    # pcd = pcd.transform(np.linalg.inv(transform))
+    # pcd.points = o3d.utility.Vector3dVector(np.array(pcd.points)[:, [2, 0, 1]])
+    # pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=config.voxel_size, max_nn=50))
+    
 
   if config.visualize:
     camera_point_cloud = o3d.geometry.PointCloud()
@@ -708,28 +922,51 @@ def main(_):
     progress = float(i) / (num_slices - 1) if num_slices > 1 else 0.
 
     try:
-      curr_vals = get_mesh_at_frac(
-        pcd,
-        bounding_boxes,
-        point_checking_bounding_boxes,
-        camera_positions,
-        camera_orientations,
-        progress,
-        config.buffer_distance,
-        config.slice_distance,
-        config.min_poses_per_segment,
-        config.voxel_size,
-        config.poisson_depth,
-        config.density_threshold,
-        config.decimation_factor,
-        config.sharpen_mesh,
-        config.sharpen_iterations,
-        config.sharpen_strength,
-        config.to_ig_euler_xyz,
-        config.up_axis,
-        config.visualize,
-        device,
-      )
+      if config.load_mesh:
+        curr_vals = get_mesh_at_frac_from_mesh(
+          pcd,
+          mesh,
+          bounding_boxes,
+          point_checking_bounding_boxes,
+          camera_positions,
+          camera_orientations,
+          progress,
+          config.buffer_distance,
+          config.slice_distance,
+          config.min_poses_per_segment,
+          config.decimation_factor,
+          config.sharpen_mesh,
+          config.sharpen_iterations,
+          config.sharpen_strength,
+          config.to_ig_euler_xyz,
+          config.up_axis,
+          config.visualize,
+          device,
+        )
+
+      else:
+        curr_vals = get_mesh_at_frac_from_pcd(
+          pcd,
+          bounding_boxes,
+          point_checking_bounding_boxes,
+          camera_positions,
+          camera_orientations,
+          progress,
+          config.buffer_distance,
+          config.slice_distance,
+          config.min_poses_per_segment,
+          config.voxel_size,
+          config.poisson_depth,
+          config.density_threshold,
+          config.decimation_factor,
+          config.sharpen_mesh,
+          config.sharpen_iterations,
+          config.sharpen_strength,
+          config.to_ig_euler_xyz,
+          config.up_axis,
+          config.visualize,
+          device,
+        )
 
       print(
         f"Saving mesh with {len(curr_vals['vertices'])} triangles and {len(curr_vals['triangles'])} vertices"
