@@ -3,6 +3,7 @@ import os
 import pickle
 import pathlib
 import dataclasses
+from collections import defaultdict
 from isaacgym import gymapi
 from typing import Union, Dict
 import torch
@@ -538,6 +539,21 @@ class GaussianSceneManager:
     # Convert to robot frame.
     robot_quat = self.to_robot_frame(cam_quat)
     return cam_trans, robot_quat
+
+  def check_completed(self, env_ids):
+    _, _, nearest_idx = (
+      self._get_nearest_traj_pose()
+    )
+    past_end = nearest_idx >= (
+      self.cam_trans.shape[1] - 4
+    )  # Past end of trajectory.
+
+    completion_counter = defaultdict(lambda: 0)
+    for env_id in env_ids:
+      mesh_id = self.mesh_id_for_env_id(int(env_id))
+      mesh_name = self.mesh_name_from_id(mesh_id)
+      completion_counter[mesh_name] += int(past_end[int(env_id)])
+    return completion_counter
 
   def check_termination(self):
     # Check if robot is too far from camera trajectory (Indicative of poor rendering).

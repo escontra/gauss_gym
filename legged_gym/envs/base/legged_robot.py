@@ -340,6 +340,7 @@ class LeggedRobot(base_task.BaseTask):
         self.extras["episode"]["feet_swing_peak"] = torch.mean(self.swing_peak[env_ids]).cpu().item()
         self.extras["episode"]["feet_air_time"] = torch.mean(self.feet_air_time[env_ids]).cpu().item()
         self.extras["episode"]["feet_contact_time"] = torch.mean(self.feet_contact_time[env_ids]).cpu().item()
+        self.extras["completion_counter"] = self.scene_manager.check_completed(env_ids)
         for i in range(len(self.feet_indices)):
             self.extras["episode"][f"{self.feet_names[i]}_contact_force"] = (torch.mean(self.contact_forces[:, self.feet_indices[i], 2])).cpu().item()
         # send timeout info to the algorithm

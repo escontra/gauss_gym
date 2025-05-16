@@ -171,6 +171,7 @@ class Runner:
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Logger aggregators.
     self.step_agg = agg.Agg()
+    self.completion_agg = agg.Agg()
     self.episode_agg = agg.Agg()
     self.learn_agg = agg.Agg()
     self.action_agg = agg.Agg()
@@ -256,6 +257,7 @@ class Runner:
           bootstrapped_rew = torch.where(done, 0., rew)
           bootstrapped_rew = torch.where(infos["time_outs"], value['value'].pred().squeeze(-1), bootstrapped_rew)
           self.step_agg.add(infos["episode"])
+          self.completion_agg.add(infos["completion_counter"])
           self.episode_agg.add(self.recorder.record_episode_statistics(
             done,
             {"reward": rew, "return": bootstrapped_rew},
@@ -275,6 +277,7 @@ class Runner:
           timer_stats = {f"timer/{k}": v for k, v in timer.stats().items()}
           episode_stats = {f"episode/{k}": v for k, v in self.episode_agg.result().items()}
           action_stats = {f"action/{k}": v for k, v in self.action_agg.result().items()}
+          completion_stats = {f"completion/{k}": v for k, v in self.completion_agg.result().items()}
           self.recorder.record_statistics(
             {
               **step_stats,
@@ -282,6 +285,7 @@ class Runner:
               **timer_stats,
               **episode_stats,
               **action_stats,
+              **completion_stats,
             },
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs
           )

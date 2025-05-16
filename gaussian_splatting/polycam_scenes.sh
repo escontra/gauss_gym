@@ -18,7 +18,7 @@ ns-train splatfacto \
     nerfstudio-data \
     --data $POLYCAM_PATH \
     --train-split-fraction=1.0 \
-    --depth-unit-scale-factor=1.0 \
+    --depth-unit-scale-factor=0.001 \
     --auto-scale-poses=False \
     --center-method='none'
 
