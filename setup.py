@@ -15,7 +15,6 @@ setup(
         "tqdm",
         "wandb==0.19.8",
         "plyfile",
-        "viser",
         "warp-lang",
         "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git",
     ],

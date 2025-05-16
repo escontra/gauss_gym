@@ -33,7 +33,7 @@ observations:
       ]
   policy:
     add_noise: True
-    add_latency: False
+    add_latency: True
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -68,11 +68,13 @@ terrain:
   # Path to each scene, where each scene is a folder containing subfolders
   # 'meshes' and 'splatfacto'.
   scenes: [
-    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43895956/,
-    /home/root-desktop/ARKitScenes/raw_ARKitScenes/3dod/Training/43649417/,
-    /home/root-desktop/legged_gym/scenes/apartment_to_grace,
-    /home/root-desktop/legged_gym/scenes/bridge,
-    /home/root-desktop/legged_gym/scenes/stairwell,
+    /home/root-desktop/ULI_DATA/apartment_to_grace/processed_data,
+    /home/root-desktop/ULI_DATA/cute_bridge,
+    /home/root-desktop/ULI_DATA/bww_stairs,
+    /home/root-desktop/ULI_DATA/home_night,
+    /home/root-desktop/ULI_DATA/washington,
+    /home/root-desktop/ULI_DATA/long_stairs,
+    /home/root-desktop/ULI_DATA/ryokan_bridge,
   ]
 
 
@@ -155,10 +157,10 @@ curriculum:
   apply_curriculum: False
 
   dof_friction:
-    apply: False
-    epochs: 10000
+    apply: True
+    epochs: 3000
     update_every: 10
-    start: 0.12
+    start: 0.35
     end: 0.02
     sample_type: "uniform"
 
@@ -317,14 +319,14 @@ rewards:
     scale: -0.2
   orientation:
     scale: -1.0
-  base_height_l1:
-    scale: 1.0
-    min_height: 0.65
-    max_height: 0.67
+  # base_height_l1:
+  #   scale: 1.0
+  #   min_height: 0.65
+  #   max_height: 0.67
   torques:
     scale: -2.e-4
   action_rate:
-    scale: -0.5
+    scale: -0.1 # -0.5
   dof_acc:
     scale: -1.e-7
   dof_pos_limits:
@@ -340,6 +342,8 @@ rewards:
     scale: -2.e-3
   root_acc:
     scale: -1.e-4
+
+  # Feet.
   feet_slip:
     scale: -0.1
   feet_vel_z:
@@ -356,7 +360,7 @@ rewards:
   feet_swing:
     scale: 3.
     swing_period: 0.2
-    
+
 commands:
   still_proportion: 0.05
   command_gains: False
@@ -366,10 +370,10 @@ commands:
   num_commands: 4
   resampling_time: 4. # time before command are changed[s]
   gait_frequency: [1.0, 2.0]
-  small_lin_vel_threshold: 0.1
-  small_ang_vel_threshold: 0.1
+  small_lin_vel_threshold: 0.0
+  small_ang_vel_threshold: 0.0
   ranges:
-    lin_vel: [0.0, 1.0]
+    lin_vel: [0.1, 0.7]
     ang_vel_yaw: [-1, 1]
     heading: [-3.14, 3.14]
 
@@ -456,7 +460,7 @@ algorithm:
   normalize_advantage_per_minibatch: True
 
 runner:
-  record_video: False
+  record_video: True
   record_distance: [-1.8, -1.8, 0.5]
   num_steps_per_env: 24
   class_name: "Runner"

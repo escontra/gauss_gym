@@ -3,8 +3,6 @@ import torch.nn.functional as F
 import os
 from collections import defaultdict
 
-from isaacgym.torch_utils import quat_apply
-from legged_gym.utils.math import quat_apply_yaw
 from typing import Tuple, Callable
 from dataclasses import dataclass
 import numpy as np
@@ -12,10 +10,10 @@ import warp as wp
 from isaacgym import gymapi, gymutil
 import math
 from rendering.batch_gs_renderer import MultiSceneRenderer
-import viser.transforms as vtf
 import matplotlib.pyplot as plt
 from PIL import Image
-from isaacgym.torch_utils import to_torch, quat_rotate
+
+from legged_gym.utils.math import quat_apply, quat_apply_yaw, quat_rotate, to_torch, quaternion_to_matrix
 
 
 class BatchWireframeSphereGeometry(gymutil.LineGeometry):
@@ -747,19 +745,15 @@ class GaussianSplattingRenderer():
         cam_ang_vel = cam_ang_vel.cpu().numpy()
 
         self.camera_quats_xyzw = cam_quat
-        cam_rot = vtf.SO3.from_quaternion_xyzw(cam_quat.cpu().numpy())
+        cam_rot = quaternion_to_matrix(cam_quat)
 
         # From OpenCV to OpenGL camera convention for GS renderer.
         cam_trans -= self.env.env_origins.cpu().numpy()
-        # TODO: FIX THIS.
-        # cam_trans = np.dot(cam_trans, R_z.as_matrix())
-        # cam_trans = np.dot(cam_trans, R_x.as_matrix())
-        # cam_trans += self.scene_manager.cam_offset.cpu().numpy()
-        # cam_rot = R_z.inverse() @ cam_rot
-        # cam_rot  = R_x.inverse() @ cam_rot
 
         # Batch render multiple scenes.
-        c2ws = vtf.SE3.from_rotation_and_translation(cam_rot, cam_trans).as_matrix()
+        c2ws = np.eye(4, dtype=np.float32)[None].repeat(cam_trans.shape[0], axis=0)
+        c2ws[:, :3, 3] = cam_trans
+        c2ws[:, :3, :3] = cam_rot.cpu().numpy()
         scene_poses = defaultdict(list)
         scene_linear_velocities = defaultdict(list)
         scene_angular_velocities = defaultdict(list)
@@ -772,28 +766,19 @@ class GaussianSplattingRenderer():
         scene_angular_velocities = {k: np.array(v) for k, v in scene_angular_velocities.items()}
         start, end = 0, 0
         for k, v in scene_poses.items():
-            poses = vtf.SE3.from_matrix(v)
-            t = poses.translation()
-            end = start + t.shape[0]
-            q = poses.rotation()
-            if 'ARKitScenes' in k:
-              R_x = vtf.SO3.from_x_radians(np.pi)
-              t = np.dot(t, R_x.as_matrix())
-              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
-              q = R_x.inverse() @ q
-            elif 'stairwell' not in k:
-              R_x = vtf.SO3.from_x_radians(-np.pi / 2)
-              R_z = vtf.SO3.from_z_radians(np.pi)
-              t = np.dot(t, R_z.as_matrix())
-              t = np.dot(t, R_x.as_matrix())
-              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
-              q = R_z.inverse() @ q
-              q  = R_x.inverse() @ q
-            else:
-              t += self.scene_manager.cam_offset.cpu().numpy()[start:end]
+            translation = v[:, :3, 3]
+            rot_mat = v[:, :3, :3]
+            end = start + translation.shape[0]
+            ig_to_orig_rot = self.scene_manager.ig_to_orig_rot.cpu().numpy()[start:end]
+            cam_offset = self.scene_manager.cam_offset.cpu().numpy()[start:end]
+            translation = np.einsum('ij, ijk -> ik', translation, ig_to_orig_rot)
+            translation += cam_offset
+            rot_mat = np.einsum('ijk, ikl -> ijl', ig_to_orig_rot, rot_mat)
+            scene_pose = np.eye(4, dtype=np.float32)[None].repeat(translation.shape[0], axis=0)
+            scene_pose[:, :3, 3] = translation
+            scene_pose[:, :3, :3] = rot_mat
+            scene_poses[k] = scene_pose
             start = end
-            scene_poses[k] = vtf.SE3.from_rotation_and_translation(q, t).as_matrix()
-              
 
         renders = self._gs_renderer.batch_render(
             scene_poses,

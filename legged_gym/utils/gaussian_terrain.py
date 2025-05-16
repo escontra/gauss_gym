@@ -30,6 +30,9 @@ class RawMesh:
   cam_trans: np.ndarray
   cam_offset: np.ndarray
 
+  # Rotation matrix from IG coordinate system to original coordinate system.
+  ig_to_orig_rot: np.ndarray
+
 
 @dataclasses.dataclass
 class Mesh(RawMesh):
@@ -99,6 +102,7 @@ class GaussianTerrain:
     curr_cam_trans = self.smooth_path(
       curr_cam_trans, smoothing_factor=10,
       resample_num_points=30)
+    from_ig_rotation = np.array(mesh_dict["from_ig_rotation"]).astype(np.float32)
 
     return RawMesh(
       scene_name=scene,
@@ -108,6 +112,7 @@ class GaussianTerrain:
       triangles=triangles,
       cam_trans=curr_cam_trans,
       cam_offset=cam_offset,
+      ig_to_orig_rot=from_ig_rotation,
     )
 
   def _load_meshes(self):
@@ -371,6 +376,11 @@ class GaussianSceneManager:
     )
     self.cam_quat_xyzw = math.to_torch(
       repeat(list(self._terrain.get_value("cam_quat_xyzw").values())),
+      device=self._env.device,
+      requires_grad=False,
+    )
+    self.ig_to_orig_rot = math.to_torch(
+      repeat(list(self._terrain.get_value("ig_to_orig_rot").values())),
       device=self._env.device,
       requires_grad=False,
     )

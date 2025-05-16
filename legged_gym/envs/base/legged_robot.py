@@ -1276,7 +1276,7 @@ class LeggedRobot(base_task.BaseTask):
           if 'hip' in name:
               weights.append(1.0)
           elif 'thigh' in name:
-              weights.append(0.5)
+              weights.append(1.0)
           elif 'calf' in name:
               weights.append(0.1)
           else:
@@ -1299,6 +1299,20 @@ class LeggedRobot(base_task.BaseTask):
       reward = height_diff.sum(dim=-1)
       reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
       return reward
+
+    def _reward_feet_clearance_2(self, clearance_height):
+      _, _, feet_vel, _ = self.get_feet_state()
+      vel_xy = feet_vel[..., :2]
+      vel_norm = torch.linalg.norm(vel_xy, dim=-1)
+      feet_z = self.sensors["foot_height_raycaster"].get_data()
+      delta = torch.abs(feet_z - clearance_height)
+      reward = torch.sum(delta * vel_norm, dim=-1)
+      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      return reward
+
+    def _reward_no_fly(self):
+        single_contact = torch.sum(1.*self.feet_contact, dim=-1)==1
+        return 1. * single_contact
 
     def _reward_feet_height(self, max_foot_height):
       nonzero_command = ~self.get_small_command_mask()

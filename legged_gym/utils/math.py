@@ -323,3 +323,65 @@ def std_to_logstd(std: torch.Tensor, minstd: float, maxstd: float):
   minstd = torch.tensor(minstd, device=std.device, dtype=torch.float32)
   maxstd = torch.tensor(maxstd, device=std.device, dtype=torch.float32)
   return torch.logit((torch.log(std) - torch.log(minstd)) / (torch.log(maxstd) - torch.log(minstd)))
+
+
+@torch.jit.script
+def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
+    """
+    Convert rotations given as quaternions to rotation matrices.
+    Input quaternions are assumed to be in (x, y, z, w) format.
+
+    Args:
+        quaternions: Quaternions as tensor of shape (..., 4).
+
+    Returns:
+        Rotation matrices as tensor of shape (..., 3, 3).
+    """
+    # Ensure unit quaternions for the conversion formula to be valid.
+    q_norm = normalize(quaternions)
+    
+    qx = q_norm[..., 0]
+    qy = q_norm[..., 1]
+    qz = q_norm[..., 2]
+    qw = q_norm[..., 3]
+
+    # Precompute squares of quaternion components
+    qx2 = qx * qx
+    qy2 = qy * qy
+    qz2 = qz * qz
+
+    # Precompute products of quaternion components
+    qxqy = qx * qy
+    qxqz = qx * qz
+    qxqw = qx * qw
+    qyqz = qy * qz
+    qyqw = qy * qw
+    qzqw = qz * qw
+    
+    # Rotation matrix elements from (x, y, z, w) quaternion
+    # R = [
+    #     [1 - 2(qy^2 + qz^2),   2(qx*qy - qw*qz),       2(qx*qz + qw*qy)],
+    #     [2(qx*qy + qw*qz),   1 - 2(qx^2 + qz^2),   2(qy*qz - qw*qx)],
+    #     [2(qx*qz - qw*qy),   2(qy*qz + qw*qx),       1 - 2(qx^2 + qy^2)]
+    # ]
+    
+    r00 = 1.0 - 2.0 * (qy2 + qz2)
+    r01 = 2.0 * (qxqy - qzqw)
+    r02 = 2.0 * (qxqz + qyqw)
+
+    r10 = 2.0 * (qxqy + qzqw)
+    r11 = 1.0 - 2.0 * (qx2 + qz2)
+    r12 = 2.0 * (qyqz - qxqw)
+
+    r20 = 2.0 * (qxqz - qyqw)
+    r21 = 2.0 * (qyqz + qxqw)
+    r22 = 1.0 - 2.0 * (qx2 + qy2)
+    
+    # Stack the elements into a matrix
+    row0 = torch.stack([r00, r01, r02], dim=-1)
+    row1 = torch.stack([r10, r11, r12], dim=-1)
+    row2 = torch.stack([r20, r21, r22], dim=-1)
+    
+    matrix = torch.stack([row0, row1, row2], dim=-2)
+
+    return matrix
