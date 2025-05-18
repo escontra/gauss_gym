@@ -473,18 +473,22 @@ algorithm:
     actions: 1.0
     stiffness: 0.25
     damping: 0.25
-  entropy_coef: -0.01
-  entropy_keys: ["actions"]
+  entropy_coefs:
+    actions: -0.01
+    stiffness: -0.001
+    damping: -0.001
   symmetry: True
-  symmetry_coef: 3.0
-  symmetry_keys: ["actions", "stiffness", "damping"]
+  symmetry_coefs:
+    actions: 3.0
+    stiffness: 3.0
+    damping: 3.0
   num_learning_epochs: 5
   num_mini_batches: 4
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
-  bound_coef: 1.0
-  bound_loss_keys: ["actions"]
+  bound_coefs:
+    actions: 1.0
   normalize_advantage_per_minibatch: True
 
 runner:

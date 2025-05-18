@@ -9,7 +9,7 @@
 # 6. Generate meshes with:
 #    python mesh_generation/generate_mesh_slices.py --config=mesh_generation/configs/polycam.py --config.load_dir=<POLYCAM_PATH>
 
-POLYCAM_PATH=$HOME/ULI_DATA/ryokan_bridge
+POLYCAM_PATH=$HOME/ULI_DATA/washington
 
 ns-train splatfacto \
     --experiment-name '' \

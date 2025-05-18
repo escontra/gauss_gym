@@ -16,6 +16,9 @@ from legged_gym.utils import sensors, math
 wp.init()
 
 
+TARGET_IDX_OFFSET = 5
+
+
 @dataclasses.dataclass
 class RawMesh:
   # Scene metadata.
@@ -263,6 +266,11 @@ class GaussianSceneManager:
     self.velocity_geom = None
     self.heading_geom = None
 
+    # Index of the current robot state in the camera trajectory.
+    self.state_idx = torch.zeros(
+      self._env.num_envs, device=self._env.device, dtype=torch.int64
+    )
+
     self.local_offset = torch.tensor(
         np.array(self._env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self._env.num_envs, 0),
         dtype=torch.float, device=self._env.device, requires_grad=False
@@ -462,15 +470,30 @@ class GaussianSceneManager:
   def num_meshes(self):
     return self._terrain.num_meshes
 
-  def _get_nearest_traj_idx(self):
+  def _get_nearest_traj_idx(self, monotonic):
     curr_cam_trans, _ = self.get_cam_link_pose_local_frame()
     trans_difference = curr_cam_trans[:, None] - self.cam_trans
     distance = torch.norm(trans_difference, dim=-1)
-    min_distance_idx = torch.argmin(distance, dim=1)
+    if monotonic:
+      # Create a mask for valid indices
+      num_envs, num_poses = distance.shape
+      indices = torch.arange(num_poses, device=distance.device)[None]
+      indices = indices.repeat_interleave(num_envs, 0)
+      mask = (indices < self.state_idx[:, None]) | (indices > self.state_idx[:, None] + TARGET_IDX_OFFSET)
+    
+      # Apply mask by setting invalid distances to infinity
+      masked_distance = distance.clone()
+      masked_distance[mask] = float('inf')
+
+      min_distance_idx = torch.argmin(masked_distance, dim=1)
+    else:
+      min_distance_idx = torch.argmin(distance, dim=1)
+
+    
     return min_distance_idx
 
-  def _get_nearest_traj_pose(self):
-    nearest_traj_idx = self._get_nearest_traj_idx()
+  def _get_nearest_traj_pose(self, monotonic=False):
+    nearest_traj_idx = self._get_nearest_traj_idx(monotonic)
     nearest_traj_pos_idx = (
       nearest_traj_idx.unsqueeze(1)
       .unsqueeze(2)
@@ -512,13 +535,14 @@ class GaussianSceneManager:
     rand = torch.rand((len(env_ids),), device=self._env.device)
     low = self.valid_pose_start_idxs[env_ids].to(torch.float32)
     # high = (self.valid_pose_start_idxs[env_ids].to(torch.float32) + cam_trans_subs.shape[1]) / 2
-    # high = self.valid_pose_start_idxs[env_ids].to(torch.float32) + 2
-    high = (
-      torch.ones((len(env_ids),), device=self._env.device)
-      * cam_trans_subs.shape[1]
-      - 6
-    )
+    high = self.valid_pose_start_idxs[env_ids].to(torch.float32) + 2
+    # high = (
+    #   torch.ones((len(env_ids),), device=self._env.device)
+    #   * cam_trans_subs.shape[1]
+    #   - 6
+    # )
     state_idx = (rand * (high - low) + low).to(torch.int64)
+    self.state_idx[env_ids] = state_idx
 
     trans_idx = (
       state_idx.unsqueeze(1)
@@ -542,7 +566,7 @@ class GaussianSceneManager:
 
   def check_completed(self, env_ids):
     _, _, nearest_idx = (
-      self._get_nearest_traj_pose()
+      self._get_nearest_traj_pose(monotonic=True)
     )
     past_end = nearest_idx >= (
       self.cam_trans.shape[1] - 4
@@ -559,7 +583,7 @@ class GaussianSceneManager:
     # Check if robot is too far from camera trajectory (Indicative of poor rendering).
     curr_cam_link_trans, curr_cam_link_quat = self.get_cam_link_pose_local_frame()
     nearest_cam_trans, nearest_cam_quat, nearest_idx = (
-      self._get_nearest_traj_pose()
+      self._get_nearest_traj_pose(monotonic=True)
     )
     nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
     past_end = nearest_idx >= (
@@ -583,16 +607,26 @@ class GaussianSceneManager:
     Args:
         env_ids (List[int]): Environments ids for which new commands are needed
     """
-    _, nearest_cam_quat, nearest_idx = self._get_nearest_traj_pose()
-    nearest_robot_quat = self.to_robot_frame(nearest_cam_quat)
-    _, _, yaw = math.get_euler_xyz(nearest_robot_quat)
-    self.heading_command = math.wrap_to_pi(
-      yaw
-    )  # Match the orientation of the nearest camera.
+    _, _, nearest_idx = self._get_nearest_traj_pose(monotonic=True)
+    # Update the state index to the nearest camera trajectory.
+    self.state_idx[:] = nearest_idx
 
     # Choose a target pose moderately far away. If nearest_idx + 1 is chosen, target
     # velocities fall to 0 as the robot approaches this target.
-    target_idx = torch.clamp(nearest_idx + 5, 0, self.cam_trans.shape[1] - 1)
+    target_idx = torch.clamp(nearest_idx + TARGET_IDX_OFFSET, 0, self.cam_trans.shape[1] - 1)
+    target_traj_quat_idx = (
+      target_idx.unsqueeze(1)
+      .unsqueeze(2)
+      .expand(-1, 1, self.cam_quat_xyzw.shape[-1])
+    )
+    target_traj_quat = torch.gather(
+      self.cam_quat_xyzw, dim=1, index=target_traj_quat_idx
+    ).squeeze(1)
+    target_traj_quat = self.to_robot_frame(target_traj_quat)
+    _, _, yaw = math.get_euler_xyz(target_traj_quat)
+    self.heading_command = math.wrap_to_pi(
+      yaw
+    )  # Match the orientation of the nearest camera.
     target_traj_pos_idx = (
       target_idx.unsqueeze(1)
       .unsqueeze(2)
@@ -617,9 +651,9 @@ class GaussianSceneManager:
       device=self._env.device,
     )
     pos_delta_norm *= self.command_scale
-    pos_delta_norm *= (
-      torch.norm(pos_delta_norm[:, :2], dim=1, keepdim=True) > 0.1
-    )  # Zero out small commands.
+    # pos_delta_norm *= (
+    #   torch.norm(pos_delta_norm[:, :2], dim=1, keepdim=True) > 0.1
+    # )  # Zero out small commands.
     self.velocity_command = pos_delta_norm
     if still_env_mask is not None:
       self.velocity_command[still_env_mask] = 0.0

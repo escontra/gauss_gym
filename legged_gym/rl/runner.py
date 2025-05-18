@@ -471,29 +471,29 @@ class Runner:
 
           # Entropy loss.
           entropy = dist.entropy().sum(dim=-1)
-          if name in self.cfg["algorithm"]["entropy_keys"]:
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coef"] * entropy.mean()
+          if name in self.cfg["algorithm"]["entropy_coefs"]:
+            total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coefs"][name] * entropy.mean()
           learn_step_agg.add({f'entropy_{name}': entropy.mean().item()})
 
           # Bound loss.
-          if name in self.cfg["algorithm"]["bound_loss_keys"]:
+          if name in self.cfg["algorithm"]["bound_coefs"]:
             bound_loss = (
               torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
               + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
             )
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coef"] * bound_loss
+            total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coefs"][name] * bound_loss
             learn_step_agg.add({f'bound_loss_{name}': bound_loss.item()})
 
 
-          if self.cfg["algorithm"]["symmetry"] and name in self.cfg["algorithm"]["symmetry_keys"]:
+          if self.cfg["algorithm"]["symmetry"] and name in self.cfg["algorithm"]["symmetry_coefs"]:
             # Symmetry loss.
             dist_act_sym = self.symmetry_groups["actions"][name](self.env, dist.pred())
             symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
             # symmetry_loss = torch.mean(dists_sym[name].loss(dist_act_sym.detach()))
-            if self.cfg["algorithm"]["symmetry_coef"] <= 0.0:
+            if self.cfg["algorithm"]["symmetry_coefs"][name] <= 0.0:
               symmetry_loss = symmetry_loss.detach()
             learn_step_agg.add({f'symmetry_loss_{name}': symmetry_loss.item()})
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["symmetry_coef"] * symmetry_loss.mean()
+            total_loss += actor_loss_coef * self.cfg["algorithm"]["symmetry_coefs"][name] * symmetry_loss.mean()
             # TODO(alescontrela): Adding symmetric actor losses causes instability. Why?
             # # Actor loss with symmetric data.
             # actions_sym = self.symmetry_groups["actions"]["actions"](self.env, batch["actions"])

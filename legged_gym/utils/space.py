@@ -14,7 +14,6 @@ class Space:
     self._shape = self._infer_shape(dtype, shape, self._low, self._high)
     self._discrete = (
         np.issubdtype(self.dtype, np.integer) or self.dtype == bool)
-    self._random = np.random.RandomState()
 
   @property
   def dtype(self):
@@ -81,7 +80,7 @@ class Space:
     if np.issubdtype(self.dtype, np.floating):
       low = np.maximum(np.ones(self.shape) * np.finfo(self.dtype).min, low)
       high = np.minimum(np.ones(self.shape) * np.finfo(self.dtype).max, high)
-    return self._random.uniform(low, high, self.shape).astype(self.dtype)
+    return np.random.uniform(low, high, self.shape).astype(self.dtype)
 
   def _infer_low(self, dtype, shape, low, high):
     if np.issubdtype(dtype, str):
