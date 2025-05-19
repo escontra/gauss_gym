@@ -53,10 +53,10 @@ def standup_procedure(
         if env.start_pressed:
             break
         if env.quit_pressed:
-            env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= 0, kd= 0.5)
+            env.publish_legs_cmd(env.default_dof_pos[None], kp= 0, kd= 0.5)
             rospy.signal_shutdown("Controller send stop signal, exiting")
             exit(0)
-        env.publish_legs_cmd(env.default_dof_pos.unsqueeze(0), kp= kp, kd= kd)
+        env.publish_legs_cmd(env.default_dof_pos[None], kp= kp, kd= kd)
         if policy is not None:
             _ = policy(env.get_obs()[cfg["policy"]["obs_key"]])
         ros_rate.sleep()
@@ -146,7 +146,7 @@ def main(argv = None):
         rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
         rate.sleep()
         if unitree_real_env.quit_pressed:
-            unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos.unsqueeze(0), kp= 20, kd= 0.5)
+            unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos[None], kp= 20, kd= 0.5)
             rospy.signal_shutdown("Controller send stop signal, exiting")
     return
 

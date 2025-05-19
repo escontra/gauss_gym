@@ -135,11 +135,11 @@ class UnitreeA1Real:
                   self.quit_pressed = True
         if self.quit_pressed:
             self.command_buf[0, :] = 0.
-        if self.command_buf[0, 0].norm() < self.lin_vel_deadband:
+        if np.abs(self.command_buf[0, 0]) < self.lin_vel_deadband:
             self.command_buf[0, 0] = 0.
-        if self.command_buf[0, 1].norm() < self.lin_vel_deadband:
+        if np.abs(self.command_buf[0, 1]) < self.lin_vel_deadband:
             self.command_buf[0, 1] = 0.
-        if self.command_buf[0, 2].norm() < self.ang_vel_deadband:
+        if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
             self.command_buf[0, 2] = 0.
         rospy.loginfo_throttle(2, f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
 
@@ -310,10 +310,10 @@ class UnitreeA1Real:
         """
         self.actions[:] = self.clip_action_before_scale(actions)
         if self.computer_clip_torque:
-            robot_coordinates_action = self.clip_by_torque_limit(self.actions * self.action_scale) + self.default_dof_pos.unsqueeze(0)
+            robot_coordinates_action = self.clip_by_torque_limit(self.actions * self.action_scale) + self.default_dof_pos[None]
         else:
             rospy.logwarn_throttle(60, "You are using control without any torque clip. The network might output torques larger than the system can provide.")
-            robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos.unsqueeze(0)
+            robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos[None]
 
         self.publish_legs_cmd(robot_coordinates_action)
 

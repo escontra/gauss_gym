@@ -21,7 +21,7 @@ def projected_gravity(env: "LeggedEnv", params, is_real=False):
         return quat_rotate_inverse_np(
             np.array(env.low_state_buffer.imu.quaternion)[None],
             env.gravity_vec,
-        )
+        ).astype(np.float32)
     else:
       return env.projected_gravity
 
@@ -48,13 +48,13 @@ def base_lin_vel(env: "LeggedEnv", params, is_real=False):
 
 def base_ang_vel(env: "LeggedEnv", params, is_real=False):
     if is_real:
-        return np.array(env.low_state_buffer.imu.gyroscope)[None]
+        return np.array(env.low_state_buffer.imu.gyroscope, dtype=np.float32)[None]
     else:
         return env.base_ang_vel
 
 def velocity_commands(env: "LeggedEnv", params, is_real=False):
     if is_real:
-      return env.command_buf
+      return env.command_buf.astype(np.float32)
     else:
       return env.commands[:, :3]
 
@@ -62,7 +62,7 @@ def dof_pos(env: "ANY_ENV", params, is_real=False):
     if is_real:
         return np.array([
             env.low_state_buffer.motorState[env.dof_map[i]].q for i in range(12)
-        ], dtype=np.float32)[None] - env.default_dof_pos
+        ], dtype=np.float32)[None] - env.default_dof_pos.astype(np.float32)
     else:
         return env.dof_pos - env.default_dof_pos
 
