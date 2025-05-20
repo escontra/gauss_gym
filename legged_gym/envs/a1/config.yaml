@@ -15,9 +15,12 @@ env:
 
   force_renderer: False
   camera_params:
-    focal_length: 100
-    cam_height: 96
-    cam_width: 96
+    cam_width: 320
+    cam_height: 240
+    fl_x: 303.0424
+    fl_y: 303.1759
+    pp_x: 161.5755
+    pp_y: 124.6430
     cam_xyz_offset: [0.26, 0.0, 0.03]
     cam_rpy_offset: [-3.1415927, 0.7853832, 1.5707963]
 

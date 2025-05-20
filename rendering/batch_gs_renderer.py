@@ -80,7 +80,10 @@ class BatchPLYRenderer:
     def batch_render(
         self,
         c2ws: Float[Tensor, "num_cameras 4 4"],
-        focal: float,
+        fl_x: float,
+        fl_y: float,
+        pp_x: float,
+        pp_y: float,
         h: int,
         w: int,
         camera_linear_velocity: Union[Float[Tensor, "num_cameras 3"], None] = None,
@@ -117,8 +120,8 @@ class BatchPLYRenderer:
         
         # Create camera intrinsics matrix
         K = torch.tensor([
-            [focal, 0, w/2],
-            [0, focal, h/2],
+            [fl_x, 0, pp_x],
+            [0, fl_y, pp_y],
             [0, 0, 1]
         ], device=self.device, dtype=torch.float32)
         
@@ -213,7 +216,10 @@ class MultiSceneRenderer:
     def batch_render(
         self,
         scene_poses: Dict[str, Float[Tensor, "num_cameras 4 4"]],
-        focal: float,
+        fl_x: float,
+        fl_y: float,
+        pp_x: float,
+        pp_y: float,
         h: int,
         w: int,
         camera_linear_velocity: Union[Dict[str, Float[Tensor, "num_cameras 3"]], None] = None,
@@ -254,7 +260,7 @@ class MultiSceneRenderer:
               c2ws = torch.tensor(c2ws, dtype=torch.float32, device=renderer.device)
               # imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
               imgs = renderer.batch_render(
-                  c2ws, focal, h, w,
+                  c2ws, fl_x, fl_y, pp_x, pp_y, h, w,
                   camera_linear_velocity=cam_lin_vel,
                   camera_angular_velocity=cam_ang_vel,
                   minibatch=minibatch, out_device=self.output_gpu)

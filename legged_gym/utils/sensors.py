@@ -224,20 +224,18 @@ class BatchWireframeFrustumGeometry(gymutil.LineGeometry):
       - Far plane:  v4-v5, v5-v6, v6-v7, v7-v4
       - Sides:      v0-v4, v1-v5, v2-v6, v3-v7
     """
-    def __init__(self, num_frustums, near, far, image_width, image_height, focal_length, thickness, num_lines_per_edge=32):
+    def __init__(self, num_frustums, near, far, image_width, image_height, fl_x, fl_y, thickness, num_lines_per_edge=32):
         self.num_frustums = num_frustums
         
-        # Compute aspect ratio from image dimensions
-        aspect = image_width / image_height
-        
         # Derive horizontal fov from focal length and image width
-        fov = 2 * np.arctan(image_width / (2 * focal_length))
+        fov_x = 2 * np.arctan(image_width / (2 * fl_x))
+        fov_y = 2 * np.arctan(image_height / (2 * fl_y))
         
         # Compute half widths/heights at near and far planes
-        half_width_near = near * np.tan(fov / 2)
-        half_height_near = half_width_near / aspect
-        half_width_far = far * np.tan(fov / 2)
-        half_height_far = half_width_far / aspect
+        half_width_near = near * np.tan(fov_x / 2)
+        half_height_near = near * np.tan(fov_y / 2)
+        half_width_far = far * np.tan(fov_x / 2)
+        half_height_far = far * np.tan(fov_y / 2)
         
         # Define the 8 corners of the frustum in camera space (camera looks along +x)
         v0 = (half_width_near, half_height_near, near)   # top-right
@@ -779,7 +777,10 @@ class GaussianSplattingRenderer():
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
-            focal=self.env.cfg["env"]["camera_params"]["focal_length"],
+            fl_x=self.env.cfg["env"]["camera_params"]["fl_x"],
+            fl_y=self.env.cfg["env"]["camera_params"]["fl_y"],
+            pp_x=self.env.cfg["env"]["camera_params"]["pp_x"],
+            pp_y=self.env.cfg["env"]["camera_params"]["pp_y"],
             h=self.env.cfg["env"]["camera_params"]["cam_height"],
             w=self.env.cfg["env"]["camera_params"]["cam_width"],
             camera_linear_velocity=scene_linear_velocities,
@@ -802,7 +803,8 @@ class GaussianSplattingRenderer():
                 0.2,
                 self.env.cfg["env"]["camera_params"]["cam_width"],
                 self.env.cfg["env"]["camera_params"]["cam_height"],
-                self.env.cfg["env"]["camera_params"]["focal_length"],
+                self.env.cfg["env"]["camera_params"]["fl_x"],
+                self.env.cfg["env"]["camera_params"]["fl_y"],
                 0.005,
                 32)
             self.axis_geom = BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
