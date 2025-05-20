@@ -13,12 +13,13 @@ env:
   send_timeouts: True  # For value bootstrap.
   episode_length_s: 20
 
+  force_renderer: False
   camera_params:
     focal_length: 100
-    cam_height: 256
-    cam_width: 256
+    cam_height: 96
+    cam_width: 96
     cam_xyz_offset: [0.26, 0.0, 0.03]
-    cam_rpy_offset: [1.571, 1.571, 3.142]
+    cam_rpy_offset: [-3.1415927, 0.7853832, 1.5707963]
 
 observations:
   critic:

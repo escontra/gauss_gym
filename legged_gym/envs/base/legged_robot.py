@@ -2,6 +2,7 @@ import numpy as np
 import copy
 import functools
 import os
+from itertools import chain
 
 from isaacgym import torch_utils as tu
 from isaacgym import gymtorch, gymapi, gymutil
@@ -50,14 +51,19 @@ class LeggedRobot(base_task.BaseTask):
         # Added observation manager to compute teacher observations more flexible
         self.sensors = {
             "raycast_grid": sensors.RayCaster(self),
-            # "gs_renderer": self.scene_manager.renderer,
             "foot_height_raycaster": sensors.LinkHeightSensor(self, self.feet_names, color=(0.5, 0.0, 0.5)),
             "base_height_raycaster": sensors.LinkHeightSensor(self, [self.cfg["asset"]["base_link_name"]], color=(0.5, 0.0, 0.5)),
             "hip_height_raycaster": sensors.LinkHeightSensor(self, self.cfg["asset"]["hip_link_names"], color=(1.0, 0.41, 0.71)),
             "foot_contact_sensor": sensors.FootContactSensor(self)}
-        self.obs_manager = observation_manager.ObsManager(
-            self,
-            observation_groups.observation_groups_from_dict(self.cfg["observations"]))
+        obs_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
+
+        # Maybe add renderer to sensors.
+        all_observations = list(chain.from_iterable(obs_group.observations for obs_group in obs_groups))
+        need_renderer = self.cfg["env"]["force_renderer"] or observation_groups.CAMERA_IMAGE in all_observations
+        if need_renderer:
+            self.sensors["gs_renderer"] = self.scene_manager.renderer
+
+        self.obs_manager = observation_manager.ObsManager(self, obs_groups)
 
 
     def clip_position_action_by_torque_limit(self, actions_scaled, dof_stiffness, dof_damping):
