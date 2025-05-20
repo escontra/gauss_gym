@@ -1007,7 +1007,6 @@ class LeggedRobot(base_task.BaseTask):
             ankle_indices = torch.zeros(len(ankle_names), dtype=torch.long, device=self.device, requires_grad=False)
             for i, name in enumerate(ankle_names):
                 ankle_indices[i] = self.gym.find_asset_dof_index(self.robot_asset, name)
-            print(ankle_indices)
             self.dof_damping_multiplier[:, ankle_indices] = math.apply_randomization(self.dof_damping_multiplier[:, ankle_indices], self.cfg["domain_rand"]["dof_damping_ankles"])
         if self.cfg["domain_rand"]["dof_friction"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             self.dof_friction = math.apply_randomization(self.dof_friction, self.cfg["domain_rand"]["dof_friction"])

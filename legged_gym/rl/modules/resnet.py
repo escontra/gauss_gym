@@ -91,4 +91,3 @@ if __name__ == '__main__':
     model = ResNet18()
     input_tensor = torch.randn(1, 3, 224, 224)
     output = model(input_tensor)
-    print(output.shape)
