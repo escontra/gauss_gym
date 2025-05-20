@@ -89,8 +89,8 @@ def motor_strength(env: "ANY_ENV", params, is_real=False):
 def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     world_heights = sensor.get_data()[..., 2]
-    world_heights = world_heights.reshape(env.num_envs, -1)
-    heights = env.root_states[:, 2].unsqueeze(1) - world_heights
+    base_heights = env.root_states[:, 2][..., None, None]
+    heights = base_heights - world_heights
     return heights
 
 def gs_render(env: "ANY_ENV", params, is_real=False):

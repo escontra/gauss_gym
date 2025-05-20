@@ -32,6 +32,10 @@ def velocity_commands_symmetry(env, obs):
   return torch.stack([x_command, -y_command, -ang_vel_command], dim=-1)
 
 
+def ray_cast_symmetry(env, obs):
+  return torch.flip(obs, dims=[-1])
+
+
 def identity_symmetry(env, obs):
   return obs
 
@@ -105,6 +109,11 @@ def a1_stiffness_symmetry(env, obs):
 def a1_damping_symmetry(env, obs):
   return a1_joint_symmetry(env, obs, use_multipliers=False)
 
+
+RAY_CAST = SymmetryModifier(
+  observation=observation_groups.RAY_CAST,
+  symmetry_fn=ray_cast_symmetry,
+)
 
 BASE_ANG_VEL = SymmetryModifier(
   observation=observation_groups.BASE_ANG_VEL,
