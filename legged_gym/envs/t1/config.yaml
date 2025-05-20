@@ -71,13 +71,13 @@ terrain:
   # Path to each scene, where each scene is a folder containing subfolders
   # 'meshes' and 'splatfacto'.
   scenes: [
-    /home/root-desktop/ULI_DATA/apartment_to_grace/processed_data,
-    /home/root-desktop/ULI_DATA/cute_bridge,
-    /home/root-desktop/ULI_DATA/bww_stairs,
-    /home/root-desktop/ULI_DATA/home_night,
-    /home/root-desktop/ULI_DATA/washington,
-    /home/root-desktop/ULI_DATA/long_stairs,
-    /home/root-desktop/ULI_DATA/ryokan_bridge,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/apartment_to_grace,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/cute_bridge,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/bww_stairs,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/home_night,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/washington,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/long_stairs,
+    /home/root-desktop/Downloads/GAUSS_GYM_DATA/ryokan_bridge,
   ]
 
 
