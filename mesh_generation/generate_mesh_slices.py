@@ -400,6 +400,27 @@ def preprocess_transforms_ns(
   return transforms
 
 
+def preprocess_transforms_grandslam(
+  load_dir: Path,
+):
+  json_path = load_dir / 'transforms.json'
+  transforms = load_transforms_ns(json_path)
+  transforms = [frame for frame in transforms["frames"]]
+
+  for frame in transforms:
+    frame['transform_matrix'] = np.array(frame['transform_matrix'])
+    rgb_file_path = str(json_path.parents[0] / frame['file_path'])
+    depth_file_path = str(json_path.parents[0] / frame['file_path'].replace('rgb', 'depth'))
+    frame["file_path"] = rgb_file_path
+    frame["depth_file_path"] = depth_file_path
+    frame["fl_x"] = float(frame['fl_x'])
+    frame["fl_y"] = float(frame['fl_y'])
+    frame["cx"] = float(frame['cx'])
+    frame["cy"] = float(frame['cy'])
+
+  return transforms
+
+
 def preprocess_transforms_arkit(
   load_dir: Path,
 ):
@@ -794,6 +815,7 @@ def main(_):
   transforms = {
     "ns": preprocess_transforms_ns,
     "arkit": preprocess_transforms_arkit,
+    "grandslam": preprocess_transforms_grandslam,
   }[config.format](load_dir)
   transforms = maybe_apply_optimized_poses(load_dir, transforms)
   (
