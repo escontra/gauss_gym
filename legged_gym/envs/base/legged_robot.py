@@ -1212,10 +1212,14 @@ class LeggedRobot(base_task.BaseTask):
         rew_contact_time = torch.sum(time_diff * self.last_contact, dim=1) # reward only on contact end with the ground.
         return rew_contact_time
     
-    def _reward_stumble(self):
+    def _reward_stumble(self, multiplier):
         # Penalize feet hitting vertical surfaces
-        return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
-             5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=-1)
+        lateral_forces = self.contact_forces[:, self.feet_indices, :2]
+        vertical_forces = self.contact_forces[:, self.feet_indices, 2]
+        hit_vertical_surface = (
+            torch.norm(lateral_forces, dim=-1) >
+            multiplier * torch.abs(vertical_forces))
+        return torch.sum(hit_vertical_surface, dim=-1)
         
     def _reward_stand_still(self):
         # Penalize motion at zero commands
