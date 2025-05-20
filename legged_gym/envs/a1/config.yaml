@@ -127,7 +127,7 @@ asset:
   feet_contact_radius: 0.0201
 
   disable_gravity: False
-  collapse_fixed_joints: True
+  collapse_fixed_joints: False
   fix_base_link: False
   default_dof_drive_mode: 3
   self_collisions: 1
@@ -287,55 +287,6 @@ termination:
   base_height_threshold: 0.08
   projected_gravity_z_threshold: 0.0
 
-# rewards:
-#   only_positive_rewards: True
-
-#   tracking_lin_vel_x:
-#     scale: 4.0
-#     tracking_sigma: 0.25
-#   tracking_lin_vel_y:
-#     scale: 4.0
-#     tracking_sigma: 0.25
-#   tracking_ang_vel:
-#     scale: 2.0
-#     tracking_sigma: 0.25
-#   lin_vel_z:
-#     scale: -0.5
-#   ang_vel_xy:
-#     scale: -0.05
-#   torques:
-#     scale: -0.00005
-#   feet_air_time:
-#     scale: 1.0
-#     min_air_time: 0.3
-#     max_air_time: 0.4
-#   collision:
-#     scale: -1.0
-#   action_rate:
-#     scale: -0.005
-#   hip_height_l1:
-#     scale: 1.0
-#     min_height: 0.3
-#     max_height: 0.31
-#   dof_pos_limits:
-#     scale: -1.0
-#     soft_dof_pos_limit: 1.0
-#   energy_substeps:
-#     scale: -0.0005
-#   feet_clearance_clipped:
-#     scale: 4.0
-#     clearance_height: 0.1
-#   # feet_clearance_2:
-#   #   scale: -1.0
-#   #   clearance_height: 0.1
-#   feet_slip:
-#     scale: -0.1
-#   # delta_torques:
-#   #   scale: -1.e-5
-#   # a1_pose:
-#   #   scale: 0.5
-
-
 rewards:
   only_positive_rewards: True
 
@@ -443,7 +394,7 @@ policy:
   kl_key: "actions"
   obs_key: "policy"
   params:
-    layer_activation: "elu"
+    layer_activation: "silu"
     recurrent_state_size: 256
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
@@ -458,7 +409,7 @@ value:
   learning_rate: 3.e-4
   obs_key: "critic"
   params:
-    layer_activation: "elu"
+    layer_activation: "silu"
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
