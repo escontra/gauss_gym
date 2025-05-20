@@ -1,3 +1,4 @@
+import numpy as np
 import functools
 import torch
 import torch.nn as nn
@@ -52,18 +53,23 @@ def unpad_trajectories(trajectories, masks):
 
 
 def get_mlp_cnn_keys(obs):
-  mlp_keys, cnn_keys = [], []
+  # TODO: Add option to process 2D observations with CNN or MLP. Currently only supports MLP.
+  mlp_keys, mlp_2d_reshape_keys, cnn_keys = [], [], []
   num_mlp_obs = 0
   for k, v in obs.items():
     if len(v.shape) == 1:
       mlp_keys.append(k)
-      num_mlp_obs += v.shape[0]
+      num_mlp_obs += np.prod(v.shape)
+    elif len(v.shape) == 2:
+      mlp_keys.append(k)
+      mlp_2d_reshape_keys.append(k)
+      num_mlp_obs += np.prod(v.shape)
     elif len(v.shape) == 3:
       cnn_keys.append(k)
     else:
       raise ValueError(f'Observation {k} has unexpected shape: {v.shape}')
 
-  return mlp_keys, cnn_keys, num_mlp_obs
+  return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs
 
 IMAGE_EMBEDDING_DIM = 256
 
@@ -84,7 +90,7 @@ class RecurrentModel(torch.nn.Module):
     super().__init__()
     self.obs_space = obs_space
     self.action_space = action_space
-    self.mlp_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
+    self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
     self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
     self.recurrent_state_size = recurrent_state_size
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
@@ -127,7 +133,7 @@ class RecurrentModel(torch.nn.Module):
           self.obs_normalizer.mean,
           self.obs_normalizer.std,
           max_abs_value=self.max_abs_value)
-      features = process_mlp_features(obs, self.mlp_keys, self.symlog_inputs)
+      features = process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
     
     if self.cnn_keys:
       cnn_features = []
@@ -248,7 +254,9 @@ def apply_normalizer(
     return normalized_observations
     
 
-def process_mlp_features(observations: Dict[str, torch.Tensor], mlp_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+def process_mlp_features(observations: Dict[str, torch.Tensor], mlp_keys: List[str], mlp_2d_reshape_keys: List[str], symlog_inputs: bool) -> torch.Tensor:
+    for k in mlp_2d_reshape_keys:
+        observations[k] = observations[k].reshape(*observations[k].shape[:-2], -1)
     features = torch.cat([observations[k] for k in mlp_keys], dim=-1)
     if symlog_inputs:
         features = math.symlog(features)
