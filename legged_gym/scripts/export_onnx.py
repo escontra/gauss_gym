@@ -151,7 +151,7 @@ def main(argv = None):
 
     # Create the inference dictionary using the prefixed names expected by the ONNX model
     inference_input_dict = {
-      f"{k}": v.repeat(batch_size, 1).cpu().numpy() # Create the prefixed key expected by ONNX
+      f"{k}": v.repeat(batch_size, *[1 for _ in range(v.ndim - 1)]).cpu().numpy() # Create the prefixed key expected by ONNX
       for k, v in policy_dummy_obs.items() # Iterate through original keys/values
     }
     inference_input_dict.update({
