@@ -8,28 +8,28 @@ headless: False
 logdir: "default"
 
 env:
-  num_envs: 4096
+  num_envs: 2048
   env_spacing: 8.0
   send_timeouts: True  # For value bootstrap.
   episode_length_s: 20
 
+  force_renderer: False
   camera_params:
-    focal_length: 500
-    cam_height: 512
-    cam_width: 512
+    focal_length: 100
+    cam_height: 96
+    cam_width: 96
     cam_xyz_offset: [0., 0., 0.]
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
   critic:
     observations: [
-      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
-      RAY_CAST, BASE_MASS_SCALED,
-      DOF_FRICTION_CURRICULUM_VALUES,
-      PUSHING_FORCES, PUSHING_TORQUES, GAIT_PROGRESS,
+      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
+      DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
-      STIFFNESS, DAMPING, MOTOR_STRENGTH
+      STIFFNESS, DAMPING, MOTOR_STRENGTH,
+      GAIT_PROGRESS,
       ]
   policy:
     add_noise: True
@@ -37,19 +37,22 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS,
-      DOF_VEL, ACTIONS, GAIT_PROGRESS
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
+      GAIT_PROGRESS,
+      RAY_CAST,
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL,
     ]
 
 symmetries:
   policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS, GAIT_PROGRESS
+      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS,
+      GAIT_PROGRESS,
+      RAY_CAST,
     ]
   actions:
     symmetries: [
@@ -160,8 +163,8 @@ curriculum:
     apply: True
     epochs: 3000
     update_every: 10
-    start: 0.35
-    end: 0.02
+    start: 0.2
+    end: 0.0
     sample_type: "uniform"
 
 domain_rand:
@@ -284,13 +287,11 @@ domain_rand:
   push_duration_s: 1.0
   push_force:
     apply: True
-    # range: [0., 30.]
     range: [0., 10.]
     operation: "additive"
     distribution: "gaussian"
   push_torque:
     apply: True
-    # range: [0., 15.]
     range: [0., 2.]
     operation: "additive"
     distribution: "gaussian"
@@ -379,7 +380,7 @@ commands:
 
 normalization:
   filter_weight: 0.1
-  clip_actions: 1.0
+  clip_actions: 10.0
   clip_actions_method: "normal"
 
 viewer:
@@ -415,13 +416,13 @@ policy:
   kl_key: "actions"
   obs_key: "policy"
   params:
-    layer_activation: "elu"
+    layer_activation: "silu"
     recurrent_state_size: 256
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
     head:
-      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.02, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
+      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.04, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
       stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
       damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
 
@@ -430,7 +431,7 @@ value:
   learning_rate: 3.e-4
   obs_key: "critic"
   params:
-    layer_activation: "elu"
+    layer_activation: "silu"
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
@@ -445,18 +446,22 @@ algorithm:
     actions: 1.0
     stiffness: 0.25
     damping: 0.25
-  entropy_coef: -0.01
-  entropy_keys: ["actions"]
+  entropy_coefs:
+    actions: -0.01
+    stiffness: -0.001
+    damping: -0.001
   symmetry: True
-  symmetry_coef: 3.0
-  symmetry_keys: ["actions", "stiffness", "damping"]
+  symmetry_coefs:
+    actions: 3.0
+    stiffness: 3.0
+    damping: 3.0
   num_learning_epochs: 5
   num_mini_batches: 4
   value_loss_coef: 1.0
   use_clipped_value_loss: False
   clip_param: 0.2
-  bound_coef: 1.0
-  bound_loss_keys: ["actions"]
+  bound_coefs:
+    actions: 1.0
   normalize_advantage_per_minibatch: True
 
 runner:

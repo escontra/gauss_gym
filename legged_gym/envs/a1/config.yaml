@@ -8,7 +8,7 @@ headless: False
 logdir: "default"
 
 env:
-  num_envs: 4096
+  num_envs: 2048
   env_spacing: 8.0
   send_timeouts: True  # For value bootstrap.
   episode_length_s: 20
