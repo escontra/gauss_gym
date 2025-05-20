@@ -108,8 +108,8 @@ MOTOR_STRENGTH = Observation(
   func=O.motor_strength,
 )
 
-CAMERA_IMAGES = Observation(
-  name="camera_images",
+CAMERA_IMAGE = Observation(
+  name="camera_image",
   func=O.gs_render,
   sensor="gs_renderer",
   latency_range=(0.25, 0.30),

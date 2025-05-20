@@ -36,6 +36,10 @@ def ray_cast_symmetry(env, obs):
   return torch.flip(obs, dims=[-1])
 
 
+def camera_image_symmetry(env, obs):
+  return torch.flip(obs, dims=[-2])
+
+
 def identity_symmetry(env, obs):
   return obs
 
@@ -113,6 +117,11 @@ def a1_damping_symmetry(env, obs):
 RAY_CAST = SymmetryModifier(
   observation=observation_groups.RAY_CAST,
   symmetry_fn=ray_cast_symmetry,
+)
+
+CAMERA_IMAGE = SymmetryModifier(
+  observation=observation_groups.CAMERA_IMAGE,
+  symmetry_fn=camera_image_symmetry,
 )
 
 BASE_ANG_VEL = SymmetryModifier(

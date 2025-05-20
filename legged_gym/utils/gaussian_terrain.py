@@ -254,13 +254,13 @@ class GaussianSceneManager:
     self.renderer = sensors.GaussianSplattingRenderer(self._env, self)
 
     self.command_scale = torch.zeros(
-      self._env.num_envs, 1, device=self._env.device, dtype=torch.float32
+      self._env.num_envs, 1, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.velocity_command = torch.zeros(
-      self._env.num_envs, 2, device=self._env.device, dtype=torch.float32
+      self._env.num_envs, 2, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.heading_command = torch.zeros(
-      self._env.num_envs, 1, device=self._env.device, dtype=torch.float32
+      self._env.num_envs, 1, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.axis_geom = None
     self.velocity_geom = None
@@ -268,7 +268,7 @@ class GaussianSceneManager:
 
     # Index of the current robot state in the camera trajectory.
     self.state_idx = torch.zeros(
-      self._env.num_envs, device=self._env.device, dtype=torch.int64
+      self._env.num_envs, device=self._env.device, dtype=torch.int64, requires_grad=False
     )
 
     self.local_offset = torch.tensor(
