@@ -156,40 +156,6 @@ class BatchPLYRenderer:
         
         return imgs_out# , depth_out
 
-def create_spiral_poses(radius: float, num_frames: int) -> torch.Tensor:
-    """Create camera poses for a spiral path around the origin."""
-    poses = []
-    for i in range(num_frames):
-        # Calculate angle and height
-        theta = (i / num_frames) * 2 * np.pi
-        
-        # Calculate camera position
-        x = radius * np.cos(theta)
-        y = radius * np.sin(theta)
-        z = 0.2
-        
-        # Create look-at matrix
-        pos = np.array([x, y, z])
-        look_at = np.array([0, 0, 0])  # Look at origin
-        up = np.array([0, 0, 1])  # Up vector
-        
-        # Calculate camera orientation
-        forward = look_at - pos
-        forward = forward / np.linalg.norm(forward)
-        right = np.cross(forward, up)
-        right = right / np.linalg.norm(right)
-        up = np.cross(right, forward)
-        
-        # Create camera-to-world matrix
-        c2w = np.eye(4)
-        c2w[:3, 0] = right
-        c2w[:3, 1] = -up
-        c2w[:3, 2] = forward
-        c2w[:3, 3] = pos
-        
-        poses.append(c2w)
-    
-    return torch.from_numpy(np.stack(poses, axis=0)).float()
 
 class MultiSceneRenderer:
     def __init__(self, ply_paths: List[Union[str, Path]], renderer_gpus: List[Union[int, str]], output_gpu: Union[int, str]):

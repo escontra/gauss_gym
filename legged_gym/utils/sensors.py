@@ -717,7 +717,15 @@ class GaussianSplattingRenderer():
         self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
         self.env = env
-        self.renders = torch.zeros(self.num_envs, self.env.cfg["env"]["camera_params"]["cam_height"], self.env.cfg["env"]["camera_params"]["cam_width"], 3, device=self.device, dtype=torch.uint8)
+
+        downscale_factor = float(self.env.cfg["env"]["camera_params"]["downscale_factor"])
+        self.cam_height = int(self.env.cfg["env"]["camera_params"]["cam_height"] / downscale_factor)
+        self.cam_width = int(self.env.cfg["env"]["camera_params"]["cam_width"] / downscale_factor)
+        self.fl_x = self.env.cfg["env"]["camera_params"]["fl_x"] / downscale_factor
+        self.fl_y = self.env.cfg["env"]["camera_params"]["fl_y"] / downscale_factor
+        self.pp_x = self.env.cfg["env"]["camera_params"]["pp_x"] / downscale_factor
+        self.pp_y = self.env.cfg["env"]["camera_params"]["pp_y"] / downscale_factor
+        self.renders = torch.zeros(self.num_envs, self.cam_height, self.cam_width, 3, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
 
@@ -777,12 +785,12 @@ class GaussianSplattingRenderer():
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
-            fl_x=self.env.cfg["env"]["camera_params"]["fl_x"],
-            fl_y=self.env.cfg["env"]["camera_params"]["fl_y"],
-            pp_x=self.env.cfg["env"]["camera_params"]["pp_x"],
-            pp_y=self.env.cfg["env"]["camera_params"]["pp_y"],
-            h=self.env.cfg["env"]["camera_params"]["cam_height"],
-            w=self.env.cfg["env"]["camera_params"]["cam_width"],
+            fl_x=self.fl_x,
+            fl_y=self.fl_y,
+            pp_x=self.pp_x,
+            pp_y=self.pp_y,
+            h=self.cam_height,
+            w=self.cam_width,
             camera_linear_velocity=scene_linear_velocities,
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
@@ -801,10 +809,10 @@ class GaussianSplattingRenderer():
                 self.num_envs,
                 0.1,
                 0.2,
-                self.env.cfg["env"]["camera_params"]["cam_width"],
-                self.env.cfg["env"]["camera_params"]["cam_height"],
-                self.env.cfg["env"]["camera_params"]["fl_x"],
-                self.env.cfg["env"]["camera_params"]["fl_y"],
+                self.cam_width,
+                self.cam_height,
+                self.fl_x,
+                self.fl_y,
                 0.005,
                 32)
             self.axis_geom = BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
@@ -820,9 +828,9 @@ class GaussianSplattingRenderer():
             self.process_image_fn = process_image_fn
 
             if self.env.selected_environment >= 0:
-                self.im = ax.imshow(np.zeros((self.env.cfg["env"]["camera_params"]["cam_height"], self.env.cfg["env"]["camera_params"]["cam_width"], 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.cam_height, self.cam_width, 3), dtype=np.uint8))
             else:
-                self.im = ax.imshow(np.zeros((self.env.cfg["env"]["camera_params"]["cam_height"] * n, self.env.cfg["env"]["camera_params"]["cam_width"] * n, 3), dtype=np.uint8))
+                self.im = ax.imshow(np.zeros((self.cam_height * n, self.cam_width * n, 3), dtype=np.uint8))
             plt.show(block=False)
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
