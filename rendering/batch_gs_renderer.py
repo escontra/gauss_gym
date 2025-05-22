@@ -134,21 +134,21 @@ class BatchPLYRenderer:
         for i in range(0, num_images, minibatch):
             batch_w2cs = w2cs[i:i + minibatch]
             # Render using gsplat
-            colors, _, _ = rasterization(
-                self.means,
-                self.quats,
-                self.scales,
-                self.opacities,
-                self.colors,
-                batch_w2cs,
-                K[None].repeat(len(batch_w2cs), 1, 1),
-                w,
-                h,
-                radius_clip=3.0,
-                sh_degree=self.sh_degree,
-                render_mode="RGB",
-                rasterize_mode='antialiased'
-            )
+            with torch.no_grad():
+              colors, _, _ = rasterization(
+                  self.means,
+                  self.quats,
+                  self.scales,
+                  self.opacities,
+                  self.colors,
+                  batch_w2cs,
+                  K[None].repeat(len(batch_w2cs), 1, 1),
+                  w,
+                  h,
+                  radius_clip=3.0,
+                  sh_degree=self.sh_degree,
+                  render_mode="RGB",
+              )
             colors.clamp_(0, 1)  # Clamp colors to [0, 1]
             
             imgs_out[i:i + minibatch] = (255 * colors[..., :3].to(out_device, non_blocking=True)).to(torch.uint8)
@@ -215,16 +215,15 @@ class MultiSceneRenderer:
           
           # Render each scene on its assigned GPU
           for ply_path, c2ws in scene_poses.items():
+              renderer = self.renderers[ply_path]
               if camera_linear_velocity is not None:
-                cam_lin_vel = camera_linear_velocity[ply_path]
-                cam_ang_vel = camera_angular_velocity[ply_path]
+                cam_lin_vel = camera_linear_velocity[ply_path].to(renderer.device)
+                cam_ang_vel = camera_angular_velocity[ply_path].to(renderer.device)
               if ply_path not in self.renderers:
                   raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
               
               # Render on the assigned GPU and move results to output GPU
-              renderer = self.renderers[ply_path]
-              c2ws = torch.tensor(c2ws, dtype=torch.float32, device=renderer.device)
-              # imgs, depths = renderer.batch_render(c2ws, focal, h, w, minibatch, out_device=self.output_gpu)
+              c2ws = c2ws.to(renderer.device)
               imgs = renderer.batch_render(
                   c2ws, fl_x, fl_y, pp_x, pp_y, h, w,
                   camera_linear_velocity=cam_lin_vel,
@@ -235,63 +234,3 @@ class MultiSceneRenderer:
               results[ply_path] = imgs
               
         return results
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ply_path", type=str, required=True, help="Path to the .ply file")
-    parser.add_argument("--output", type=str, default="output.mp4", help="Output video path")
-    parser.add_argument("--num_frames", type=int, default=240, help="Number of frames in the spiral")
-    parser.add_argument("--radius", type=float, default=10.0, help="Radius of the spiral")
-    parser.add_argument("--height", type=int, default=800, help="Output image height")
-    parser.add_argument("--width", type=int, default=800, help="Output image width")
-    parser.add_argument("--fps", type=int, default=30, help="Output video FPS")
-    parser.add_argument("--json_path", type=str, default=None, help="Path to the JSON file with camera poses")
-    args = parser.parse_args()
-
-    # Initialize renderer
-    renderer = BatchPLYRenderer(Path(args.ply_path))
-    
-    if args.json_path: 
-        print("Trying to render a dataset render...")
-        json_path = "../uli/bww_stepswithfeet/processed_data_complete/transforms.json"
-        
-        with open(json_path, "r") as f:
-            json_data = json.load(f)
-        c2ws = []
-        for f in json_data['frames']:
-            mat = np.array(f['transform_matrix'])
-            mat[:3,1] = -mat[:3,1]
-            mat[:3,2] = -mat[:3,2]
-            c2ws.append(mat)
-        c2ws = torch.tensor(np.array(c2ws)).float().to(renderer.device)
-    else:
-        print("Trying to render a spiral...")
-        c2ws = create_spiral_poses(args.radius, args.num_frames)
-        c2ws = c2ws.to(renderer.device)
-
-    focal = 500
-    
-    # Render frames
-    print("Rendering frames...")
-    rgb_frames, _ = renderer.batch_render(c2ws, focal, args.height, args.width)
-    
-    
-    from moviepy.editor import ImageSequenceClip
-
-    # Convert to video
-    print("Creating video...")
-
-    # Convert frames to uint8 if they're float32
-    frames_np = [(frame.cpu().numpy() * 255).astype(np.uint8) for frame in rgb_frames]
-
-    # Create clip from sequence of frames
-    clip = ImageSequenceClip(frames_np, fps=args.fps)
-
-    # Write video file
-    clip.write_videofile(args.output, 
-                        fps=args.fps,
-                        codec='libx264',  # More widely supported than mp4v
-                        verbose=False,     # Reduces output noise
-                        logger=None)       # Prevents printing progress bar
-
-    print(f"Video saved to {args.output}")

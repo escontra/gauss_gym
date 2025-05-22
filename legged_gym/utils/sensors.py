@@ -718,6 +718,9 @@ class GaussianSplattingRenderer():
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
         self.env = env
 
+        # How often the camera image is refreshed.
+        self.refresh_duration = float(self.env.cfg["env"]["camera_params"]["refresh_duration"])
+
         downscale_factor = float(self.env.cfg["env"]["camera_params"]["downscale_factor"])
         self.cam_height = int(self.env.cfg["env"]["camera_params"]["cam_height"] / downscale_factor)
         self.cam_width = int(self.env.cfg["env"]["camera_params"]["cam_width"] / downscale_factor)
@@ -741,47 +744,35 @@ class GaussianSplattingRenderer():
             env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
         """
         cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
-        self.camera_positions = cam_trans
-        cam_trans = cam_trans.cpu().numpy()
-        cam_lin_vel, cam_ang_vel = self.scene_manager.get_cam_velocity_world_frame()
-        cam_lin_vel = cam_lin_vel.cpu().numpy()
-        cam_ang_vel = cam_ang_vel.cpu().numpy()
+        self.camera_positions[:] = cam_trans
+        self.camera_quats_xyzw[:] = cam_quat
 
-        self.camera_quats_xyzw = cam_quat
+        # Refresh rate is determined by the refresh_duration.
+        if int(self.refresh_duration / self.env.dt) == 0:
+          should_refresh = True
+        else:
+          should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration / self.env.dt)) == 0
+        if not should_refresh:
+          return
+
+        cam_lin_vel, cam_ang_vel = self.scene_manager.get_cam_velocity_world_frame()
+
+        cam_trans -= self.env.env_origins
         cam_rot = quaternion_to_matrix(cam_quat)
 
-        # From OpenCV to OpenGL camera convention for GS renderer.
-        cam_trans -= self.env.env_origins.cpu().numpy()
-
-        # Batch render multiple scenes.
-        c2ws = np.eye(4, dtype=np.float32)[None].repeat(cam_trans.shape[0], axis=0)
+        # Convert from IG frame to GS frame for each scene.
+        cam_trans = torch.einsum('ij, ijk -> ik', cam_trans, self.scene_manager.ig_to_orig_rot)
+        cam_trans += self.scene_manager.cam_offset
+        cam_rot = torch.einsum('ijk, ikl -> ijl', self.scene_manager.ig_to_orig_rot, cam_rot)
+        c2ws = torch.eye(4, dtype=torch.float32, device=self.device)[None].repeat(cam_trans.shape[0], 1, 1)
+        c2ws[:, :3, :3] = cam_rot
         c2ws[:, :3, 3] = cam_trans
-        c2ws[:, :3, :3] = cam_rot.cpu().numpy()
-        scene_poses = defaultdict(list)
-        scene_linear_velocities = defaultdict(list)
-        scene_angular_velocities = defaultdict(list)
-        for k, pose, lin_vel, ang_vel in zip(self.scene_manager.scenes, c2ws, cam_lin_vel, cam_ang_vel):
-            scene_poses[self.scene_path_map[k]].append(pose)
-            scene_linear_velocities[self.scene_path_map[k]].append(lin_vel)
-            scene_angular_velocities[self.scene_path_map[k]].append(ang_vel)
-        scene_poses = {k: np.array(v) for k, v in scene_poses.items()}
-        scene_linear_velocities = {k: np.array(v) for k, v in scene_linear_velocities.items()}
-        scene_angular_velocities = {k: np.array(v) for k, v in scene_angular_velocities.items()}
-        start, end = 0, 0
-        for k, v in scene_poses.items():
-            translation = v[:, :3, 3]
-            rot_mat = v[:, :3, :3]
-            end = start + translation.shape[0]
-            ig_to_orig_rot = self.scene_manager.ig_to_orig_rot.cpu().numpy()[start:end]
-            cam_offset = self.scene_manager.cam_offset.cpu().numpy()[start:end]
-            translation = np.einsum('ij, ijk -> ik', translation, ig_to_orig_rot)
-            translation += cam_offset
-            rot_mat = np.einsum('ijk, ikl -> ijl', ig_to_orig_rot, rot_mat)
-            scene_pose = np.eye(4, dtype=np.float32)[None].repeat(translation.shape[0], axis=0)
-            scene_pose[:, :3, 3] = translation
-            scene_pose[:, :3, :3] = rot_mat
-            scene_poses[k] = scene_pose
-            start = end
+
+        scene_poses, scene_linear_velocities, scene_angular_velocities = {}, {}, {}
+        for k, (start, end) in self.scene_manager.scene_start_end_ids.items():
+            scene_poses[self.scene_path_map[k]] = c2ws[start:end]
+            scene_linear_velocities[self.scene_path_map[k]] = cam_lin_vel[start:end]
+            scene_angular_velocities[self.scene_path_map[k]] = cam_ang_vel[start:end]
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
@@ -795,9 +786,7 @@ class GaussianSplattingRenderer():
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
         )
-        renders = torch.cat(list(renders.values()), dim=0)
-
-        self.renders[env_ids] = renders # (255 * renders[env_ids]).to(torch.uint8)
+        self.renders[env_ids] = torch.cat(list(renders.values()), dim=0)
 
     def get_data(self):
         return self.renders

@@ -53,7 +53,10 @@ class Recorder:
     self.env_handles = []
     self.camera_handles = []
     for mesh_id in range(env.scene_manager.num_meshes):
-      env_ids = env.scene_manager.env_ids_for_mesh_id(mesh_id)
+      try:
+        env_ids = env.scene_manager.env_ids_for_mesh_id(mesh_id)
+      except Exception as e:
+        continue
       if len(env_ids) == 0:
         # TODO: some meshes have no envs. Why?
         break

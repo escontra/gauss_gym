@@ -792,8 +792,11 @@ def estimate_num_slices(
     total_distance += _distance(
       camera_positions[i], camera_positions[i - 1], up_axis
     )
-  total_slice_distance = slice_distance + (2 * buffer_distance) - slice_overlap
-  return max(1, int(total_distance / total_slice_distance))
+  slice_distance = slice_distance + (2 * buffer_distance)
+  num_slices = np.ceil((total_distance - slice_overlap) / (slice_distance - slice_overlap))
+  return max(1, int(num_slices))
+  # total_slice_distance = slice_distance + (2 * buffer_distance) - slice_overlap
+  # return max(1, int(total_distance / total_slice_distance))
 
 
 def main(_):
@@ -993,11 +996,7 @@ def main(_):
       print(
         f"Saving mesh with {len(curr_vals['vertices'])} triangles and {len(curr_vals['triangles'])} vertices"
       )
-      with open(
-        str(save_dir / f"slice_{str(i).zfill(4)}.pkl"),
-        "wb",
-      ) as f:
-        pickle.dump(curr_vals, f)
+      np.savez(str(save_dir / f"slice_{str(i).zfill(4)}.npz"), **curr_vals)
     except ValueError as e:
       print(e)
       continue

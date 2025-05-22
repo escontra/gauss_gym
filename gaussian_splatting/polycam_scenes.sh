@@ -9,17 +9,16 @@
 # 6. Generate meshes with:
 #    python mesh_generation/generate_mesh_slices.py --config=mesh_generation/configs/polycam.py --config.load_dir=<POLYCAM_PATH>
 
-POLYCAM_PATH=$HOME/ULI_DATA/washington
+POLYCAM_PATH=$HOME/ULI_DATA/nijo_castle
 
 ns-train splatfacto \
     --experiment-name '' \
     --timestamp '' \
     --output-dir $POLYCAM_PATH \
+    --viewer.quit-on-train-completion True \
     nerfstudio-data \
     --data $POLYCAM_PATH \
     --train-split-fraction=1.0 \
-    --depth-unit-scale-factor=0.001 \
-    --auto-scale-poses=False \
-    --center-method='none'
+    --depth-unit-scale-factor=0.001
 
 ns-export gaussian-splat --load-config $POLYCAM_PATH/splatfacto/config.yml --output-dir $POLYCAM_PATH/splatfacto

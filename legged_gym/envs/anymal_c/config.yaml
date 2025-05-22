@@ -14,6 +14,11 @@ env:
   episode_length_s: 20
 
   camera_params:
+    # Refresh duration. How often the camera image is refreshed.
+    # Not to be confused with the sythetic refresh_duration used in
+    # observation_manager.
+    refresh_duration: 0.1
+
     # Original intrinsics.
     cam_width: 320
     cam_height: 240

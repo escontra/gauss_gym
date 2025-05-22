@@ -96,8 +96,7 @@ class GaussianTerrain:
 
   def _load_mesh(self, scene_path: pathlib.Path, scene: str, filename: str):
     filepath = scene_path / "meshes" / filename
-    with open(filepath, "rb") as f:
-      mesh_dict = pickle.load(f)
+    mesh_dict = np.load(filepath)
 
     cam_offset = np.array(mesh_dict["offset"])[0].astype(np.float32)
     vertices = np.array(mesh_dict["vertices"]).astype(np.float32)
@@ -123,7 +122,7 @@ class GaussianTerrain:
     for scene_path in self.scene_paths:
       scene_path = pathlib.Path(scene_path)
       scene_name = scene_path.name
-      filenames = [f.name for f in (scene_path / "meshes").iterdir() if f.suffix == '.pkl']
+      filenames = [f.name for f in (scene_path / "meshes").iterdir() if f.suffix == '.npz']
       for filename in filenames:
         self._mesh_dict[os.path.join(scene_name, filename)] = self._load_mesh(
           scene_path, scene_name, filename
@@ -408,6 +407,21 @@ class GaussianSceneManager:
       device=self._env.device,
       requires_grad=False,
     )
+
+    # Get start and end env ids for each scene.
+    self.scene_start_end_ids = {}
+    curr_scene = None
+    start, end = 0, 0
+    for k in self.scenes:
+      if curr_scene is None:
+        curr_scene = k
+      elif curr_scene != k:
+        self.scene_start_end_ids[curr_scene] = (start, end)
+        curr_scene = k
+        start = end
+      end += 1
+    self.scene_start_end_ids[curr_scene] = (start, end)
+
 
   def get_cam_link_pose_world_frame(self):
     # In the frame of the world.
