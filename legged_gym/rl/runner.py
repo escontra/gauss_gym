@@ -52,6 +52,11 @@ class Runner:
     self.policy_key = self.cfg["policy"]["obs_key"]
     self.value_key = self.cfg["value"]["obs_key"]
 
+    self.policy_image_feature: models.ImageFeature = getattr(
+      models, self.cfg["image_feature"]["class_name"])(
+        self.env.obs_space()[self.policy_key],
+        **self.cfg["image_feature"]["params"]
+    ).to(self.device)
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
@@ -60,6 +65,11 @@ class Runner:
       **self.cfg["policy"]["params"]
     ).to(self.device)
     # For KL.
+    self.old_policy_image_feature: models.ImageFeature = getattr(
+      models, self.cfg["image_feature"]["class_name"])(
+        self.env.obs_space()[self.policy_key],
+        **self.cfg["image_feature"]["params"]
+    ).to(self.device)
     self.old_policy = getattr(models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
       self.env.obs_space()[self.policy_key],
@@ -68,6 +78,11 @@ class Runner:
     for param in self.old_policy.parameters():
       param.requires_grad = False
 
+    self.value_image_feature: models.ImageFeature = getattr(
+      models, self.cfg["image_feature"]["class_name"])(
+        self.env.obs_space()[self.value_key],
+        **self.cfg["image_feature"]["params"]
+    ).to(self.device)
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
     self.value: models.RecurrentModel = getattr(
       models, self.cfg["value"]["class_name"])(
@@ -76,8 +91,14 @@ class Runner:
       **self.cfg["value"]["params"]
     ).to(self.device)
 
+    self.policy_image_feature_optimizer = torch.optim.Adam(
+      self.policy_image_feature.parameters(), lr=self.policy_learning_rate
+    )
     self.policy_optimizer = torch.optim.Adam(
       self.policy.parameters(), lr=self.policy_learning_rate
+    )
+    self.value_image_feature_optimizer = torch.optim.Adam(
+      self.value_image_feature.parameters(), lr=self.value_learning_rate
     )
     self.value_optimizer = torch.optim.Adam(
       self.value.parameters(), lr=self.value_learning_rate

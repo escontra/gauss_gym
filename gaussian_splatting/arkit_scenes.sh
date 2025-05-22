@@ -18,14 +18,8 @@ for ARKIT_PATH in $PARENT_DIR/*; do
         fi
 
         if [ -d "$ARKIT_PATH/splatfacto" ]; then
-            if [ ! -f "$ARKIT_PATH/splatfacto/splat.ply" ]; then
-                echo "Exporting Gaussian Splatting model for $ARKIT_PATH..."
-                ns-export gaussian-splat --load-config "$ARKIT_PATH/splatfacto/config.yml" --output-dir "$ARKIT_PATH/splatfacto"
-            else
-                echo "Splat file already exists for $ARKIT_PATH, skipping export."
-            fi
-            # # Export the Gaussian Splatting model
-            # ns-export gaussian-splat --load-config $ARKIT_PATH/splatfacto/config.yml --output-dir $ARKIT_PATH/splatfacto
+            echo "Exporting Gaussian Splatting model for $ARKIT_PATH..."
+            ns-export gaussian-splat --load-config "$ARKIT_PATH/splatfacto/config.yml" --output-dir "$ARKIT_PATH/splatfacto"
 
             echo "Found splatfacto directory in $ARKIT_PATH, proceeding with mesh generation..."
             rm -r "$ARKIT_PATH/meshes" 2>/dev/null || true

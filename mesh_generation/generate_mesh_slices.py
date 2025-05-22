@@ -851,67 +851,6 @@ def main(_):
     mesh = mesh.transform(np.linalg.inv(transform))
     mesh.vertices = o3d.utility.Vector3dVector(np.array(mesh.vertices)[:, [2, 0, 1]])
   
-    # # cropped_mesh = o3d.geometry.crop_triangle_mesh(mesh, bounding_boxes[0].get_min_bound(), bounding_boxes[0].get_max_bound())
-    # cropped_meshes = []
-    # for box in bounding_boxes[0:20]:
-    #   cropped_meshes.append(mesh.crop(box))
-    # mesh_sum = cropped_meshes[0]
-    # for m in cropped_meshes[1:]:
-    #   mesh_sum += m
-    # mesh = mesh_sum
-    # mesh.compute_vertex_normals()
-    # # mesh.remove_degenerate_triangles()
-    # # mesh.remove_duplicated_triangles()
-    # # mesh.remove_duplicated_vertices()
-    # # mesh.remove_non_manifold_edges()
-    # # mesh.remove_unreferenced_vertices()
-    # visualize_geometries([mesh])
-
-    # mesh_info_path = load_dir / 'mesh_info.json'
-    # with open(mesh_info_path, 'r') as f:
-    #   mesh_info = json.load(f)
-    # print(mesh_info.keys())
-    # pcd = pcd.rotate(vtf.SO3.from_x_radians(-np.pi / 2).as_matrix())
-    # transform = np.array(mesh_info["alignmentTransform"]).reshape(4, 4).T
-    # pcd = pcd.transform(np.linalg.inv(transform))
-    # pcd.points = o3d.utility.Vector3dVector(np.array(pcd.points)[:, [2, 0, 1]])
-    # pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=config.voxel_size, max_nn=50))
-    
-    # textures = np.asarray(mesh.textures[0])  # 2D images of color
-    # vert_points = np.asarray(mesh.vertices)  # 3D positions of verts
-    # tri_ids = np.asarray(mesh.triangles)  # indices of the vertices
-    # points = vert_points[tri_ids.flatten()]  # get the 3D positions of the vertices
-    # uvs = np.asarray(mesh.triangle_uvs)  # get the uv coords of the vertices
-    # # convert uv coord to texture integer index
-    # tex_ids = (uvs[:, 1] * textures.shape[0]).astype(int), (uvs[:, 0] * textures.shape[1]).astype(int)
-    # colors = textures[tex_ids[0], tex_ids[1]]
-    # pointcloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-    # pointcloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64) / 255.0)
-    # pointcloud = pointcloud.remove_duplicated_points()
-    # # align the pointcloud to the coord system of cameras, which is provided inside the mesh_info.json file
-    # mesh_info_json = json.load(open(load_dir / "mesh_info.json"))
-    # transform = np.array(mesh_info_json["alignmentTransform"]).reshape(4, 4).T
-    # pointcloud = pointcloud.transform(np.linalg.inv(transform))
-    # # shift the axes coordinates to match the nerfstudio ones (same as the cameras' coord system)
-    # pointcloud.points = o3d.utility.Vector3dVector(np.array(pointcloud.points)[:, [2, 0, 1]])
-    # pcd = pointcloud
-    # # pcd, ind = pcd.remove_statistical_outlier(
-    # #   nb_neighbors=20,
-    # #   std_ratio=2.0)
-    # pcd.estimate_normals()
-
-    # pcd = o3d.io.read_point_cloud(load_dir / 'raw.ply')
-    # mesh_info_path = load_dir / 'mesh_info.json'
-    # with open(mesh_info_path, 'r') as f:
-    #   mesh_info = json.load(f)
-    # print(mesh_info.keys())
-    # pcd = pcd.rotate(vtf.SO3.from_x_radians(-np.pi / 2).as_matrix())
-    # transform = np.array(mesh_info["alignmentTransform"]).reshape(4, 4).T
-    # pcd = pcd.transform(np.linalg.inv(transform))
-    # pcd.points = o3d.utility.Vector3dVector(np.array(pcd.points)[:, [2, 0, 1]])
-    # pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=config.voxel_size, max_nn=50))
-    
-
   if config.visualize:
     camera_point_cloud = o3d.geometry.PointCloud()
     camera_point_cloud.points = o3d.utility.Vector3dVector(
