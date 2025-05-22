@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, Tuple, List, Callable, Union
 
 from legged_gym.utils import math, space
 from legged_gym.rl.modules import resnet, outs
+from legged_gym.rl.modules.dino import backbones
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.rl.modules import normalizers
 
@@ -70,6 +71,39 @@ def get_mlp_cnn_keys(obs):
       raise ValueError(f'Observation {k} has unexpected shape: {v.shape}')
 
   return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs
+
+
+class ImageFeature(torch.nn.Module):
+  def __init__(self, obs_space: Dict[str, space.Space], model_type: str = 'cnn_simple', embedding_dim: int = 256, dino_pretrained: bool = True):
+    self.obs_space = obs_space
+    self.embedding_dim = embedding_dim
+    _, _, self.cnn_keys, _ = get_mlp_cnn_keys(obs_space)
+    self.model_type = model_type
+    if self.model_type == 'cnn_simple':
+      self.encoder = resnet.NatureCNN(3, embedding_dim)
+    elif self.model_type == 'cnn_resnet':
+      self.encoder = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
+    elif self.model_type.startswith('dino'):
+      self.dino_encoder = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
+    else:
+      raise ValueError(f'Unknown model type: {model_type}')
+
+  def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    if self.model_type == 'cnn_simple':
+      return self.encoder(obs)
+    elif self.model_type == 'cnn_resnet':
+      return self.encoder(obs)
+    elif self.model_type.startswith('dino'):
+      return self.dino_encoder(obs)
+
+  def obs_space(self, obs_space: Dict[str, space.Space]) -> Dict[str, space.Space]:
+    _, _, cnn_keys, _ = get_mlp_cnn_keys(obs_space)
+    if self.model_type == 'cnn_simple':
+      return obs_space
+    elif self.model_type == 'cnn_resnet':
+      return obs_space
+    elif self.model_type.startswith('dino'):
+       return obs_space
 
 IMAGE_EMBEDDING_DIM = 256
 
