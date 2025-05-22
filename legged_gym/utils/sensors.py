@@ -751,6 +751,9 @@ class GaussianSplattingRenderer():
         if int(self.refresh_duration / self.env.dt) == 0:
           should_refresh = True
         else:
+          # TODO: We're using `common_step_counter` here. Using `episode_length_buf` would be more accurate,
+          # but is considerably slower as every step would require at least a few renders. With `common_step_counter`,
+          # we only need to render every `refresh_duration` steps.
           should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration / self.env.dt)) == 0
         if not should_refresh:
           return
