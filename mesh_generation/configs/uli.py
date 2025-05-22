@@ -9,7 +9,7 @@ def get_config():
   config.decimation_factor = 4
   config.depth_max = 2.5
   config.slice_distance = 4.0
-  config.slice_overlap = 1.5
+  config.slice_overlap = 3.0
   config.buffer_distance = 1.0
   config.to_ig_euler_xyz = (-np.pi / 2, 0., np.pi)
 

@@ -112,8 +112,7 @@ CAMERA_IMAGE = Observation(
   name="camera_image",
   func=O.gs_render,
   sensor="gs_renderer",
-  latency_range=(0.25, 0.30),
-  refresh_duration=1/10,
+  # latency_range=(0.25, 0.30),
 )
 
 GAIT_PROGRESS = Observation(

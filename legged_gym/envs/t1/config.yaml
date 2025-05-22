@@ -53,7 +53,6 @@ observations:
       BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
       GAIT_PROGRESS,
-      RAY_CAST,
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -66,7 +65,6 @@ symmetries:
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS,
       GAIT_PROGRESS,
-      RAY_CAST,
     ]
   actions:
     symmetries: [
@@ -90,7 +88,7 @@ terrain:
     # /home/root-desktop/ULI_DATA/bww_5_to_6,
     # /home/root-desktop/ULI_DATA/bww_6_to_7,
     # /home/root-desktop/ULI_DATA/bww_7_to_8,
-    /home/root-desktop/ULI_DATA/bww_8_to_9,
+    # /home/root-desktop/ULI_DATA/bww_8_to_9,
     /home/root-desktop/ULI_DATA/bww_stairs,
     /home/root-desktop/ULI_DATA/ryokan_bridge,
     /home/root-desktop/ULI_DATA/long_stairs,

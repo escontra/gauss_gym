@@ -14,9 +14,7 @@ for ARKIT_PATH in $PARENT_DIR/*; do
             --max-num-iterations 30000 \
             arkit-data \
             --data $ARKIT_PATH \
-            --auto-scale-poses False \
-            --train-split-fraction 1.0 \
-            --center-method='none'
+            --train-split-fraction 1.0
         fi
 
         if [ -d "$ARKIT_PATH/splatfacto" ]; then
