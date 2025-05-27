@@ -2,6 +2,7 @@ import numpy as np
 import functools
 import torch
 import torch.nn as nn
+from torchvision import transforms
 from typing import Dict, Any, Optional, Tuple, List, Callable, Union
 
 from legged_gym.utils import math, space
@@ -9,6 +10,10 @@ from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.dino import backbones
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.rl.modules import normalizers
+
+
+IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
 
 
 def split_and_pad_trajectories(tensor, dones):
@@ -75,35 +80,67 @@ def get_mlp_cnn_keys(obs):
 
 class ImageFeature(torch.nn.Module):
   def __init__(self, obs_space: Dict[str, space.Space], model_type: str = 'cnn_simple', embedding_dim: int = 256, dino_pretrained: bool = True):
-    self.obs_space = obs_space
+    super().__init__()
+    self._obs_space = obs_space
     self.embedding_dim = embedding_dim
     _, _, self.cnn_keys, _ = get_mlp_cnn_keys(obs_space)
     self.model_type = model_type
-    if self.model_type == 'cnn_simple':
-      self.encoder = resnet.NatureCNN(3, embedding_dim)
-    elif self.model_type == 'cnn_resnet':
-      self.encoder = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
-    elif self.model_type.startswith('dino'):
-      self.dino_encoder = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
-    else:
-      raise ValueError(f'Unknown model type: {model_type}')
+
+    print('ImageFeature\n\tCNN Keys: ')
+    for key in self.cnn_keys:
+      print(f'\t\t{key}: {obs_space[key].shape}')
+
+    encoder_dict = {}
+    for key in self.cnn_keys:
+      if self.model_type == 'cnn_simple':
+        encoder_dict[key] = resnet.NatureCNN(3, embedding_dim)
+      elif self.model_type == 'cnn_resnet':
+        encoder_dict[key] = resnet.ResNet(
+            resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
+      elif self.model_type.startswith('dino'):
+        dino = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
+        encoder_dict[key] = nn.Sequential(
+          transforms.Normalize(
+              mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
+          dino,
+          nn.Linear(dino.embed_dim, embedding_dim)
+        )
+      else:
+        raise ValueError(f'Unknown model type: {model_type}')
+    self.dummy_param = nn.Parameter(torch.zeros(1))
+    self.encoder = nn.ModuleDict(encoder_dict)
 
   def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
-    if self.model_type == 'cnn_simple':
-      return self.encoder(obs)
-    elif self.model_type == 'cnn_resnet':
-      return self.encoder(obs)
-    elif self.model_type.startswith('dino'):
-      return self.dino_encoder(obs)
+    out_features = {}
+    for key in self.cnn_keys:
+      cnn_obs = obs[key]
+      if cnn_obs.shape[-1] in [1, 3]:
+        cnn_obs = permute_cnn_obs(cnn_obs)
+      if cnn_obs.dtype == torch.uint8:
+        cnn_obs = cnn_obs.float() / 255.0
 
-  def obs_space(self, obs_space: Dict[str, space.Space]) -> Dict[str, space.Space]:
-    _, _, cnn_keys, _ = get_mlp_cnn_keys(obs_space)
-    if self.model_type == 'cnn_simple':
-      return obs_space
-    elif self.model_type == 'cnn_resnet':
-      return obs_space
-    elif self.model_type.startswith('dino'):
-       return obs_space
+      batch_dims = cnn_obs.shape[:-3]
+      spatial_dims = cnn_obs.shape[-3:]
+      cnn_obs = cnn_obs.reshape(-1, *spatial_dims)  # Shape: [M*N*L*O, C, H, W]
+      feat_list = []
+      for i in range(0, cnn_obs.shape[0], 2048):
+        cnn_feat = self.encoder[key](cnn_obs[i:i+2048])
+        feat_list.append(cnn_feat)
+      cnn_feat = torch.cat(feat_list, dim=0)
+      # cnn_feat = self.encoder[key](cnn_obs)
+      cnn_feat = cnn_feat.reshape(*batch_dims, *cnn_feat.shape[1:])
+      out_features[key] = cnn_feat
+    return out_features
+
+  def obs_space(self) -> Dict[str, space.Space]:
+    return {key: self._obs_space[key] for key in self.cnn_keys}
+
+  def modified_obs_space(self) -> Dict[str, space.Space]:
+    modified_obs_space = {}
+    for key in self.cnn_keys:
+      modified_obs_space[key] = space.Space(np.float32, (self.embedding_dim,), -np.inf, np.inf)
+    return modified_obs_space
+
 
 IMAGE_EMBEDDING_DIM = 256
 
@@ -114,6 +151,7 @@ class RecurrentModel(torch.nn.Module):
         self,
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
+        dont_normalize_keys: List[str] = [],
         layer_activation="elu",
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
@@ -123,6 +161,7 @@ class RecurrentModel(torch.nn.Module):
         head: Dict[str, Any] = None):
     super().__init__()
     self.obs_space = obs_space
+    self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
     self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
     self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
@@ -131,12 +170,13 @@ class RecurrentModel(torch.nn.Module):
     self.normalize_obs = normalize_obs
     self.max_abs_value = max_abs_value
     if self.normalize_obs:
-      self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value)
+      self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value, dont_normalize_keys=dont_normalize_keys)
 
-    print(f'MLP Keys: {self.mlp_keys}')
-    print(f'MLP Num Obs: {self.num_mlp_obs}')
-    print(f'CNN Keys: {self.cnn_keys}')
-    print(f'Normalizing obs: {self.normalize_obs}')
+    print('RecurrentModel:')
+    print(f'\tMLP Keys: {self.mlp_keys}')
+    print(f'\tMLP Num Obs: {self.num_mlp_obs}')
+    print(f'\tCNN Keys: {self.cnn_keys}')
+    print(f'\tNormalizing obs: {self.normalize_obs}')
 
     layers = []
     input_size = self.recurrent_state_size
@@ -159,15 +199,14 @@ class RecurrentModel(torch.nn.Module):
     return self.memory.reset(dones, hidden_states)
 
   def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
-
-    with torch.no_grad():
-      if self.normalize_obs:
-        obs = apply_normalizer(
-          obs,
-          self.obs_normalizer.mean,
-          self.obs_normalizer.std,
-          max_abs_value=self.max_abs_value)
-      features = process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
+    if self.normalize_obs:
+      obs = apply_normalizer(
+        obs,
+        self.obs_normalizer.mean,
+        self.obs_normalizer.std,
+        max_abs_value=self.max_abs_value,
+        dont_normalize_keys=self.dont_normalize_keys)
+    features = process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
     
     if self.cnn_keys:
       cnn_features = []
@@ -274,14 +313,19 @@ def apply_normalizer(
         normalizer_mean: Optional[Dict[str, torch.Tensor]],
         normalizer_std: Optional[Dict[str, torch.Tensor]],
         use_mean_offset: bool = True,
+        dont_normalize_keys: List[str] = [],
         max_abs_value: Optional[float] = None
     ) -> Dict[str, torch.Tensor]:
     normalized_observations = {}
+
     for k, v in observations.items():
+        if k in dont_normalize_keys:
+            normalized_observations[k] = v
+            continue
         if use_mean_offset and normalizer_mean is not None:
-            v = v - normalizer_mean[k]
+            v = v - normalizer_mean[k].detach()
         if normalizer_std is not None:
-            v = v / normalizer_std[k]
+            v = v / normalizer_std[k].detach()
         if max_abs_value is not None:
             v = torch.clamp(v, -max_abs_value, max_abs_value)
         normalized_observations[k] = v

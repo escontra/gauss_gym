@@ -3,6 +3,7 @@ import pathlib
 import pickle
 import wandb
 import torch
+import torch.nn.functional as F
 from typing import Dict, Any
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
@@ -36,13 +37,11 @@ class Recorder:
       log_dir: pathlib.Path,
       cfg: Dict[str, Any],
       deploy_cfg: Dict[str, Any],
-      obs_space: Dict[str, Dict[str, space.Space]],
-      action_space: Dict[str, space.Space]):
+      save_dicts: Dict[str, Any]):
     self.cfg = cfg
     self.deploy_cfg = deploy_cfg
     self.log_dir = log_dir
-    self.obs_space = obs_space
-    self.action_space = action_space
+    self.save_dicts = save_dicts
     self.initialized = False
     self.fps = int(1. / (self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"]))
 
@@ -52,6 +51,7 @@ class Recorder:
     self.mesh_names = []
     self.env_handles = []
     self.camera_handles = []
+    self.env_ids = []
     for mesh_id in range(env.scene_manager.num_meshes):
       try:
         env_ids = env.scene_manager.env_ids_for_mesh_id(mesh_id)
@@ -63,10 +63,11 @@ class Recorder:
       env_id = env_ids[0]
       camera_props = gymapi.CameraProperties()
       # camera_props.enable_tensors = True
-      camera_props.width = 256
-      camera_props.height = 256
+      camera_props.width = 200
+      camera_props.height = 200
       camera_handle = env.gym.create_camera_sensor(env.envs[env_id], camera_props)
       self.camera_handles.append(camera_handle)
+      self.env_ids.append(env_id)
       self.env_handles.append(env.envs[env_id])
       self.mesh_names.append(env.scene_manager.mesh_name_from_id(mesh_id))
 
@@ -84,7 +85,7 @@ class Recorder:
   def reset_frame_dict(self):
     self.frame_dict = {k: [] for k in self.mesh_names}
 
-  def maybe_record(self, env):
+  def maybe_record(self, env, image_features={}):
     if self.num_frames == self.cfg["runner"]["record_frames"]:
       # Stop recording.
       print('STOP RECORDING')
@@ -94,26 +95,37 @@ class Recorder:
       return stacked_frame_dict
     elif self.num_frames > 0:
       # Recording ongoing.
-      self.update_frames(env)
+      self.update_frames(env, image_features)
       self.num_frames += 1
       return {}
     elif self.record_every():
       # Maybe start a new recording.
       print('START RECORDING')
-      self.update_frames(env)
+      self.update_frames(env, image_features)
       self.num_frames += 1
       return {}
     else:
       return {}
 
-  def update_frames(self, env):
+  def update_frames(self, env, image_features={}):
     from isaacgym import gymapi
     env.gym.fetch_results(env.sim, True)
     env.gym.render_all_camera_sensors(env.sim)
     env.gym.step_graphics(env.sim)
-    for mesh_name, env_handle, camera_handle in zip(self.mesh_names, self.env_handles, self.camera_handles):
+    for mesh_name, env_handle, camera_handle, env_id in zip(self.mesh_names, self.env_handles, self.camera_handles, self.env_ids):
       image = env.gym.get_camera_image(env.sim, env_handle, camera_handle, gymapi.IMAGE_COLOR)
       image = image.reshape(image.shape[0], -1, 4)[..., :3]
+      for _, im in image_features.items():
+        im = im[env_id]
+        h, w = im.shape[:2]
+        target_h = image.shape[0]
+        target_w = int(w * (target_h / h))
+        im = im.permute(2, 0, 1).float() / 255.0
+        im = F.interpolate(im.unsqueeze(0), size=(target_h, target_w), mode='bilinear', align_corners=False).squeeze(0)
+        im = im.permute(1, 2, 0)
+        im = (im * 255.0).clamp(0, 255).to(torch.uint8).cpu().numpy()
+        image = np.concatenate([image, im], axis=1)
+
       self.frame_dict[mesh_name].append(image)
 
   def maybe_init(self):
@@ -142,10 +154,9 @@ class Recorder:
     config.Config(self.cfg).save(self.log_dir / "config.yaml")
     config.Config({'deploy': self.deploy_cfg}).save(self.log_dir / "deploy_config.yaml")
 
-    with open(self.log_dir / "obs_space.pkl", "wb") as file:
-      pickle.dump(self.obs_space, file)
-    with open(self.log_dir / "action_space.pkl", "wb") as file:
-      pickle.dump(self.action_space, file)
+    for key, value in self.save_dicts.items():
+      with open(self.log_dir / f"{key}.pkl", "wb") as file:
+        pickle.dump(value, file)
     self.initialized = True
 
   @timer.section("record_episode_statistics")

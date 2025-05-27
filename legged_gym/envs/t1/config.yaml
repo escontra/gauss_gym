@@ -435,6 +435,13 @@ sim:
     default_buffer_size_multiplier: 5.0
     contact_collection: 2
 
+image_feature:
+  class_name: "ImageFeature"
+  learning_rate: 3.e-4
+  params:
+    model_type: "cnn_simple"
+    embedding_dim: 64
+
 policy:
   class_name: "RecurrentModel"
   learning_rate: 1.e-5

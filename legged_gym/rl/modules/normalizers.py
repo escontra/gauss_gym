@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 import torch
 import torch.nn as nn
 import torch.utils._pytree as pytree
@@ -173,6 +173,7 @@ class DictNormalizer(nn.Module):
 
   def __init__(self,
                obs_space: Dict[str, space.Space],
+               dont_normalize_keys: List[str] = [],
                max_abs_value: Optional[float] = None,
                std_min_value: float = 1e-6,
                std_max_value: float = 1e6,
@@ -183,7 +184,8 @@ class DictNormalizer(nn.Module):
     self.std_max_value = std_max_value
     self.use_mean_offset = use_mean_offset
     self.register_buffer('count', torch.zeros(size=(), dtype=torch.int32))
-    self.obs_keys = list(obs_space.keys())
+    self.obs_keys = [k for k in obs_space.keys() if k not in dont_normalize_keys]
+    self.dont_normalize_keys = dont_normalize_keys
     for k, v in obs_space.items():
       self.register_buffer(f'mean_{k}', torch.zeros(v.shape, dtype=torch.float32))
       self.register_buffer(f'std_{k}', torch.ones(v.shape, dtype=torch.float32))
@@ -208,6 +210,8 @@ class DictNormalizer(nn.Module):
     batch_dims = None
     batch_axis = None
     for k, v in obs_tree.items():
+      if k in self.dont_normalize_keys:
+        continue
       batch_shape = v.shape
       curr_batch_dims = batch_shape[:len(batch_shape) - self.mean[k].ndim]
       if batch_dims is None:
@@ -229,6 +233,8 @@ class DictNormalizer(nn.Module):
     self.count.data = self.count.data + step_increment
 
     for k, v in obs_tree.items():
+      if k in self.dont_normalize_keys:
+        continue
       # The mean and the sum of past variances are updated with Welford's
       # algorithm using batches (see https://stackoverflow.com/q/56402955).
       diff_to_old_mean = v - self.mean[k]
