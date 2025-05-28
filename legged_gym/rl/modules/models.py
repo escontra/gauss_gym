@@ -56,7 +56,13 @@ def unpad_trajectories(trajectories, masks):
     """ Does the inverse operation of  split_and_pad_trajectories()
     """
     # Need to transpose before and after the masking to have proper reshaping
-    return trajectories.transpose(1, 0)[masks.transpose(1, 0)].view(-1, trajectories.shape[0], trajectories.shape[-1]).transpose(1, 0)
+    obs_num_dims = len(trajectories.shape) - len(masks.shape)
+    traj_transp = trajectories.transpose(1, 0)
+    masks_transp = masks.transpose(1, 0)
+    traj_indexed = traj_transp[masks_transp]
+    traj_viewed = traj_indexed.view(-1, trajectories.shape[0], *trajectories.shape[-obs_num_dims:])
+    traj_viewed_transp = traj_viewed.transpose(1, 0)
+    return traj_viewed_transp
 
 
 def get_mlp_cnn_keys(obs):
@@ -112,7 +118,9 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         self,
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
-        head: Dict[str, Any] = None,
+        head: Dict[str, Any],
+        reconstruct_space: Optional[Dict[str, space.Space]] = None,
+        reconstruct_head: Optional[Dict[str, Any]] = None,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -139,6 +147,8 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       obs_space=self.mlp_obs_space,
       dont_normalize_keys=dont_normalize_keys + list(self.image_feature_model.obs_space().keys()),
       head=head,
+      reconstruct_space=reconstruct_space,
+      reconstruct_head=reconstruct_head,
       layer_activation=layer_activation,
       hidden_layer_sizes=hidden_layer_sizes,
       recurrent_state_size=recurrent_state_size,
@@ -242,7 +252,9 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         self,
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
-        head: Dict[str, Any] = None,
+        head: Dict[str, Any],
+        reconstruct_space: Optional[Dict[str, space.Space]] = None,
+        reconstruct_head: Optional[Dict[str, Any]] = None,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -270,6 +282,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
       print(f'\t\t{key}: {obs_space[key].shape}')
     print(f'\tMLP Num Obs: {self.num_mlp_obs}')
     print(f'\tNormalizing obs: {self.normalize_obs}')
+    if reconstruct_space is not None:
+      print('\tReconstructing obs:')
+      for key in reconstruct_head.keys():
+        print(f'\t\t{key}: {reconstruct_space[key].shape}')
 
     layers = []
     input_size = self.recurrent_state_size
@@ -280,6 +296,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.model = torch.nn.Sequential(*layers)
     heads = {k: outs.Head(input_size, v, **head[k]) for k, v in action_space.items()}
     self.heads = nn.ModuleDict(heads)
+    self.recon_heads = None
+    if reconstruct_space is not None:
+      recon_heads = {k: outs.Head(self.recurrent_state_size, v, **reconstruct_head[k]) for k, v in reconstruct_space.items()}
+      self.recon_heads = nn.ModuleDict(recon_heads)
 
     self.symlog_inputs = symlog_inputs
 
@@ -307,15 +327,19 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
               mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
     rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks)
+    if masks is not None and self.recon_heads is not None:
+      recon_dists = {k: self.recon_heads[k](rnn_state.squeeze(0)) for k in self.recon_heads}
+    else:
+      recon_dists = None
     model_state = self.model(rnn_state.squeeze(0))
     if mean_only:
         outs = []
         for k in self.heads:
           outs.append(self.heads[k].mean_net(model_state))
-        return tuple(outs), new_hidden_states
+        return tuple(outs), recon_dists, new_hidden_states
     else:
         dists = {k: self.heads[k](model_state) for k in self.heads}
-        return dists, new_hidden_states
+        return dists, recon_dists, new_hidden_states
 
   def stats(self):
     stats = {}

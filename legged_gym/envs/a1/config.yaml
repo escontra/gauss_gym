@@ -420,6 +420,7 @@ policy:
   desired_kl: 0.01
   kl_key: "actions"
   obs_key: "policy"
+  reconstruct_observations: ["critic/RAY_CAST"]  # Additional loss to reconstruct the ray cast observations.
   params:
     layer_activation: "silu"
     recurrent_state_size: 256
@@ -451,6 +452,8 @@ value:
 algorithm:
   gamma: 0.97
   lam: 0.95
+  policy_recon_loss_coef: 1.0
+  value_recon_loss_coef: 1.0
   actor_loss_coefs:
     actions: 1.0
     stiffness: 0.25

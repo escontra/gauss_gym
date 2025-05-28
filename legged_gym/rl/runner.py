@@ -11,7 +11,7 @@ import copy
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils import agg, symmetry_groups, timer, when, space
+from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
 
 
 def discount_values(rewards, dones, values, last_values, gamma, lam):
@@ -54,11 +54,27 @@ class Runner:
     self.value_key = self.cfg["value"]["obs_key"]
 
     # Policy.
+    reconstruct_space = None
+    reconstruct_head = None
+    if self.cfg["policy"]["reconstruct_observations"] is not None:
+      reconstruct_space = {}
+      reconstruct_head = {}
+      for key in self.cfg["policy"]["reconstruct_observations"]:
+        obs_group, obs_name = key.split('/')
+        obs_name = getattr(observation_groups, obs_name).name
+        reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
+        reconstruct_head[f'{obs_group}/{obs_name}'] = {
+          'output_type': 'mse',
+          'outscale': 1.0
+        }
+
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
       self.env.obs_space()[self.policy_key],
+      reconstruct_space=reconstruct_space,
+      reconstruct_head=reconstruct_head,
       **self.cfg["policy"]["params"]
     ).to(self.device)
     # For KL.
@@ -238,11 +254,11 @@ class Runner:
             )
         with timer.section("model_act"):
           with torch.no_grad():
-            dists, policy_hidden_states = self.policy(
+            dists, _, policy_hidden_states = self.policy(
               obs_dict[self.policy_key],
               policy_hidden_states
             )
-            value, value_hidden_states = self.value(
+            value, _, value_hidden_states = self.value(
               obs_dict[self.value_key],
               value_hidden_states
             )
@@ -384,7 +400,7 @@ class Runner:
               hid_c_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_c)
               if self.cfg["algorithm"]["symmetry"]:
                 symmetry_obs_batch = {
-                  'policy_obs_sym': pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs_sym),
+                  f'{self.policy_key}_sym': pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs_sym),
                 }
               else:
                 symmetry_obs_batch = {}
@@ -396,21 +412,21 @@ class Runner:
               last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
               old_values_batch = self.buffer["values"][:, start:stop]
               with torch.no_grad():
-                old_dist_batch, _ = self.old_policy(
+                old_dist_batch, _, _ = self.old_policy(
                   policy_obs_batch,
                   masks=masks_batch,
                   hidden_states=hid_a_batch
                 )
                 if self.cfg["algorithm"]["symmetry"]:
-                  symmetry_obs_batch['old_dists_sym'], _ = self.old_policy(
-                    symmetry_obs_batch['policy_obs_sym'],
+                  symmetry_obs_batch['old_dists_sym'], _, _ = self.old_policy(
+                    symmetry_obs_batch[f'{self.policy_key}_sym'],
                     masks=masks_batch,
                     hidden_states=hid_a_batch
                   )
 
               yield {
-                "policy_obs": policy_obs_batch,
-                "value_obs": value_obs_batch,
+                self.policy_key: policy_obs_batch,
+                self.value_key: value_obs_batch,
                 "actions": actions_batch,
                 "last_value": last_value_batch,
                 "masks": masks_batch,
@@ -430,8 +446,8 @@ class Runner:
   def _learn(self, last_privileged_obs, last_value_hidden_states, is_first):
       learn_step_agg = agg.Agg()
       for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs, last_value_hidden_states)):
-        values, _ = self.value(
-          batch["value_obs"],
+        values, _, _ = self.value(
+          batch[self.value_key],
           masks=batch["masks"],
           hidden_states=batch["hid_c"]
         )
@@ -470,19 +486,25 @@ class Runner:
         learn_step_agg.add({'value_loss': value_loss.item()})
 
         # Actor loss.
-        dists, _ = self.policy(
-          batch["policy_obs"],
+        dists, policy_recon_dists, _ = self.policy(
+          batch[self.policy_key],
           masks=batch["masks"],
           hidden_states=batch["hid_a"]
         )
         if self.cfg["algorithm"]["symmetry"]:
-          dists_sym, _ = self.policy(
-            batch["policy_obs_sym"],
+          dists_sym, _, _ = self.policy(
+            batch[f'{self.policy_key}_sym'],
             masks=batch["masks"],
             hidden_states=batch["hid_a"]
           )
-        kl_means = {}
+        for name, dist in policy_recon_dists.items():
+          obs_group, obs_name = name.split('/')
+          unpadded_obs = models.unpad_trajectories(batch[obs_group][obs_name], batch["masks"])
+          recon_loss = torch.mean(dist.loss(unpadded_obs.detach()))
+          total_loss += self.cfg["algorithm"]["policy_recon_loss_coef"] * recon_loss
+          learn_step_agg.add({f'policy_recon_{obs_group}_{obs_name}_loss': recon_loss.item()})
 
+        kl_means = {}
         for name, dist in dists.items():
           actor_loss_coef = self.cfg["algorithm"]["actor_loss_coefs"][name]
           actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
@@ -613,7 +635,7 @@ class Runner:
     while True:
       with torch.no_grad():
         start = time.time()
-        dists, policy_hidden_states = self.policy(
+        dists, _, policy_hidden_states = self.policy(
           obs_dict[self.policy_key],
           policy_hidden_states
         )

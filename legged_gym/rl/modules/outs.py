@@ -348,7 +348,7 @@ class Head(torch.nn.Module):
       **kw):
     super().__init__()
     self.input_size = input_size
-    self.output_size = output_space.shape[0]
+    self.output_size = output_space.shape
     self.impl = output_type
     self.kw = kw
     self.init_std = init_std
@@ -358,28 +358,28 @@ class Head(torch.nn.Module):
     self.bins = bins
     self.outscale = outscale
     if self.impl == 'mse':
-      self.projection_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.projection_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       self._init_layer(self.projection_net)
     elif self.impl == 'symexp_twohot':
-      self.projection_net = nn.Linear(input_size, output_space.shape[0] * self.bins, **self.kw)
+      self.projection_net = nn.Linear(input_size, np.prod(self.output_size) * self.bins, **self.kw)
       self._init_layer(self.projection_net)
     elif self.impl == 'bounded_normal':
-      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
-      self.stddev_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
+      self.stddev_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       self._init_layer(self.mean_net)
       self._init_layer(self.stddev_net)
     elif self.impl == 'normal_logstd':
-      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
-      self.stddev_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
+      self.stddev_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       self._init_layer(self.mean_net)
       self._init_layer(self.stddev_net)
     elif self.impl == 'normal_logstdparam':
-      self.mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       self.logstd = torch.nn.parameter.Parameter(
-        torch.full((1, output_space.shape[0]), fill_value=np.log(self.init_std)), requires_grad=True
+        torch.full((1, np.prod(self.output_size)), fill_value=np.log(self.init_std)), requires_grad=True
       )
     elif self.impl in ('normal_logstdparam_unclipped', 'bounded_normal_logstdparam_unclipped'):
-      mean_net = nn.Linear(input_size, output_space.shape[0], **self.kw)
+      mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       if self.impl == 'bounded_normal_logstdparam_unclipped':
         mean_net = nn.Sequential(
           mean_net,
@@ -388,7 +388,7 @@ class Head(torch.nn.Module):
       self.mean_net = mean_net
       self.logstd = torch.nn.parameter.Parameter(
         torch.full(
-          (1, output_space.shape[0]),
+          (1, np.prod(self.output_size)),
           fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
           dtype=torch.float32),
         requires_grad=True
@@ -409,6 +409,7 @@ class Head(torch.nn.Module):
 
   def mse(self, x):
     pred = self.projection_net(x)
+    pred = pred.reshape((*pred.shape[:-1], *self.output_size))
     return MSE(pred)
 
   def symexp_twohot(self, x):
@@ -427,6 +428,8 @@ class Head(torch.nn.Module):
   def bounded_normal(self, x):
     mean = self.mean_net(x)
     stddev = self.stddev_net(x)
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
     lo, hi = self.minstd, self.maxstd
     stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
     output = Normal(torch.tanh(mean), stddev)
@@ -435,6 +438,8 @@ class Head(torch.nn.Module):
   def normal_logstd(self, x):
     mean = self.mean_net(x)
     stddev = torch.exp(self.stddev_net(x))
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
     lo, hi = self.minstd, self.maxstd
     stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
     output = Normal(mean, stddev)
@@ -443,6 +448,8 @@ class Head(torch.nn.Module):
   def normal(self, x):
     mean = self.mean_net(x)
     stddev = self.stddev_net(x)
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
     lo, hi = self.minstd, self.maxstd
     stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
     output = Normal(mean, stddev)
@@ -454,18 +461,25 @@ class Head(torch.nn.Module):
       log_min = np.log(self.minstd)
       log_max = np.log(self.maxstd)
       self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
-    output = Normal(mean, torch.exp(self.logstd))
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    std = torch.exp(self.logstd)
+    std = std.reshape((*std.shape[:-1], *self.output_size))
+    output = Normal(mean, std)
     return output
 
   def normal_logstdparam_unclipped(self, x):
     mean = self.mean_net(x)
     std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    std = std.reshape((*std.shape[:-1], *self.output_size))
     output = Normal(mean, std)
     return output
 
   def bounded_normal_logstdparam_unclipped(self, x):
     mean = self.mean_net(x)
     std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
+    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+    std = std.reshape((*std.shape[:-1], *self.output_size))
     output = Normal(mean, std)
     return output
 
