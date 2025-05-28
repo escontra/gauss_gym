@@ -453,7 +453,6 @@ algorithm:
   gamma: 0.97
   lam: 0.95
   policy_recon_loss_coef: 1.0
-  value_recon_loss_coef: 1.0
   actor_loss_coefs:
     actions: 1.0
     stiffness: 0.25
