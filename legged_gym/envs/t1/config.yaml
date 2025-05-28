@@ -435,15 +435,9 @@ sim:
     default_buffer_size_multiplier: 5.0
     contact_collection: 2
 
-image_feature:
-  class_name: "ImageFeature"
-  learning_rate: 3.e-4
-  params:
-    model_type: "cnn_simple"
-    embedding_dim: 64
 
 policy:
-  class_name: "RecurrentModel"
+  class_name: "RecurrentCNNModel"
   learning_rate: 1.e-5
   desired_kl: 0.01
   kl_key: "actions"
@@ -458,6 +452,10 @@ policy:
       actions: {output_type: normal_logstdparam_unclipped, minstd: 0.04, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
       stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
       damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
+    model_type: "cnn_simple"
+    embedding_dim: 128
+    dino_pretrained: True
+    
 
 value:
   class_name: "RecurrentModel"

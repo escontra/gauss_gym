@@ -1,3 +1,4 @@
+import abc
 import numpy as np
 import functools
 import torch
@@ -78,6 +79,105 @@ def get_mlp_cnn_keys(obs):
   return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs
 
 
+class RecurrentModel(abc.ABC):
+  is_recurrent = True
+
+  @abc.abstractmethod
+  def reset(self, dones: torch.Tensor, hidden_states: Optional[Tuple[torch.Tensor, ...]]=None) -> Tuple[torch.Tensor, ...]:
+    pass
+
+  @abc.abstractmethod
+  def update_normalizer(self, obs: Dict[str, torch.Tensor]):
+    pass
+
+  @abc.abstractmethod
+  def stats(self) -> Dict[str, torch.Tensor]:
+    pass
+
+  @abc.abstractmethod
+  def forward(self,
+              obs: Dict[str, torch.Tensor],
+              hidden_states: Tuple[torch.Tensor, ...],
+              masks: Optional[torch.Tensor]=None,
+              mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+    pass
+
+  @abc.abstractmethod
+  def flatten_parameters(self):
+    pass
+
+
+class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
+  def __init__(
+        self,
+        action_space: Dict[str, space.Space],
+        obs_space: Dict[str, space.Space],
+        head: Dict[str, Any] = None,
+        dont_normalize_keys: List[str] = [],
+        layer_activation: str = "elu",
+        hidden_layer_sizes=[256, 128, 64],
+        recurrent_state_size=256,
+        symlog_inputs=False,
+        normalize_obs=True,
+        max_abs_value=None,
+        model_type: str = 'cnn_simple',
+        embedding_dim: int = 256,
+        dino_pretrained: bool = True,
+        ):
+
+    super().__init__()
+    print(f'{self.__class__.__name__}:')
+    self.obs_space = obs_space
+    self.image_feature_model = ImageFeature(
+      obs_space,
+      model_type=model_type,
+      embedding_dim=embedding_dim,
+      dino_pretrained=dino_pretrained)
+    self.mlp_obs_space = {**obs_space, **self.image_feature_model.modified_obs_space()}
+    self.recurrent_model = RecurrentMLPModel(
+      action_space=action_space,
+      obs_space=self.mlp_obs_space,
+      dont_normalize_keys=dont_normalize_keys + list(self.image_feature_model.obs_space().keys()),
+      head=head,
+      layer_activation=layer_activation,
+      hidden_layer_sizes=hidden_layer_sizes,
+      recurrent_state_size=recurrent_state_size,
+      symlog_inputs=symlog_inputs,
+      normalize_obs=normalize_obs,
+      max_abs_value=max_abs_value)
+    self.cnn_keys = self.image_feature_model.cnn_keys
+
+  def reset(self, dones: torch.Tensor, hidden_states: Optional[Tuple[torch.Tensor, ...]]=None) -> Tuple[torch.Tensor, ...]:
+    return self.recurrent_model.reset(dones, hidden_states)
+
+  def update_normalizer(self, obs: Dict[str, torch.Tensor]):
+    self.recurrent_model.update_normalizer(obs)
+
+  def stats(self):
+    stats = {}
+    for layer in self.recurrent_model.model:
+      if hasattr(layer, 'stats'):
+        stats.update(layer.stats())
+    for name, head in self.recurrent_model.heads.items():
+      if hasattr(head, 'stats'):
+        stats.update({f'{name}_{k}': v for k, v in head.stats().items()})
+    return stats
+
+  def forward(self,
+              obs: Dict[str, torch.Tensor],
+              hidden_states: Tuple[torch.Tensor, ...],
+              masks: Optional[torch.Tensor]=None,
+              mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+    new_obs = {
+       **obs,
+       **self.image_feature_model(obs)
+    }
+    return self.recurrent_model(new_obs, hidden_states, masks, mean_only)
+
+  def flatten_parameters(self):
+    self.recurrent_model.flatten_parameters()
+
+
 class ImageFeature(torch.nn.Module):
   def __init__(self, obs_space: Dict[str, space.Space], model_type: str = 'cnn_simple', embedding_dim: int = 256, dino_pretrained: bool = True):
     super().__init__()
@@ -86,7 +186,8 @@ class ImageFeature(torch.nn.Module):
     _, _, self.cnn_keys, _ = get_mlp_cnn_keys(obs_space)
     self.model_type = model_type
 
-    print('ImageFeature\n\tCNN Keys: ')
+    print(f'{self.__class__.__name__}:')
+    print('\tCNN Keys:')
     for key in self.cnn_keys:
       print(f'\t\t{key}: {obs_space[key].shape}')
 
@@ -107,7 +208,6 @@ class ImageFeature(torch.nn.Module):
         )
       else:
         raise ValueError(f'Unknown model type: {model_type}')
-    self.dummy_param = nn.Parameter(torch.zeros(1))
     self.encoder = nn.ModuleDict(encoder_dict)
 
   def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -122,12 +222,7 @@ class ImageFeature(torch.nn.Module):
       batch_dims = cnn_obs.shape[:-3]
       spatial_dims = cnn_obs.shape[-3:]
       cnn_obs = cnn_obs.reshape(-1, *spatial_dims)  # Shape: [M*N*L*O, C, H, W]
-      feat_list = []
-      for i in range(0, cnn_obs.shape[0], 2048):
-        cnn_feat = self.encoder[key](cnn_obs[i:i+2048])
-        feat_list.append(cnn_feat)
-      cnn_feat = torch.cat(feat_list, dim=0)
-      # cnn_feat = self.encoder[key](cnn_obs)
+      cnn_feat = self.encoder[key](cnn_obs)
       cnn_feat = cnn_feat.reshape(*batch_dims, *cnn_feat.shape[1:])
       out_features[key] = cnn_feat
     return out_features
@@ -142,29 +237,26 @@ class ImageFeature(torch.nn.Module):
     return modified_obs_space
 
 
-IMAGE_EMBEDDING_DIM = 256
-
-
-class RecurrentModel(torch.nn.Module):
-  is_recurrent = True
+class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
   def __init__(
         self,
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
+        head: Dict[str, Any] = None,
         dont_normalize_keys: List[str] = [],
-        layer_activation="elu",
+        layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
         symlog_inputs=False,
         normalize_obs=True,
-        max_abs_value=None,
-        head: Dict[str, Any] = None):
+        max_abs_value=None):
     super().__init__()
     self.obs_space = obs_space
     self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
     self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
-    self.obs_size = self.num_mlp_obs + len(self.cnn_keys) * IMAGE_EMBEDDING_DIM
+    assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
+    self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
     self.normalize_obs = normalize_obs
@@ -172,10 +264,11 @@ class RecurrentModel(torch.nn.Module):
     if self.normalize_obs:
       self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value, dont_normalize_keys=dont_normalize_keys)
 
-    print('RecurrentModel:')
-    print(f'\tMLP Keys: {self.mlp_keys}')
+    print(f'{self.__class__.__name__}:')
+    print('\tMLP Keys:')
+    for key in self.mlp_keys:
+      print(f'\t\t{key}: {obs_space[key].shape}')
     print(f'\tMLP Num Obs: {self.num_mlp_obs}')
-    print(f'\tCNN Keys: {self.cnn_keys}')
     print(f'\tNormalizing obs: {self.normalize_obs}')
 
     layers = []
@@ -187,11 +280,6 @@ class RecurrentModel(torch.nn.Module):
     self.model = torch.nn.Sequential(*layers)
     heads = {k: outs.Head(input_size, v, **head[k]) for k, v in action_space.items()}
     self.heads = nn.ModuleDict(heads)
-    if self.cnn_keys:
-      # self.cnn_c = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], num_classes=IMAGE_EMBEDDING_DIM)
-      self.cnn = resnet.NatureCNN(3, IMAGE_EMBEDDING_DIM)
-    else:
-      self.cnn = nn.Identity()
 
     self.symlog_inputs = symlog_inputs
 
@@ -206,27 +294,7 @@ class RecurrentModel(torch.nn.Module):
         self.obs_normalizer.std,
         max_abs_value=self.max_abs_value,
         dont_normalize_keys=self.dont_normalize_keys)
-    features = process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
-    
-    if self.cnn_keys:
-      cnn_features = []
-      for k in self.cnn_keys:
-        cnn_obs = obs[k]
-        if cnn_obs.shape[-1] in [1, 3]:
-          cnn_obs = permute_cnn_obs(cnn_obs)
-        if cnn_obs.dtype == torch.uint8:
-          cnn_obs = cnn_obs.float() / 255.0
-
-        batch_dims = cnn_obs.shape[:-3]
-        spatial_dims = cnn_obs.shape[-3:]
-        cnn_obs = cnn_obs.reshape(-1, *spatial_dims)  # Shape: [M*N*L*O, C, H, W]
-        cnn_feat = self.cnn(cnn_obs)
-        cnn_feat = cnn_feat.reshape(*batch_dims, *cnn_feat.shape[1:])
-        cnn_features.append(cnn_feat)
-
-      cnn_features = torch.cat(cnn_features, dim=-1)
-      features = torch.cat([features, cnn_features], dim=-1)
-    return features
+    return process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
   
   def update_normalizer(self, obs: Dict[str, torch.Tensor]):
     if self.normalize_obs:
@@ -259,6 +327,9 @@ class RecurrentModel(torch.nn.Module):
         stats.update({f'{name}_{k}': v for k, v in head.stats().items()})
     return stats
 
+  def flatten_parameters(self):
+    self.memory.rnn.flatten_parameters()
+
 
 class Memory(torch.nn.Module):
     def __init__(self, input_size, type='lstm', num_layers=1, hidden_size=256):
@@ -268,6 +339,7 @@ class Memory(torch.nn.Module):
         self.num_layers = num_layers
         self.hidden_size = hidden_size
         self.rnn = self.rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
+        self.rnn.flatten_parameters()
 
         # Learnable initial hidden state (size remains [L, 1, H])
         self.initial_hidden_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
@@ -352,7 +424,7 @@ def permute_cnn_obs(x: torch.Tensor) -> torch.Tensor:
         raise ValueError(f"Unexpected shape: {x.shape}")
 
 
-def get_policy_jitted(policy: RecurrentModel) -> Callable[[Dict[str, torch.Tensor]], torch.Tensor]:
+def get_policy_jitted(policy: RecurrentMLPModel) -> Callable[[Dict[str, torch.Tensor]], torch.Tensor]:
     memory_module = policy.memory
     actor_layers = policy.model[:-1]
     actor_mean_net = policy.model[-1].mean_net

@@ -6,6 +6,7 @@ import time
 import torch
 import torch.utils._pytree as pytree
 import pathlib
+import copy
 
 from legged_gym.rl import experience_buffer, recorder
 from legged_gym.rl.env import vec_env
@@ -53,61 +54,30 @@ class Runner:
     self.value_key = self.cfg["value"]["obs_key"]
 
     # Policy.
-    self.policy_image_feature: models.ImageFeature = getattr(
-      models, self.cfg["image_feature"]["class_name"])(
-        self.env.obs_space()[self.policy_key],
-        **self.cfg["image_feature"]["params"]
-    ).to(self.device)
-    self.policy_image_feature_obs_space = self.policy_image_feature.obs_space()
-    self.policy_obs_space = {**self.env.obs_space()[self.policy_key], **self.policy_image_feature.modified_obs_space()}
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
-      self.policy_obs_space,
-      dont_normalize_keys=list(self.policy_image_feature_obs_space.keys()),
+      self.env.obs_space()[self.policy_key],
       **self.cfg["policy"]["params"]
     ).to(self.device)
     # For KL.
-    self.old_policy_image_feature: models.ImageFeature = getattr(
-      models, self.cfg["image_feature"]["class_name"])(
-        self.env.obs_space()[self.policy_key],
-        **self.cfg["image_feature"]["params"]
-    ).to(self.device)
-    self.old_policy = getattr(models, self.cfg["policy"]["class_name"])(
-      self.env.action_space(),
-      self.policy_obs_space,
-      dont_normalize_keys=list(self.policy_image_feature_obs_space.keys()),
-      **self.cfg["policy"]["params"]
-    ).to(self.device)
+    self.old_policy: models.RecurrentModel = copy.deepcopy(self.policy)
     for param in self.old_policy.parameters():
       param.requires_grad = False
 
     # Value.
-    self.value_image_feature: models.ImageFeature = getattr(
-      models, self.cfg["image_feature"]["class_name"])(
-        self.env.obs_space()[self.value_key],
-        **self.cfg["image_feature"]["params"]
-    ).to(self.device)
-    self.value_image_feature_obs_space = self.value_image_feature.obs_space()
-    self.value_obs_space = {**self.env.obs_space()[self.value_key], **self.value_image_feature.modified_obs_space()}
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
     self.value: models.RecurrentModel = getattr(
       models, self.cfg["value"]["class_name"])(
       {'value': space.Space(np.float32, (1,), -np.inf, np.inf)},
-      self.value_obs_space,
+      self.env.obs_space()[self.value_key],
       **self.cfg["value"]["params"]
     ).to(self.device)
 
     # Optimizers.
-    self.policy_image_feature_optimizer = torch.optim.Adam(
-      self.policy_image_feature.parameters(), lr=self.policy_learning_rate
-    )
     self.policy_optimizer = torch.optim.Adam(
       self.policy.parameters(), lr=self.policy_learning_rate
-    )
-    self.value_image_feature_optimizer = torch.optim.Adam(
-      self.value_image_feature.parameters(), lr=self.value_learning_rate
     )
     self.value_optimizer = torch.optim.Adam(
       self.value.parameters(), lr=self.value_learning_rate
@@ -176,14 +146,10 @@ class Runner:
       model_path, map_location=self.device, weights_only=True
     )
     self.policy.load_state_dict(model_dict["policy"], strict=True)
-    self.policy_image_feature.load_state_dict(model_dict["policy_image_feature"], strict=True)
     self.value.load_state_dict(model_dict["value"], strict=True)
-    self.value_image_feature.load_state_dict(model_dict["value_image_feature"], strict=True)
     try:
       self.policy_optimizer.load_state_dict(model_dict["policy_optimizer"])
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
-      self.policy_image_feature_optimizer.load_state_dict(model_dict["policy_image_feature_optimizer"])
-      self.value_image_feature_optimizer.load_state_dict(model_dict["value_image_feature_optimizer"])
     except Exception as e:
       print(f"Failed to load optimizer: {e}")
 
@@ -213,16 +179,16 @@ class Runner:
     self.should_save = when.Clock(self.cfg["runner"]["save_every"])
     self.recorder = recorder.Recorder(
       log_dir, self.cfg, self.env.deploy_config(),
-      {'obs_space': self.policy_obs_space,
-       'image_obs_space': self.policy_image_feature_obs_space,
+      {'obs_space': self.env.obs_space(),
        'action_space': self.env.action_space()})
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
     self.policy.train()
     self.value.train()
-    self.policy_image_feature.train()
-    self.value_image_feature.train()
+    self.policy.flatten_parameters()
+    self.old_policy.flatten_parameters()
+    self.value.flatten_parameters()
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
@@ -257,7 +223,7 @@ class Runner:
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
           self.recorder.record_statistics(
-            self.recorder.maybe_record(self.env, image_features={k: obs_dict[self.policy_key][k] for k in self.policy_image_feature_obs_space.keys()}),
+            self.recorder.maybe_record(self.env, image_features={k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
         with timer.section("buffer_add_obs"):
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
@@ -272,14 +238,12 @@ class Runner:
             )
         with timer.section("model_act"):
           with torch.no_grad():
-            policy_image_features = self.policy_image_feature(obs_dict[self.policy_key])
-            value_image_features = self.value_image_feature(obs_dict[self.value_key])
             dists, policy_hidden_states = self.policy(
-              {**obs_dict[self.policy_key], **policy_image_features},
+              obs_dict[self.policy_key],
               policy_hidden_states
             )
             value, value_hidden_states = self.value(
-              {**obs_dict[self.value_key], **value_image_features},
+              obs_dict[self.value_key],
               value_hidden_states
             )
             actions = {k: dist.sample() for k, dist in dists.items()}
@@ -345,13 +309,9 @@ class Runner:
         with timer.section("model_save"):
           self.recorder.save( {
               "policy": self.policy.state_dict(),
-              "policy_image_feature": self.policy_image_feature.state_dict(),
               "value": self.value.state_dict(),
-              "value_image_feature": self.value_image_feature.state_dict(),
               "policy_optimizer": self.policy_optimizer.state_dict(),
               "value_optimizer": self.value_optimizer.state_dict(),
-              "policy_image_feature_optimizer": self.policy_image_feature_optimizer.state_dict(),
-              "value_image_feature_optimizer": self.value_image_feature_optimizer.state_dict(),
             },
             it + 1,
           )
@@ -404,7 +364,6 @@ class Runner:
           policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
 
       # Used for computing KL divergence and old log probs.
-      self.old_policy_image_feature.load_state_dict(self.policy_image_feature.state_dict())
       self.old_policy.load_state_dict(self.policy.state_dict())
 
       mini_batch_size = self.env.num_envs // self.cfg["algorithm"]["num_mini_batches"]
@@ -437,16 +396,14 @@ class Runner:
               last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
               old_values_batch = self.buffer["values"][:, start:stop]
               with torch.no_grad():
-                policy_image_features_batch = self.old_policy_image_feature(policy_obs_batch)
                 old_dist_batch, _ = self.old_policy(
-                  {**policy_obs_batch, **policy_image_features_batch},
+                  policy_obs_batch,
                   masks=masks_batch,
                   hidden_states=hid_a_batch
                 )
                 if self.cfg["algorithm"]["symmetry"]:
-                  policy_image_features_batch_sym = self.old_policy_image_feature(symmetry_obs_batch['policy_obs_sym'])
                   symmetry_obs_batch['old_dists_sym'], _ = self.old_policy(
-                    {**symmetry_obs_batch['policy_obs_sym'], **policy_image_features_batch_sym},
+                    symmetry_obs_batch['policy_obs_sym'],
                     masks=masks_batch,
                     hidden_states=hid_a_batch
                   )
@@ -473,9 +430,8 @@ class Runner:
   def _learn(self, last_privileged_obs, last_value_hidden_states, is_first):
       learn_step_agg = agg.Agg()
       for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs, last_value_hidden_states)):
-        value_image_features_batch = self.value_image_feature(batch["value_obs"])
         values, _ = self.value(
-          {**batch["value_obs"], **value_image_features_batch},
+          batch["value_obs"],
           masks=batch["masks"],
           hidden_states=batch["hid_c"]
         )
@@ -514,16 +470,14 @@ class Runner:
         learn_step_agg.add({'value_loss': value_loss.item()})
 
         # Actor loss.
-        policy_image_features_batch = self.policy_image_feature(batch["policy_obs"])
         dists, _ = self.policy(
-          {**batch["policy_obs"], **policy_image_features_batch},
+          batch["policy_obs"],
           masks=batch["masks"],
           hidden_states=batch["hid_a"]
         )
         if self.cfg["algorithm"]["symmetry"]:
-          policy_image_features_batch_sym = self.policy_image_feature(batch["policy_obs_sym"])
           dists_sym, _ = self.policy(
-            {**batch["policy_obs_sym"], **policy_image_features_batch_sym},
+            batch["policy_obs_sym"],
             masks=batch["masks"],
             hidden_states=batch["hid_a"]
           )
@@ -603,19 +557,12 @@ class Runner:
         if not is_first:
           self.policy_optimizer.zero_grad()
           self.value_optimizer.zero_grad()
-          self.policy_image_feature_optimizer.zero_grad()
-          self.value_image_feature_optimizer.zero_grad()
           total_loss.backward()
           torch.nn.utils.clip_grad_norm_(
-            list(self.policy.parameters()) +
-            list(self.value.parameters()) +
-            list(self.policy_image_feature.parameters()) +
-            list(self.value_image_feature.parameters()),
+            list(self.policy.parameters()) + list(self.value.parameters()),
             1.0)
           self.policy_optimizer.step()
           self.value_optimizer.step()
-          self.policy_image_feature_optimizer.step()
-          self.value_image_feature_optimizer.step()
 
           if self.cfg["policy"]["desired_kl"] > 0.0:
             if kl_means[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
@@ -666,10 +613,8 @@ class Runner:
     while True:
       with torch.no_grad():
         start = time.time()
-        input()
-        policy_image_features = self.policy_image_feature(obs_dict[self.policy_key])
         dists, policy_hidden_states = self.policy(
-          {**obs_dict[self.policy_key], **policy_image_features},
+          obs_dict[self.policy_key],
           policy_hidden_states
         )
         actions = {k: dist.pred() for k, dist in dists.items()}
