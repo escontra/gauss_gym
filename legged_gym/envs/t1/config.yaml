@@ -53,6 +53,7 @@ observations:
       BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
       GAIT_PROGRESS,
+      CAMERA_IMAGE,
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -65,6 +66,7 @@ symmetries:
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS,
       GAIT_PROGRESS,
+      CAMERA_IMAGE,
     ]
   actions:
     symmetries: [
@@ -382,11 +384,14 @@ rewards:
   feet_roll:
     scale: -0.1
   feet_distance:
-    scale: 1.5
+    scale: 10.0
     feet_distance_ref: 0.2
   feet_swing:
     scale: 3.
     swing_period: 0.2
+  stumble:
+    scale: -1.0
+    multiplier: 5.0
 
 commands:
   still_proportion: 0.05
@@ -437,13 +442,14 @@ sim:
 
 
 policy:
-  class_name: "RecurrentCNNModel"
+  class_name: RecurrentCNNModel
   learning_rate: 1.e-5
   desired_kl: 0.01
-  kl_key: "actions"
-  obs_key: "policy"
+  kl_key: actions
+  obs_key: policy
+  reconstruct_observations: null # e.g. ["critic/RAY_CAST", "policy/DOF_VEL"].
   params:
-    layer_activation: "silu"
+    layer_activation: silu
     recurrent_state_size: 256
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
@@ -452,17 +458,15 @@ policy:
       actions: {output_type: normal_logstdparam_unclipped, minstd: 0.04, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
       stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
       damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
-    model_type: "cnn_simple"
-    embedding_dim: 128
-    dino_pretrained: True
-    
+    model_type: cnn_simple
+    embedding_dim: 16
 
 value:
-  class_name: "RecurrentModel"
+  class_name: RecurrentMLPModel
   learning_rate: 3.e-4
-  obs_key: "critic"
+  obs_key: critic
   params:
-    layer_activation: "silu"
+    layer_activation: silu
     recurrent_state_size: 512
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
@@ -473,6 +477,7 @@ value:
 algorithm:
   gamma: 0.97
   lam: 0.95
+  policy_recon_loss_coef: 0.1
   actor_loss_coefs:
     actions: 1.0
     stiffness: 0.25
@@ -499,7 +504,7 @@ runner:
   record_video: True
   record_distance: [-1.8, -1.8, 0.5]
   num_steps_per_env: 24
-  class_name: "Runner"
+  class_name: Runner
   use_wandb: True
   description: ""
   log_every: 30.

@@ -497,12 +497,13 @@ class Runner:
             masks=batch["masks"],
             hidden_states=batch["hid_a"]
           )
-        for name, dist in policy_recon_dists.items():
-          obs_group, obs_name = name.split('/')
-          unpadded_obs = models.unpad_trajectories(batch[obs_group][obs_name], batch["masks"])
-          recon_loss = torch.mean(dist.loss(unpadded_obs.detach()))
-          total_loss += self.cfg["algorithm"]["policy_recon_loss_coef"] * recon_loss
-          learn_step_agg.add({f'policy_recon_{obs_group}_{obs_name}_loss': recon_loss.item()})
+        if policy_recon_dists is not None:
+          for name, dist in policy_recon_dists.items():
+            obs_group, obs_name = name.split('/')
+            unpadded_obs = models.unpad_trajectories(batch[obs_group][obs_name], batch["masks"])
+            recon_loss = torch.mean(dist.loss(unpadded_obs.detach()))
+            total_loss += self.cfg["algorithm"]["policy_recon_loss_coef"] * recon_loss
+            learn_step_agg.add({f'policy_recon_{obs_group}_{obs_name}_loss': recon_loss.item()})
 
         kl_means = {}
         for name, dist in dists.items():
