@@ -255,6 +255,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         head: Dict[str, Any],
         reconstruct_space: Optional[Dict[str, space.Space]] = None,
         reconstruct_head: Optional[Dict[str, Any]] = None,
+        detach_rnn_state_after_recon: bool = False,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -266,6 +267,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.obs_space = obs_space
     self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
+    self.detach_rnn_state_after_recon = detach_rnn_state_after_recon
     self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
     assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
@@ -326,11 +328,20 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
               masks: Optional[torch.Tensor]=None,
               mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
+
+    # RNN.
     rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks)
+
+    # Reconstruction.
     if masks is not None and self.recon_heads is not None:
       recon_dists = {k: self.recon_heads[k](rnn_state.squeeze(0)) for k in self.recon_heads}
     else:
       recon_dists = None
+
+    if self.detach_rnn_state_after_recon:
+      rnn_state = rnn_state.detach()
+
+    # Model.
     model_state = self.model(rnn_state.squeeze(0))
     if mean_only:
         outs = []

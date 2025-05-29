@@ -1,11 +1,10 @@
 import numpy as np
 import os
-import pickle
 import pathlib
 import dataclasses
 from collections import defaultdict
 from isaacgym import gymapi
-from typing import Union, Dict
+from typing import Union, Dict, List
 import torch
 import warp as wp
 
@@ -55,12 +54,20 @@ class Mesh(RawMesh):
   # This tensor indicates the first index of each mesh's unpadded poses.
   valid_pose_start_idxs: np.ndarray
 
+def find_valid_scene_directories(scene_paths: List[str]) -> List[str]:
+  valid_scenes = []
+  for scene_path in scene_paths:
+      for root, dirs, _ in os.walk(scene_path):
+          if "splatfacto" in dirs and "meshes" in dirs:
+              valid_scenes.append(root)
+  return valid_scenes
+
 
 class GaussianTerrain:
   def __init__(self, cfg: Dict, num_robots) -> None:
     self.cfg = cfg
     self.num_robots = num_robots
-    self.scene_paths = self.cfg["terrain"]["scenes"]
+    self.scene_paths = find_valid_scene_directories(self.cfg["terrain"]["scenes"])
 
     self._mesh_dict = {}
     self._load_meshes()
