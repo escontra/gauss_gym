@@ -8,7 +8,7 @@ from typing import Dict, Any
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
 
-from legged_gym.utils import config, timer, when, space
+from legged_gym.utils import config, timer, when
 
 
 @timer.section('gif')

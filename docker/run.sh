@@ -2,9 +2,7 @@
 set -e
 set -u
 
-# Set which GPU to use (0 is default, change this number to use a different GPU)
 CONTAINER_NAME="gauss_gym_container"
-GPU_ID=5
 
 # Check if the container exists
 if docker container inspect "$CONTAINER_NAME" > /dev/null 2>&1; then
@@ -21,7 +19,7 @@ if docker container inspect "$CONTAINER_NAME" > /dev/null 2>&1; then
 fi
 
 # If we reach here, the container was not running (either never existed or was stopped and removed)
-echo "Creating and running new container $CONTAINER_NAME with Xvfb on GPU $GPU_ID"
+echo "Creating and running new container $CONTAINER_NAME with Xvfb."
 
 # Conditionally add WANDB_API_KEY if it's set in the environment
 WANDB_ARG=""
@@ -33,8 +31,7 @@ fi
 docker run -it \
 --network=host \
 --gpus=all \
--v $(pwd)/..:/opt/gauss-gym \
--e NVIDIA_VISIBLE_DEVICES=$GPU_ID \
+-v $(pwd)/..:/opt/gauss-gym/home \
 $WANDB_ARG \
 --name=$CONTAINER_NAME \
 --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \

@@ -1,7 +1,5 @@
 FROM nvcr.io/nvidia/pytorch:23.04-py3
-ENV DEBIAN_FRONTEND=noninteractive 
 
-# Add these ARGs near the top of your Dockerfile
 ARG USER_ID
 ARG GROUP_ID
 ARG USERNAME # Or choose another username
@@ -9,6 +7,7 @@ ARG SPECIFIC_CUDA_ARCH
 # Normally the output of: `nvidia-smi --query-gpu=gpu_name,compute_cap --format=csv`.
 RUN echo "SPECIFIC_CUDA_ARCH: ${SPECIFIC_CUDA_ARCH}"
 ENV TORCH_CUDA_ARCH_LIST="${SPECIFIC_CUDA_ARCH}"
+ENV DEBIAN_FRONTEND=noninteractive 
 
 # System dependencies.
 RUN apt-get update \
@@ -21,20 +20,20 @@ RUN apt-get update \
  zip \
  unzip \
  make \
-#  gcc-8 \
-#  g++-8 \
-#  vulkan-utils \
+ gcc-8 \
+ g++-8 \
+ vulkan-utils \
  mesa-vulkan-drivers \
  pigz \
  git \
  libegl1 \
  xvfb \
  git-lfs \
- tmux
+ lsb-release
 
-# Force gcc 8 to avoid CUDA 10 build issues on newer base OS.
-# RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
-# RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 8
+# Force gcc 8 to avoid CUDA 10 build issues on newer base OS
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
+RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 8
 
 # WAR for eglReleaseThread shutdown crash in libEGL_mesa.so.0 (ensure it's never detected/loaded).
 # Can't remove package libegl-mesa0 directly (because of libegl1 which we need).
@@ -65,12 +64,9 @@ USER $USERNAME
 
 # Copy gym repo to docker.
 COPY --chown=${USERNAME} . .
+ENV PATH="/home/${USERNAME}/.local/bin:$PATH"
 
 # Install gym modules.
-ENV PATH="/home/${USERNAME}/.local/bin:$PATH"
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-# RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
-RUN pip install jaxtyping
 RUN cd isaacgym/python && pip install -q -e .
 RUN pip install -q -e .
 

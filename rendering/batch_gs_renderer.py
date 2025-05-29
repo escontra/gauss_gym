@@ -6,8 +6,6 @@ from plyfile import PlyData
 from gsplat.rendering import rasterization
 from torch import Tensor
 from jaxtyping import Float
-import tqdm
-import argparse
 import json
 
 

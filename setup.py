@@ -12,10 +12,11 @@ setup(
     install_requires=[
         "isaacgym",
         "ruamel.yaml",
-        "tqdm",
         "wandb==0.19.8",
         "plyfile",
         "warp-lang",
         "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git",
+        "tensorflow-cpu",
+        "jaxtyping",
     ],
 )
