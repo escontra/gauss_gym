@@ -186,13 +186,14 @@ class DictNormalizer(nn.Module):
     self.register_buffer('count', torch.zeros(size=(), dtype=torch.int32))
     self.obs_keys = [k for k in obs_space.keys() if k not in dont_normalize_keys]
     self.dont_normalize_keys = dont_normalize_keys
+    print('\tDictNormalizer:')
     for k, v in obs_space.items():
+      if k in self.dont_normalize_keys:
+        continue
+      print(f'\t\t{k}: {v.shape}')
       self.register_buffer(f'mean_{k}', torch.zeros(v.shape, dtype=torch.float32))
       self.register_buffer(f'std_{k}', torch.ones(v.shape, dtype=torch.float32))
       self.register_buffer(f'summed_variance_{k}', torch.zeros(v.shape, dtype=torch.float32))
-    # self.mean = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
-    # self.std = nn.ParameterDict({k: nn.Parameter(torch.ones(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
-    # self.summed_variance = nn.ParameterDict({k: nn.Parameter(torch.zeros(v[0], dtype=torch.float32), requires_grad=False) for k, v in obs_space.items()})
 
   @property
   def mean(self):

@@ -121,6 +121,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         head: Dict[str, Any],
         reconstruct_space: Optional[Dict[str, space.Space]] = None,
         reconstruct_head: Optional[Dict[str, Any]] = None,
+        detach_rnn_state_after_recon: bool = False,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -149,6 +150,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       head=head,
       reconstruct_space=reconstruct_space,
       reconstruct_head=reconstruct_head,
+      detach_rnn_state_after_recon=detach_rnn_state_after_recon,
       layer_activation=layer_activation,
       hidden_layer_sizes=hidden_layer_sizes,
       recurrent_state_size=recurrent_state_size,
@@ -177,12 +179,13 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
               obs: Dict[str, torch.Tensor],
               hidden_states: Tuple[torch.Tensor, ...],
               masks: Optional[torch.Tensor]=None,
-              mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              mean_only: bool=False,
+              provide_recon_dists: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     new_obs = {
        **obs,
        **self.image_feature_model(obs)
     }
-    return self.recurrent_model(new_obs, hidden_states, masks, mean_only)
+    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, provide_recon_dists)
 
   def flatten_parameters(self):
     self.recurrent_model.flatten_parameters()
@@ -275,10 +278,9 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
     self.normalize_obs = normalize_obs
     self.max_abs_value = max_abs_value
+    print(f'{self.__class__.__name__}:')
     if self.normalize_obs:
       self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value, dont_normalize_keys=dont_normalize_keys)
-
-    print(f'{self.__class__.__name__}:')
     print('\tMLP Keys:')
     for key in self.mlp_keys:
       print(f'\t\t{key}: {obs_space[key].shape}')
@@ -298,6 +300,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.model = torch.nn.Sequential(*layers)
     heads = {k: outs.Head(input_size, v, **head[k]) for k, v in action_space.items()}
     self.heads = nn.ModuleDict(heads)
+    print('\tOutput Heads')
+    for k, v in heads.items():
+      print(f'\t\t{k}: {v.output_size} {v.impl}')
+
     self.recon_heads = None
     if reconstruct_space is not None:
       recon_heads = {k: outs.Head(self.recurrent_state_size, v, **reconstruct_head[k]) for k, v in reconstruct_space.items()}
@@ -326,14 +332,15 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
               obs: Dict[str, torch.Tensor],
               hidden_states: Tuple[torch.Tensor, ...],
               masks: Optional[torch.Tensor]=None,
-              mean_only: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              mean_only: bool=False,
+              provide_recon_dists: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
 
     # RNN.
     rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks)
 
     # Reconstruction.
-    if masks is not None and self.recon_heads is not None:
+    if (provide_recon_dists or masks is not None) and self.recon_heads is not None:
       recon_dists = {k: self.recon_heads[k](rnn_state.squeeze(0)) for k in self.recon_heads}
     else:
       recon_dists = None

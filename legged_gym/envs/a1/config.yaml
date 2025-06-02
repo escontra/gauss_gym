@@ -61,7 +61,7 @@ symmetries:
   policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST
     ]
   actions:
     symmetries: [
@@ -104,7 +104,7 @@ terrain:
 
 
 init_state:
-  pos: [0.0, 0.0, 0.5]
+  pos: [0.0, 0.0, 0.55]
   rot: [0.0, 0.0, 0.0, 1.0]
   lin_vel: [0.0, 0.0, 0.0]
   ang_vel: [0.0, 0.0, 0.0]
@@ -344,14 +344,14 @@ rewards:
   a1_pose:
     scale: 0.25
   stumble:
-    scale: -1.0
+    scale: -3.0
     multiplier: 5.0
 
 commands:
   still_proportion: 0.05
   command_gains: False
-  command_gains_stiffness_range: [0.4, 1.6]
-  command_gains_damping_range: [0.4, 1.6]
+  command_gains_stiffness_range: [0.6, 1.4]
+  command_gains_damping_range: [0.6, 1.4]
   heading_command: True
   num_commands: 4
   resampling_time: 4. # time before command are changed[s]
@@ -423,7 +423,11 @@ policy:
   desired_kl: 0.01
   kl_key: actions
   obs_key: policy
-  reconstruct_observations: null # e.g. ["critic/RAY_CAST", "policy/DOF_VEL"].
+  reconstruct_observations: null # null means all observations are used for reconstruction
+  # If you want to provide observations for reconstruction, you can use the following:
+  # reconstruct_observations: [
+  #   "critic/RAY_CAST", "critic/DOF_VEL", "critic/DOF_POS", "critic/BASE_ANG_VEL",
+  #   "critic/BASE_LIN_VEL", "critic/PROJECTED_GRAVITY", "critic/ACTIONS"]
   params:
     layer_activation: "silu"
     recurrent_state_size: 256
@@ -435,7 +439,7 @@ policy:
       stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
       damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
     model_type: cnn_simple
-    embedding_dim: 16
+    embedding_dim: 32
     
 
 value:
@@ -457,12 +461,12 @@ algorithm:
   policy_recon_loss_coef: 0.1
   actor_loss_coefs:
     actions: 1.0
-    stiffness: 0.25
-    damping: 0.25
+    stiffness: 0.1
+    damping: 0.1
   entropy_coefs:
     actions: -0.01
-    stiffness: -0.001
-    damping: -0.001
+    stiffness: -0.01
+    damping: -0.01
   symmetry: True
   symmetry_coefs:
     actions: 3.0
