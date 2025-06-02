@@ -47,6 +47,13 @@ def identity_symmetry(env, obs):
 def t1_joint_symmetry(env, joint_val, use_multipliers=True):
   joint_map = {'Left': 'Right', 'Right': 'Left'}
   multipliers = {
+    'AAHead_yaw': -1.0,
+    'Head_pitch': 1.0,
+    'Waist': -1.0,
+    'Elbow_Yaw': -1.0,
+    'Elbow_Pitch': 1.0,
+    'Shoulder_Pitch': 1.0,
+    'Shoulder_Roll': -1.0,
     'Ankle_Pitch': 1.0,
     'Ankle_Roll': -1.0,
     'Hip_Pitch': 1.0,
@@ -55,9 +62,13 @@ def t1_joint_symmetry(env, joint_val, use_multipliers=True):
     'Knee_Pitch': 1.0}
   joint_val_sym = torch.zeros_like(joint_val)
   for dof_name in env.dof_names:
-    name_parts = dof_name.split('_')
-    new_name = dof_name.replace(name_parts[0], joint_map[name_parts[0]])
-    multiplier = multipliers['_'.join(name_parts[1:])] if use_multipliers else 1.0
+    if dof_name.startswith('Left') or dof_name.startswith('Right'):
+      name_parts = dof_name.split('_')
+      new_name = dof_name.replace(name_parts[0], joint_map[name_parts[0]])
+      multiplier = multipliers['_'.join(name_parts[1:])] if use_multipliers else 1.0
+    else:
+      new_name = dof_name
+      multiplier = multipliers[dof_name] if use_multipliers else 1.0
     joint_val_sym[..., env.dof_names.index(dof_name)] = multiplier * joint_val[..., env.dof_names.index(new_name)]
   return joint_val_sym
 
