@@ -383,7 +383,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AR1.STL" />
+          filename="../meshes/AR1.STL" />
       </geometry>
       <material
         name="">

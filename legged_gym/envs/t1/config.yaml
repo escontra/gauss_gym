@@ -96,6 +96,15 @@ init_state:
   default_joint_angles: { # = target angles [rad] when action = 0.0
     'AAHead_yaw': 0.,
     'Head_pitch': 0.,
+    'Left_Shoulder_Pitch': -0.5,
+    'Left_Shoulder_Roll': -1.0,
+    'Left_Elbow_Pitch': 1.2,
+    'Left_Elbow_Yaw': -0.9,
+    'Right_Shoulder_Pitch': -0.5,
+    'Right_Shoulder_Roll': 1.0,
+    'Right_Elbow_Pitch': 1.2,
+    'Right_Elbow_Yaw': 0.9,
+    'Waist': 0.0,
     'Left_Hip_Pitch': -0.2,
     'Left_Hip_Roll': 0.,
     'Left_Hip_Yaw': 0.,
@@ -114,12 +123,18 @@ control:
   control_type: "P"
   stiffness: {
     'Head': 50.0,
+    'Elbow': 50.0,
+    'Shoulder': 50.0,
+    'Waist': 100.0,
     'Hip': 200.0, 
     'Knee': 200.0,
     'Ankle': 50.0
   }  # [N*m/rad]
   damping: {
     'Head': 1.0,
+    'Elbow': 2.0,
+    'Shoulder': 2.0,
+    'Waist': 3.0,
     'Hip': 5.0, 
     'Knee': 5.0,
     'Ankle': 2.0
