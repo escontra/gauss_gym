@@ -26,7 +26,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Trunk.STL" />
+          filename="../meshes/Trunk.STL" />
       </geometry>
       <material
         name="">
@@ -65,7 +65,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/H1.STL" />
+          filename="../meshes/H1.STL" />
       </geometry>
       <material
         name="">
@@ -114,7 +114,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/H2.STL" />
+          filename="../meshes/H2.STL" />
       </geometry>
       <material
         name="">
@@ -171,7 +171,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AL1.STL" />
+          filename="../meshes/AL1.STL" />
       </geometry>
       <material
         name="">
@@ -220,7 +220,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AL2.STL" />
+          filename="../meshes/AL2.STL" />
       </geometry>
       <material
         name="">
@@ -269,7 +269,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AL3.STL" />
+          filename="../meshes/AL3.STL" />
       </geometry>
       <material
         name="">
@@ -326,7 +326,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/left_hand_link.STL" />
+          filename="../meshes/left_hand_link.STL" />
       </geometry>
       <material
         name="">
@@ -383,7 +383,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AR1.STL" />
+          filename="../meshes/AR1.STL" />
       </geometry>
       <material
         name="">
@@ -432,7 +432,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AR2.STL" />
+          filename="../meshes/AR2.STL" />
       </geometry>
       <material
         name="">
@@ -481,7 +481,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/AR3.STL" />
+          filename="../meshes/AR3.STL" />
       </geometry>
       <material
         name="">
@@ -538,7 +538,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/right_hand_link.STL" />
+          filename="../meshes/right_hand_link.STL" />
       </geometry>
       <material
         name="">
@@ -595,7 +595,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Waist.STL" />
+          filename="../meshes/Waist.STL" />
       </geometry>
       <material
         name="">
@@ -644,7 +644,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Pitch_Left.STL" />
+          filename="../meshes/Hip_Pitch_Left.STL" />
       </geometry>
       <material
         name="">
@@ -693,7 +693,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Roll_Left.STL" />
+          filename="../meshes/Hip_Roll_Left.STL" />
       </geometry>
       <material
         name="">
@@ -742,7 +742,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Yaw_Left.STL" />
+          filename="../meshes/Hip_Yaw_Left.STL" />
       </geometry>
       <material
         name="">
@@ -799,7 +799,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Shank_Left.STL" />
+          filename="../meshes/Shank_Left.STL" />
       </geometry>
       <material
         name="">
@@ -856,7 +856,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Ankle_Cross_Left.STL" />
+          filename="../meshes/Ankle_Cross_Left.STL" />
       </geometry>
       <material
         name="">
@@ -905,7 +905,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/left_foot_link.STL" />
+          filename="../meshes/left_foot_link.STL" />
       </geometry>
       <material
         name="">
@@ -962,7 +962,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Pitch_Right.STL" />
+          filename="../meshes/Hip_Pitch_Right.STL" />
       </geometry>
       <material
         name="">
@@ -1011,7 +1011,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Roll_Right.STL" />
+          filename="../meshes/Hip_Roll_Right.STL" />
       </geometry>
       <material
         name="">
@@ -1060,7 +1060,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Hip_Yaw_Right.STL" />
+          filename="../meshes/Hip_Yaw_Right.STL" />
       </geometry>
       <material
         name="">
@@ -1117,7 +1117,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Shank_Right.STL" />
+          filename="../meshes/Shank_Right.STL" />
       </geometry>
       <material
         name="">
@@ -1174,7 +1174,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/Ankle_Cross_Right.STL" />
+          filename="../meshes/Ankle_Cross_Right.STL" />
       </geometry>
       <material
         name="">
@@ -1223,7 +1223,7 @@ xyz="-0.000108 -0.109573 0.000591"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="meshes/right_foot_link.STL" />
+          filename="../meshes/right_foot_link.STL" />
       </geometry>
       <material
         name="">
