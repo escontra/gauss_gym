@@ -117,10 +117,10 @@ class Recorder:
       image = image.reshape(image.shape[0], -1, 4)[..., :3]
       for _, im in image_features.items():
         im = im[env_id]
-        h, w = im.shape[:2]
+        h, w = im.shape[1:]
         target_h = image.shape[0]
         target_w = int(w * (target_h / h))
-        im = im.permute(2, 0, 1).float() / 255.0
+        im = im.float() / 255.0
         im = F.interpolate(im.unsqueeze(0), size=(target_h, target_w), mode='bilinear', align_corners=False).squeeze(0)
         im = im.permute(1, 2, 0)
         im = (im * 255.0).clamp(0, 255).to(torch.uint8).cpu().numpy()

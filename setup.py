@@ -18,5 +18,6 @@ setup(
         "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git",
         "tensorflow-cpu",
         "jaxtyping",
+        "matplotlib",
     ],
 )

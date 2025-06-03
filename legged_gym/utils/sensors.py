@@ -728,7 +728,7 @@ class GaussianSplattingRenderer():
         self.fl_y = self.env.cfg["env"]["camera_params"]["fl_y"] / downscale_factor
         self.pp_x = self.env.cfg["env"]["camera_params"]["pp_x"] / downscale_factor
         self.pp_y = self.env.cfg["env"]["camera_params"]["pp_y"] / downscale_factor
-        self.renders = torch.zeros(self.num_envs, self.cam_height, self.cam_width, 3, device=self.device, dtype=torch.uint8)
+        self.renders = torch.zeros(self.num_envs, 3, self.cam_height, self.cam_width, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
 
@@ -789,7 +789,7 @@ class GaussianSplattingRenderer():
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
         )
-        self.renders[env_ids] = torch.cat(list(renders.values()), dim=0)
+        self.renders[env_ids] = torch.cat(list(renders.values()), dim=0).permute(0, 3, 1, 2)
 
     def get_data(self):
         return self.renders

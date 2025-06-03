@@ -96,14 +96,14 @@ init_state:
   default_joint_angles: { # = target angles [rad] when action = 0.0
     'AAHead_yaw': 0.,
     'Head_pitch': 0.,
-    'Left_Shoulder_Pitch': -0.5,
-    'Left_Shoulder_Roll': -1.0,
-    'Left_Elbow_Pitch': 1.2,
-    'Left_Elbow_Yaw': -0.9,
-    'Right_Shoulder_Pitch': -0.5,
-    'Right_Shoulder_Roll': 1.0,
-    'Right_Elbow_Pitch': 1.2,
-    'Right_Elbow_Yaw': 0.9,
+    'Left_Shoulder_Pitch': 0.0,
+    'Left_Shoulder_Roll': 0.0,
+    'Left_Elbow_Pitch': 0.0,
+    'Left_Elbow_Yaw': 0.0,
+    'Right_Shoulder_Pitch': 0.0,
+    'Right_Shoulder_Roll': 0.0,
+    'Right_Elbow_Pitch': 0.0,
+    'Right_Elbow_Yaw': 0.0,
     'Waist': 0.0,
     'Left_Hip_Pitch': -0.2,
     'Left_Hip_Roll': 0.,
@@ -145,8 +145,8 @@ control:
   motor_clip_torque: False
 
 asset:
-  file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.urdf"
-  mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_locomotion.xml"
+  file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_serial.urdf"
+  mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/t1/urdf/T1_serial.xml"
   name: "t1"
   base_link_name: "Trunk"
   camera_link_name: "H2"

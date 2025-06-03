@@ -215,10 +215,20 @@ class ImageFeature(torch.nn.Module):
         dino = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
         encoder_dict[key] = nn.Sequential(
           transforms.Normalize(
-              mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
+              mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, inplace=True),
           dino,
           nn.Linear(dino.embed_dim, embedding_dim)
         )
+      elif self.model_type.startswith('timm'):
+        import timm
+        timm_model = timm.create_model(self.model_type[5:], pretrained=dino_pretrained, num_classes=0)
+        cfg = timm_model.default_cfg
+        encoder_dict[key] = nn.Sequential(
+          transforms.Normalize(mean=cfg['mean'], std=cfg['std'], inplace=True),
+          timm_model,
+          nn.Linear(timm_model.num_features, embedding_dim)
+        )
+
       else:
         raise ValueError(f'Unknown model type: {model_type}')
     self.encoder = nn.ModuleDict(encoder_dict)
@@ -227,11 +237,8 @@ class ImageFeature(torch.nn.Module):
     out_features = {}
     for key in self.cnn_keys:
       cnn_obs = obs[key]
-      if cnn_obs.shape[-1] in [1, 3]:
-        cnn_obs = permute_cnn_obs(cnn_obs)
       if cnn_obs.dtype == torch.uint8:
         cnn_obs = cnn_obs.float() / 255.0
-
       batch_dims = cnn_obs.shape[:-3]
       spatial_dims = cnn_obs.shape[-3:]
       cnn_obs = cnn_obs.reshape(-1, *spatial_dims)  # Shape: [M*N*L*O, C, H, W]
