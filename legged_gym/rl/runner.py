@@ -8,40 +8,10 @@ import torch.utils._pytree as pytree
 import pathlib
 import copy
 
-from legged_gym.rl import experience_buffer, recorder
+from legged_gym.rl import experience_buffer, loss, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
-
-
-def discount_values(rewards, dones, values, last_values, gamma, lam):
-  advantages = torch.zeros_like(rewards)
-  last_advantage = torch.zeros_like(advantages[-1, :])
-  for t in reversed(range(rewards.shape[0])):
-    next_nonterminal = 1.0 - dones[t, :].float()
-    if t == rewards.shape[0] - 1:
-      next_values = last_values
-    else:
-      next_values = values[t + 1, :]
-    delta = (
-      rewards[t, :] + gamma * next_nonterminal * next_values - values[t, :]
-    )
-    advantages[t, :] = last_advantage = (
-      delta + gamma * lam * next_nonterminal * last_advantage
-    )
-  return advantages
-
-
-def surrogate_loss(
-  old_actions_log_prob, actions_log_prob, advantages, e_clip=0.2
-):
-  ratio = torch.exp(actions_log_prob - old_actions_log_prob)
-  surrogate = -advantages * ratio
-  surrogate_clipped = -advantages * torch.clamp(
-    ratio, 1.0 - e_clip, 1.0 + e_clip
-  )
-  surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
-  return surrogate_loss
 
 
 class Runner:
@@ -51,7 +21,9 @@ class Runner:
     self.cfg = cfg
     self._set_seed()
     self.policy_key = self.cfg["policy"]["obs_key"]
+    self.policy_obs_space = self.env.obs_space()[self.policy_key]
     self.value_key = self.cfg["value"]["obs_key"]
+    self.value_obs_space = self.env.obs_space()[self.value_key]
 
     # Policy.
     reconstruct_space = None
@@ -72,9 +44,7 @@ class Runner:
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
-      self.env.obs_space()[self.policy_key],
-      reconstruct_space=reconstruct_space,
-      reconstruct_head=reconstruct_head,
+      self.policy_obs_space,
       **self.cfg["policy"]["params"]
     ).to(self.device)
     # For KL.
@@ -87,7 +57,7 @@ class Runner:
     self.value: models.RecurrentModel = getattr(
       models, self.cfg["value"]["class_name"])(
       {'value': space.Space(np.float32, (1,), -np.inf, np.inf)},
-      self.env.obs_space()[self.value_key],
+      self.value_obs_space,
       **self.cfg["value"]["params"]
     ).to(self.device)
 
@@ -218,17 +188,17 @@ class Runner:
       self.env.num_envs,
       self.device,
     )
-    self.buffer.add_buffer(self.policy_key, self.env.obs_space()[self.policy_key])
-    self.buffer.add_buffer(self.value_key, self.env.obs_space()[self.value_key])
+    self.buffer.add_buffer(self.policy_key, self.policy_obs_space)
+    self.buffer.add_buffer(self.value_key, self.value_obs_space)
     self.buffer.add_buffer("actions", self.env.action_space())
     self.buffer.add_buffer("rewards", ())
     self.buffer.add_buffer("values", (1,))
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
     if self.policy.is_recurrent:
-      self.buffer.add_hidden_state_buffers("policy_hidden_states", (policy_hidden_states,))
+      self.buffer.add_hidden_state_buffers(f"{self.policy_key}_hidden_states", (policy_hidden_states,))
     if self.value.is_recurrent:
-      self.buffer.add_hidden_state_buffers("value_hidden_states", (value_hidden_states,))
+      self.buffer.add_hidden_state_buffers(f"{self.value_key}_hidden_states", (value_hidden_states,))
 
     for it in range(num_learning_iterations):
       start = time.time()
@@ -242,11 +212,11 @@ class Runner:
           self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
           if self.policy.is_recurrent:
             self.buffer.update_hidden_state_buffers(
-              "policy_hidden_states", n, (policy_hidden_states,)
+              f"{self.policy_key}_hidden_states", n, (policy_hidden_states,)
             )
           if self.value.is_recurrent:
             self.buffer.update_hidden_state_buffers(
-              "value_hidden_states", n, (value_hidden_states,)
+              f"{self.value_key}_hidden_states", n, (value_hidden_states,)
             )
         with timer.section("model_act"):
           with torch.no_grad():
@@ -334,262 +304,80 @@ class Runner:
       )
       start = time.time()
 
-  def reccurent_mini_batch_generator(self, last_value_obs, last_value_hidden_states):
-      policy_obs = self.buffer[self.policy_key]
-      value_obs = self.buffer[self.value_key]
-      policy_obs_split = pytree.tree_map(
-        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-        policy_obs,
-      )
-      policy_obs = pytree.tree_map(
-        lambda x: x[0].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
-      )
-      traj_masks = pytree.tree_map(
-        lambda x: x[1].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
-      )
-      traj_masks = list(traj_masks.values())[0]
-      last_was_done = torch.zeros_like(self.buffer["dones"], dtype=torch.bool)
-      last_was_done[1:] = self.buffer["dones"][:-1]
-      last_was_done[0] = True
-      hid_a = [
-        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
-        for saved_hidden_states in self.buffer["policy_hidden_states"]
-      ]
-      value_obs_split = pytree.tree_map(
-        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-        value_obs,
-      )
-      value_obs = pytree.tree_map(
-        lambda x: x[0],
-        value_obs_split,
-        is_leaf=lambda x: isinstance(x, tuple),
-      )
-      hid_c = [
-        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
-        for saved_hidden_states in self.buffer["value_hidden_states"]
-      ]
-      if self.cfg["algorithm"]["symmetry"]:
-        # Symmetry-augmented observations.
-        policy_obs_sym = {}
-        for key, value in policy_obs.items():
-          assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
-          policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
-
-      # Used for computing KL divergence and old log probs.
-      self.old_policy.load_state_dict(self.policy.state_dict())
-
-      mini_batch_size = self.env.num_envs // self.cfg["algorithm"]["num_mini_batches"]
-      for _ in range(self.cfg["algorithm"]["num_learning_epochs"]):
-          first_traj = 0
-          with torch.no_grad():
-            # Used for value bootstrap.
-            last_value = self.value(last_value_obs, last_value_hidden_states)[0]['value'].pred().detach()
-          for i in range(self.cfg["algorithm"]["num_mini_batches"]):
-              start = i * mini_batch_size
-              stop = (i + 1) * mini_batch_size
-              last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
-
-              masks_batch = traj_masks[:, first_traj:last_traj]
-              policy_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs)
-              value_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], value_obs)
-              hid_a_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_a)
-              hid_c_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_c)
-              if self.cfg["algorithm"]["symmetry"]:
-                symmetry_obs_batch = {
-                  f'{self.policy_key}_sym': pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs_sym),
-                }
-              else:
-                symmetry_obs_batch = {}
-
-              dones_batch = self.buffer["dones"][:, start:stop]
-              time_outs_batch = self.buffer["time_outs"][:, start:stop]
-              rewards_batch = self.buffer["rewards"][:, start:stop]
-              actions_batch = {k: self.buffer["actions"][k][:, start:stop] for k in self.buffer["actions"].keys()}
-              last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
-              old_values_batch = self.buffer["values"][:, start:stop]
-              with torch.no_grad():
-                old_dist_batch, _, _ = self.old_policy(
-                  policy_obs_batch,
-                  masks=masks_batch,
-                  hidden_states=hid_a_batch
-                )
-                if self.cfg["algorithm"]["symmetry"]:
-                  symmetry_obs_batch['old_dists_sym'], _, _ = self.old_policy(
-                    symmetry_obs_batch[f'{self.policy_key}_sym'],
-                    masks=masks_batch,
-                    hidden_states=hid_a_batch
-                  )
-
-              yield {
-                self.policy_key: policy_obs_batch,
-                self.value_key: value_obs_batch,
-                "actions": actions_batch,
-                "last_value": last_value_batch,
-                "masks": masks_batch,
-                "hid_a": hid_a_batch,
-                "hid_c": hid_c_batch,
-                "dones": dones_batch,
-                "time_outs": time_outs_batch,
-                "rewards": rewards_batch,
-                "old_values": old_values_batch,
-                "old_dists": old_dist_batch,
-                **symmetry_obs_batch,
-              }
-              
-              first_traj = last_traj
-
   @timer.section("learn")
   def _learn(self, last_privileged_obs, last_value_hidden_states, is_first):
       learn_step_agg = agg.Agg()
-      for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs, last_value_hidden_states)):
-        values, _, _ = self.value(
-          batch[self.value_key],
-          masks=batch["masks"],
-          hidden_states=batch["hid_c"]
-        )
-        # Compute returns and advantages.
+      if is_first:
+        # Skip the first gradient update to initialize the observation normalizers.
         with torch.no_grad():
-          rewards = batch["rewards"].clone()
-          value_preds = values['value'].pred().squeeze(-1)
-          rewards[batch["time_outs"]] = value_preds[batch["time_outs"]]
-          advantages = discount_values(
-            rewards,
-            batch["dones"] | batch["time_outs"],
-            value_preds,
-            batch["last_value"].squeeze(-1),
-            self.cfg["algorithm"]["gamma"],
-            self.cfg["algorithm"]["lam"],
-          )
-          returns = value_preds + advantages
-          if self.cfg["algorithm"]["normalize_advantage_per_minibatch"]:
-            advantage_stats = (advantages.mean(), advantages.std())
-          elif n == 0:
-            advantage_stats = (advantages.mean(), advantages.std())
+          self.policy.update_normalizer(self.buffer[self.policy_key])
+          self.value.update_normalizer(self.buffer[self.value_key])
+        return {}
 
-          advantages = (advantages - advantage_stats[0]) / (advantage_stats[1] + 1e-8)
-
+      self.old_policy.load_state_dict(self.policy.state_dict())
+      for batch in self.buffer.reccurent_mini_batch_generator(
+        self.cfg["algorithm"]["num_learning_epochs"],
+        self.cfg["algorithm"]["num_mini_batches"],
+        self.old_policy,
+        self.value,
+        last_privileged_obs,
+        last_value_hidden_states,
+        self.image_encoder_key,
+        self.policy_key,
+        self.value_key,
+        "dones",
+        self.cfg["algorithm"]["symmetry"],
+        self._get_symmetry_fn,
+      ):
         # Value loss.
-        if self.cfg["algorithm"]["use_clipped_value_loss"]:
-          value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
-              -self.cfg["algorithm"]["clip_param"], self.cfg["algorithm"]["clip_param"]
-          )
-          value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
-          value_losses_clipped = (value_clipped - returns.unsqueeze(-1)).pow(2)
-          value_loss = torch.max(value_losses, value_losses_clipped).mean()
-        else:
-          value_loss = torch.mean(values['value'].loss(returns.unsqueeze(-1)))
+        value_loss, advantages, metrics = loss.value_loss(
+          batch,
+          self.value,
+          self.value_key,
+          self.cfg["algorithm"]["gamma"],
+          self.cfg["algorithm"]["lam"],
+          self.cfg["algorithm"]["use_clipped_value_loss"],
+          self.cfg["algorithm"]["clip_param"]
+        )
         total_loss = self.cfg["algorithm"]["value_loss_coef"] * value_loss
-        learn_step_agg.add({'value_loss': value_loss.item()})
+        learn_step_agg.add(metrics)
 
         # Actor loss.
-        dists, policy_recon_dists, _ = self.policy(
-          batch[self.policy_key],
-          masks=batch["masks"],
-          hidden_states=batch["hid_a"]
+        actor_loss, kls, metrics = loss.actor_loss(
+          advantages,
+          batch,
+          self.policy,
+          self.policy_key,
+          self.cfg["algorithm"]["symmetry"],
+          self._get_symmetry_fn,
+          self.cfg["algorithm"]["actor_loss_coefs"],
+          self.cfg["algorithm"]["entropy_coefs"],
+          self.cfg["algorithm"]["bound_coefs"],
+          self.cfg["algorithm"]["symmetry_coefs"],
+          self.cfg["algorithm"]["clip_param"]
         )
-        if self.cfg["algorithm"]["symmetry"]:
-          dists_sym, _, _ = self.policy(
-            batch[f'{self.policy_key}_sym'],
-            masks=batch["masks"],
-            hidden_states=batch["hid_a"]
-          )
-        if policy_recon_dists is not None:
-          for name, dist in policy_recon_dists.items():
-            obs_group, obs_name = name.split('/')
-            unpadded_obs = models.unpad_trajectories(batch[obs_group][obs_name], batch["masks"])
-            recon_loss = torch.mean(dist.loss(unpadded_obs.detach()))
-            total_loss += self.cfg["algorithm"]["policy_recon_loss_coef"] * recon_loss
-            learn_step_agg.add({f'policy_recon_{obs_group}_{obs_name}_loss': recon_loss.item()})
-
-        kl_means = {}
-        for name, dist in dists.items():
-          actor_loss_coef = self.cfg["algorithm"]["actor_loss_coefs"][name]
-          actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
-          with torch.no_grad():
-            old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
-          actor_loss = surrogate_loss(
-            old_actions_log_prob_batch, actions_log_prob, advantages,
-            e_clip=self.cfg["algorithm"]["clip_param"]
-          )
-          total_loss += actor_loss_coef * actor_loss
-          learn_step_agg.add({f'actor_loss_{name}': actor_loss.item()})
-          klm = torch.mean(torch.sum(dist.kl(batch["old_dists"][name]), axis=-1)).item()
-          kl_means[name] = klm
-          self.learn_agg.add({f'kl_mean_{name}': klm})
-
-          # Entropy loss.
-          entropy = dist.entropy().sum(dim=-1)
-          if name in self.cfg["algorithm"]["entropy_coefs"]:
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coefs"][name] * entropy.mean()
-          learn_step_agg.add({f'entropy_{name}': entropy.mean().item()})
-
-          # Bound loss.
-          if name in self.cfg["algorithm"]["bound_coefs"]:
-            bound_loss = (
-              torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
-              + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
-            )
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coefs"][name] * bound_loss
-            learn_step_agg.add({f'bound_loss_{name}': bound_loss.item()})
+        total_loss += actor_loss
+        learn_step_agg.add(metrics)
 
 
-          if self.cfg["algorithm"]["symmetry"] and name in self.cfg["algorithm"]["symmetry_coefs"]:
-            # Symmetry loss.
-            dist_act_sym = self.symmetry_groups["actions"][name](self.env, dist.pred())
-            symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
-            # symmetry_loss = torch.mean(dists_sym[name].loss(dist_act_sym.detach()))
-            if self.cfg["algorithm"]["symmetry_coefs"][name] <= 0.0:
-              symmetry_loss = symmetry_loss.detach()
-            learn_step_agg.add({f'symmetry_loss_{name}': symmetry_loss.item()})
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["symmetry_coefs"][name] * symmetry_loss.mean()
-            # TODO(alescontrela): Adding symmetric actor losses causes instability. Why?
-            # # Actor loss with symmetric data.
-            # actions_sym = self.symmetry_groups["actions"]["actions"](self.env, batch["actions"])
-            # actions_log_prob_symm = dist_sym.logp(actions_sym.detach()).sum(dim=-1)
-            # with torch.no_grad():
-            #   old_actions_sym_log_prob_batch = batch["old_dists_sym"].logp(actions_sym).sum(dim=-1)
-            # actor_loss_symm = surrogate_loss(
-            #   old_actions_sym_log_prob_batch, actions_log_prob_symm, advantages,
-            #   e_clip=self.cfg["algorithm"]["clip_param"]
-            # )
-            # learn_step_agg.add({'actor_loss_symm': actor_loss_symm.item()})
-            # total_loss += actor_loss_coef * actor_loss_symm
-            # kl_sym_mean = torch.mean(torch.sum(dist_sym.kl(batch["old_dists_sym"]), axis=-1))
-            # self.learn_agg.add({'kl_sym_mean': kl_sym_mean.item()})
-            # kl_mean = (kl_mean + kl_sym_mean) / 2.0
+        # SGD.
+        self.policy_optimizer.zero_grad()
+        self.value_optimizer.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+          list(self.policy.parameters()) + list(self.value.parameters()) + list(self.image_encoder.parameters()),
+          1.0)
+        self.policy_optimizer.step()
+        self.value_optimizer.step()
 
-            # # Bound loss with symmetric data.
-            # bound_loss_sym = (
-            #   torch.clip(dist_sym.pred() - 1.0, min=0.0).square().mean()
-            #   + torch.clip(dist_sym.pred() + 1.0, max=0.0).square().mean()
-            # )
-            # total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coef"] * bound_loss_sym
-            # learn_step_agg.add({'bound_loss_sym': bound_loss_sym.item()})
-
-            # # Entropy loss with symmetric data.
-            # entropy_sym = dist_sym.entropy().sum(dim=-1)
-            # total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coef"] * entropy_sym.mean()
-            # learn_step_agg.add({'entropy_sym': entropy_sym.mean().item()})
-
-
-        # Skip the first gradient update to initialize the observation normalizers.
-        if not is_first:
-          self.policy_optimizer.zero_grad()
-          self.value_optimizer.zero_grad()
-          total_loss.backward()
-          torch.nn.utils.clip_grad_norm_(
-            list(self.policy.parameters()) + list(self.value.parameters()),
-            1.0)
-          self.policy_optimizer.step()
-          self.value_optimizer.step()
-
-          if self.cfg["policy"]["desired_kl"] > 0.0:
-            if kl_means[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
-              self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
-            elif kl_means[self.cfg["policy"]["kl_key"]] < self.cfg["policy"]["desired_kl"] / 2.0 and kl_means[self.cfg["policy"]["kl_key"]] > 0.0:
-              self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
-            for param_group in self.policy_optimizer.param_groups:
-              param_group["lr"] = self.policy_learning_rate
+        # Learning rate scheduler.
+        if self.cfg["policy"]["desired_kl"] > 0.0:
+          if kls[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
+            self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
+          elif kls[self.cfg["policy"]["kl_key"]] < self.cfg["policy"]["desired_kl"] / 2.0 and kls[self.cfg["policy"]["kl_key"]] > 0.0:
+            self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
+          for param_group in self.policy_optimizer.param_groups:
+            param_group["lr"] = self.policy_learning_rate
 
         policy_stats = {}
         for k, v in self.policy.stats().items():
@@ -600,8 +388,9 @@ class Runner:
         learn_step_agg.add(policy_stats)
 
       # Update the observation normalizers.
-      self.policy.update_normalizer(self.buffer[self.policy_key])
-      self.value.update_normalizer(self.buffer[self.value_key])
+      with torch.no_grad():
+        self.policy.update_normalizer(self.buffer[self.policy_key])
+        self.value.update_normalizer(self.buffer[self.value_key])
 
       return {
           **learn_step_agg.result(),
@@ -647,8 +436,3 @@ class Runner:
         print(f"Average inference time: {inference_time / step}")
         print(f"\t Per env: {inference_time / step / self.env.num_envs}")
         inference_time, step = 0., 0
-
-
-  def interrupt_handler(self, signal, frame):
-    print("\nInterrupt received, waiting for video to finish...")
-    self.interrupt = True
