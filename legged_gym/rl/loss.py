@@ -1,0 +1,182 @@
+import torch
+from legged_gym.rl import utils
+import torch.utils._pytree as pytree
+
+
+def value_loss(
+    batch,
+    value_network,
+    value_obs_key,
+    gamma,
+    lam,
+    use_clipped_value_loss,
+    clip_param): 
+  values, _, _ = value_network(
+    batch[value_obs_key],
+    masks=batch["masks"],
+    hidden_states=batch[f"{value_obs_key}_hidden_states"]
+  )
+  # Compute returns and advantages.
+  with torch.no_grad():
+    rewards = batch["rewards"].clone()
+    value_preds = values['value'].pred().squeeze(-1)
+    rewards[batch["time_outs"]] = value_preds[batch["time_outs"]]
+    advantages = utils.discount_values(
+      rewards,
+      batch["dones"] | batch["time_outs"],
+      value_preds,
+      batch["last_value"].squeeze(-1),
+      gamma,
+      lam,
+    )
+    returns = value_preds + advantages
+
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+  # Value loss.
+  if use_clipped_value_loss:
+    value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
+        -clip_param, clip_param
+    )
+    value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
+    value_losses_clipped = (value_clipped - returns.unsqueeze(-1)).pow(2)
+    value_loss = torch.max(value_losses, value_losses_clipped).mean()
+  else:
+    value_loss = torch.mean(values['value'].loss(returns.unsqueeze(-1)))
+  metrics = {'value_loss': value_loss.item()}
+  return value_loss, advantages, metrics
+
+
+def actor_loss(
+    advantages,
+    batch,
+    policy_network,
+    policy_obs_key,
+    symmetry,
+    symmetry_fn,
+    actor_loss_coefs,
+    entropy_coefs,
+    bound_coefs,
+    symmetry_coefs,
+    clip_param,
+):
+  # Actor loss.
+  hidden_states = batch[f"{policy_obs_key}_hidden_states"]
+  dists, _, _ = policy_network(
+    batch[policy_obs_key],
+    masks=batch["masks"],
+    hidden_states=hidden_states
+  )
+  if symmetry:
+    dists_sym, _, _ = policy_network(
+      batch[f'{policy_obs_key}_sym'],
+      masks=batch["masks"],
+      # hidden_states=pytree.tree_map(lambda x: -1. * x, hidden_states)
+      hidden_states=hidden_states
+    )
+
+  kl_means = {}
+  metrics = {}
+  losses = []
+  for name, dist in dists.items():
+    actor_loss_coef = actor_loss_coefs[name]
+    actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
+    with torch.no_grad():
+      old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
+    actor_loss = utils.surrogate_loss(
+      old_actions_log_prob_batch, actions_log_prob, advantages,
+      e_clip=clip_param
+    )
+    losses.append(actor_loss_coef * actor_loss)
+    metrics[f'actor_loss_{name}'] = actor_loss.item()
+    klm = torch.mean(torch.sum(dist.kl(batch["old_dists"][name]), axis=-1)).item()
+    kl_means[name] = klm
+    metrics[f'kl_mean_{name}'] = klm
+
+    # Entropy loss.
+    entropy = dist.entropy().sum(dim=-1)
+    metrics[f'entropy_{name}'] = entropy.mean().item()
+    if name in entropy_coefs:
+      losses.append(actor_loss_coef * entropy_coefs[name] * entropy.mean())
+      metrics[f'entropy_loss_{name}'] = entropy.mean().item()
+
+    # Bound loss.
+    if name in bound_coefs:
+      bound_loss = (
+        torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
+        + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
+      )
+      losses.append(actor_loss_coef * bound_coefs[name] * bound_loss)
+      metrics[f'bound_loss_{name}'] = bound_loss.item()
+
+
+    if symmetry and name in symmetry_coefs:
+      # Symmetry loss.
+      dist_act_sym = symmetry_fn("actions", name)(dist.pred())
+      symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
+      # symmetry_loss = torch.mean(dists_sym[name].loss(dist_act_sym.detach()))
+      metrics[f'symmetry_loss_{name}'] = symmetry_loss.item()
+
+      losses.append(actor_loss_coef * symmetry_coefs[name] * symmetry_loss.mean())
+    total_loss = sum(losses)
+    return total_loss, kl_means, metrics
+
+
+def reconstruction_loss(
+  batch,
+  image_encoder_network,
+  image_encoder_obs_key,
+  max_batch_size,
+  symmetry,
+  symmetry_fn,
+
+):
+  orig_batch_size = batch["masks"].shape[1]
+  if max_batch_size < orig_batch_size:
+    sample_idxs = torch.randperm(orig_batch_size)[:max_batch_size]
+  else:
+    sample_idxs = torch.arange(orig_batch_size)
+  batch_sampled = pytree.tree_map(lambda x: x[:, sample_idxs], batch[image_encoder_obs_key])
+  masks_sampled = batch["masks"][:, sample_idxs]
+  batch_sampled_hidden_states = pytree.tree_map(
+    lambda x: x[:, sample_idxs],
+    batch[f"{image_encoder_obs_key}_hidden_states"])
+  image_encoder_dists, _, _ = image_encoder_network(
+    batch_sampled,
+    masks=masks_sampled,
+    hidden_states=batch_sampled_hidden_states,
+    unpad=False
+  )
+
+  losses = []
+  metrics = {}
+  for name, dist in image_encoder_dists.items():
+    obs_group, obs_name = name.split('/')
+    recon_loss = dist.loss(
+      pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name]).detach()
+    )
+    recon_loss = utils.masked_mean(recon_loss, masks_sampled)
+    metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()
+    losses.append(recon_loss)
+
+  if symmetry:
+    batch_sampled_sym = pytree.tree_map(lambda x: x[:, sample_idxs], batch[f'{image_encoder_obs_key}_sym'],)
+    image_encoder_dists_sym, _, _ = image_encoder_network(
+      batch_sampled_sym,
+      masks=masks_sampled,
+      # hidden_states=pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states),
+      hidden_states=batch_sampled_hidden_states,
+      unpad=False
+    )
+    for name, dist in image_encoder_dists_sym.items():
+      obs_group, obs_name = name.split('/')
+      recon_loss = dist.loss(
+        symmetry_fn(obs_group, obs_name)(
+          pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
+      ).detach())
+      recon_loss = utils.masked_mean(recon_loss, masks_sampled)
+      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss_sym'] = recon_loss.item()
+      losses.append(recon_loss)
+
+  total_loss = sum(losses)
+  return total_loss, metrics

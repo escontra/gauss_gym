@@ -7,6 +7,7 @@ from torchvision import transforms
 from typing import Dict, Any, Optional, Tuple, List, Callable, Union
 
 from legged_gym.utils import math, space
+from legged_gym.rl import utils
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.dino import backbones
 from legged_gym.rl.modules.actor_critic import get_activation
@@ -15,74 +16,6 @@ from legged_gym.rl.modules import normalizers
 
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
-
-
-def split_and_pad_trajectories(tensor, dones):
-    """ Splits trajectories at done indices. Then concatenates them and padds with zeros up to the length og the longest trajectory.
-    Returns masks corresponding to valid parts of the trajectories
-    Example: 
-        Input: [ [a1, a2, a3, a4 | a5, a6],
-                 [b1, b2 | b3, b4, b5 | b6]
-                ]
-
-        Output:[ [a1, a2, a3, a4], | [  [True, True, True, True],
-                 [a5, a6, 0, 0],   |    [True, True, False, False],
-                 [b1, b2, 0, 0],   |    [True, True, False, False],
-                 [b3, b4, b5, 0],  |    [True, True, True, False],
-                 [b6, 0, 0, 0]     |    [True, False, False, False],
-                ]                  | ]    
-            
-    Assumes that the inputy has the following dimension order: [time, number of envs, aditional dimensions]
-    """
-    dones = dones.clone()
-    dones[-1] = 1
-    # Permute the buffers to have order (num_envs, num_transitions_per_env, ...), for correct reshaping
-    flat_dones = dones.transpose(1, 0).reshape(-1, 1)
-
-    # Get length of trajectory by counting the number of successive not done elements
-    done_indices = torch.cat((flat_dones.new_tensor([-1], dtype=torch.int64), flat_dones.nonzero()[:, 0]))
-    trajectory_lengths = done_indices[1:] - done_indices[:-1]
-    trajectory_lengths_list = trajectory_lengths.tolist()
-    # Extract the individual trajectories
-    trajectories = torch.split(tensor.transpose(1, 0).flatten(0, 1),trajectory_lengths_list)
-    padded_trajectories = torch.nn.utils.rnn.pad_sequence(trajectories)
-
-
-    trajectory_masks = trajectory_lengths > torch.arange(0, tensor.shape[0], device=tensor.device).unsqueeze(1)
-    return padded_trajectories, trajectory_masks
-
-
-def unpad_trajectories(trajectories, masks):
-    """ Does the inverse operation of  split_and_pad_trajectories()
-    """
-    # Need to transpose before and after the masking to have proper reshaping
-    obs_num_dims = len(trajectories.shape) - len(masks.shape)
-    traj_transp = trajectories.transpose(1, 0)
-    masks_transp = masks.transpose(1, 0)
-    traj_indexed = traj_transp[masks_transp]
-    traj_viewed = traj_indexed.view(-1, trajectories.shape[0], *trajectories.shape[-obs_num_dims:])
-    traj_viewed_transp = traj_viewed.transpose(1, 0)
-    return traj_viewed_transp
-
-
-def get_mlp_cnn_keys(obs):
-  # TODO: Add option to process 2D observations with CNN or MLP. Currently only supports MLP.
-  mlp_keys, mlp_2d_reshape_keys, cnn_keys = [], [], []
-  num_mlp_obs = 0
-  for k, v in obs.items():
-    if len(v.shape) == 1:
-      mlp_keys.append(k)
-      num_mlp_obs += np.prod(v.shape)
-    elif len(v.shape) == 2:
-      mlp_keys.append(k)
-      mlp_2d_reshape_keys.append(k)
-      num_mlp_obs += np.prod(v.shape)
-    elif len(v.shape) == 3:
-      cnn_keys.append(k)
-    else:
-      raise ValueError(f'Observation {k} has unexpected shape: {v.shape}')
-
-  return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs
 
 
 class RecurrentModel(abc.ABC):
@@ -119,9 +52,6 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
         head: Dict[str, Any],
-        reconstruct_space: Optional[Dict[str, space.Space]] = None,
-        reconstruct_head: Optional[Dict[str, Any]] = None,
-        detach_rnn_state_after_recon: bool = False,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -148,9 +78,6 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       obs_space=self.mlp_obs_space,
       dont_normalize_keys=dont_normalize_keys + list(self.image_feature_model.obs_space().keys()),
       head=head,
-      reconstruct_space=reconstruct_space,
-      reconstruct_head=reconstruct_head,
-      detach_rnn_state_after_recon=detach_rnn_state_after_recon,
       layer_activation=layer_activation,
       hidden_layer_sizes=hidden_layer_sizes,
       recurrent_state_size=recurrent_state_size,
@@ -180,12 +107,12 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
               hidden_states: Tuple[torch.Tensor, ...],
               masks: Optional[torch.Tensor]=None,
               mean_only: bool=False,
-              provide_recon_dists: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              unpad: bool=True) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     new_obs = {
        **obs,
        **self.image_feature_model(obs)
     }
-    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, provide_recon_dists)
+    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, unpad=unpad)
 
   def flatten_parameters(self):
     self.recurrent_model.flatten_parameters()
@@ -196,7 +123,7 @@ class ImageFeature(torch.nn.Module):
     super().__init__()
     self._obs_space = obs_space
     self.embedding_dim = embedding_dim
-    _, _, self.cnn_keys, _ = get_mlp_cnn_keys(obs_space)
+    _, _, self.cnn_keys, _ = utils.get_mlp_cnn_keys(obs_space)
     self.model_type = model_type
 
     print(f'{self.__class__.__name__}:')
@@ -239,6 +166,15 @@ class ImageFeature(torch.nn.Module):
       cnn_obs = obs[key]
       if cnn_obs.dtype == torch.uint8:
         cnn_obs = cnn_obs.float() / 255.0
+      
+      if self.training:
+        cnn_obs = transforms.ColorJitter(
+            brightness=(0.6, 1.4), 
+            contrast=(0.6, 1.4),
+            saturation=(0.6, 1.4),
+            hue=0
+        )(cnn_obs)
+
       batch_dims = cnn_obs.shape[:-3]
       spatial_dims = cnn_obs.shape[-3:]
       cnn_obs = cnn_obs.reshape(-1, *spatial_dims)  # Shape: [M*N*L*O, C, H, W]
@@ -263,9 +199,6 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
         head: Dict[str, Any],
-        reconstruct_space: Optional[Dict[str, space.Space]] = None,
-        reconstruct_head: Optional[Dict[str, Any]] = None,
-        detach_rnn_state_after_recon: bool = False,
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -277,8 +210,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.obs_space = obs_space
     self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
-    self.detach_rnn_state_after_recon = detach_rnn_state_after_recon
-    self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = get_mlp_cnn_keys(obs_space)
+    self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = utils.get_mlp_cnn_keys(obs_space)
     assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
@@ -293,10 +225,6 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
       print(f'\t\t{key}: {obs_space[key].shape}')
     print(f'\tMLP Num Obs: {self.num_mlp_obs}')
     print(f'\tNormalizing obs: {self.normalize_obs}')
-    if reconstruct_space is not None:
-      print('\tReconstructing obs:')
-      for key in reconstruct_head.keys():
-        print(f'\t\t{key}: {reconstruct_space[key].shape}')
 
     layers = []
     input_size = self.recurrent_state_size
@@ -311,24 +239,20 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     for k, v in heads.items():
       print(f'\t\t{k}: {v.output_size} {v.impl}')
 
-    self.recon_heads = None
-    if reconstruct_space is not None:
-      recon_heads = {k: outs.Head(self.recurrent_state_size, v, **reconstruct_head[k]) for k, v in reconstruct_space.items()}
-      self.recon_heads = nn.ModuleDict(recon_heads)
-
     self.symlog_inputs = symlog_inputs
 
   def reset(self, dones: torch.Tensor, hidden_states: Optional[Tuple[torch.Tensor, ...]]=None) -> Tuple[torch.Tensor, ...]:
     return self.memory.reset(dones, hidden_states)
 
   def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    exclude_keys = [k for k in obs.keys() if k not in self.obs_space.keys()]
     if self.normalize_obs:
       obs = apply_normalizer(
         obs,
         self.obs_normalizer.mean,
         self.obs_normalizer.std,
         max_abs_value=self.max_abs_value,
-        dont_normalize_keys=self.dont_normalize_keys)
+        dont_normalize_keys=self.dont_normalize_keys + exclude_keys)
     return process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
   
   def update_normalizer(self, obs: Dict[str, torch.Tensor]):
@@ -340,20 +264,12 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
               hidden_states: Tuple[torch.Tensor, ...],
               masks: Optional[torch.Tensor]=None,
               mean_only: bool=False,
-              provide_recon_dists: bool=False) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              unpad: bool=True,
+              ) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
 
     # RNN.
-    rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks)
-
-    # Reconstruction.
-    if (provide_recon_dists or masks is not None) and self.recon_heads is not None:
-      recon_dists = {k: self.recon_heads[k](rnn_state.squeeze(0)) for k in self.recon_heads}
-    else:
-      recon_dists = None
-
-    if self.detach_rnn_state_after_recon:
-      rnn_state = rnn_state.detach()
+    rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks, unpad=unpad)
 
     # Model.
     model_state = self.model(rnn_state.squeeze(0))
@@ -361,10 +277,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         outs = []
         for k in self.heads:
           outs.append(self.heads[k].mean_net(model_state))
-        return tuple(outs), recon_dists, new_hidden_states
+        return tuple(outs), new_hidden_states
     else:
         dists = {k: self.heads[k](model_state) for k in self.heads}
-        return dists, recon_dists, new_hidden_states
+        return dists, rnn_state.squeeze(0), new_hidden_states
 
   def stats(self):
     stats = {}
@@ -399,10 +315,12 @@ class Memory(torch.nn.Module):
           self,
           input: torch.Tensor,
           hidden_states: Tuple[torch.Tensor, ...],
-          masks: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+          masks: Optional[torch.Tensor]=None,
+          unpad: bool=True) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
         if masks is not None:  # Batch (update) mode.
             out, _ = self.rnn(input, hidden_states)
-            out = unpad_trajectories(out, masks)
+            if unpad:
+              out = utils.unpad_trajectories(out, masks)
             return out, None
         else:  # Inference mode
             out, new_hidden_states = self.rnn(input.unsqueeze(0), hidden_states)
@@ -533,4 +451,3 @@ def get_policy_jitted(policy: RecurrentMLPModel) -> Callable[[Dict[str, torch.Te
        normalizer_mean=normalizer_mean,
        normalizer_std=normalizer_std,
        max_abs_value=max_abs_value)
-

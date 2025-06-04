@@ -110,16 +110,12 @@ class Runner:
       assert self.policy_key in self.symmetry_groups
       assert "actions" in self.symmetry_groups
 
-  def state_dict_for_network(self, state_dict):
-    new_state_dict = {}
-    prefix = '_orig_mod.'
-    for key, value in state_dict.items():
-        if key.startswith(prefix):
-            new_key = key[len(prefix):]
-            new_state_dict[new_key] = value
-        else:
-            new_state_dict[key] = value
-    return new_state_dict
+  def _get_symmetry_fn(self, obs_group, obs_name):
+    assert obs_group in self.symmetry_groups, f"{obs_group} not in {self.symmetry_groups}"
+    symmetry_fns = self.symmetry_groups[obs_group]
+    assert obs_name in symmetry_fns, f"{obs_name} not in {symmetry_fns}"
+    symmetry_fn = symmetry_fns[obs_name]
+    return lambda val: symmetry_fn(self.env, val)
 
   def _set_seed(self):
     seed = self.cfg["seed"]
