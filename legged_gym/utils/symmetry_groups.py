@@ -3,7 +3,6 @@ from typing import Callable
 import dataclasses
 from legged_gym.utils import observation_groups
 
-# BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS
 
 @dataclasses.dataclass(frozen=True)
 class SymmetryModifier:
@@ -13,6 +12,11 @@ class SymmetryModifier:
   def __call__(self, env, obs):
     return self.symmetry_fn(env, obs)
 
+def base_lin_vel_symmetry(env, obs):
+  x_vel = obs[..., 0]
+  y_vel = obs[..., 1]
+  z_vel = obs[..., 2]
+  return torch.stack([x_vel, -y_vel, z_vel], dim=-1)
 
 def base_ang_vel_symmetry(env, obs):
   roll_rate = obs[..., 0]
@@ -133,6 +137,11 @@ RAY_CAST = SymmetryModifier(
 CAMERA_IMAGE = SymmetryModifier(
   observation=observation_groups.CAMERA_IMAGE,
   symmetry_fn=camera_image_symmetry,
+)
+
+BASE_LIN_VEL = SymmetryModifier(
+  observation=observation_groups.BASE_LIN_VEL,
+  symmetry_fn=base_lin_vel_symmetry,
 )
 
 BASE_ANG_VEL = SymmetryModifier(
