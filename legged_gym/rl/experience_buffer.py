@@ -135,19 +135,18 @@ class ExperienceBuffer:
       value_obs_key,
       dones_key,
       symmetry,
-      symmetry_fn):
+      symmetry_fn,
+      symm_key):
 
-    image_encoder_rnn_state = utils.split_and_pad_trajectories(
-      self.tensor_dict["image_encoder_rnn_state"], self.tensor_dict[dones_key])[0]
-    image_encoder_rnn_state_sym = utils.split_and_pad_trajectories(
-      self.tensor_dict["image_encoder_rnn_state_sym"], self.tensor_dict[dones_key])[0]
+    # Symmetry-augmented observations computed during the environment step.
+    symms = None
+    if symm_key in self.tensor_dict and self.tensor_dict[symm_key]:
+      symms, _, _, _ = self._split_and_pad_obs(symm_key, dones_key)
 
     policy_obs, traj_masks, policy_hidden_states, last_was_done = self._split_and_pad_obs(
       policy_obs_key, dones_key, f"{policy_obs_key}_hidden_states")
-    policy_obs[image_encoder_obs_key] = image_encoder_rnn_state
     value_obs, _, value_hidden_states, _ = self._split_and_pad_obs(
       value_obs_key, dones_key, f"{value_obs_key}_hidden_states")
-    value_obs[image_encoder_obs_key] = image_encoder_rnn_state
     image_encoder_obs, _, image_encoder_hidden_states, _ = self._split_and_pad_obs(
       image_encoder_obs_key, dones_key, f"{image_encoder_obs_key}_hidden_states")
 
@@ -158,11 +157,11 @@ class ExperienceBuffer:
         image_encoder_obs_sym[key] = symmetry_fn(image_encoder_obs_key, key)(value).detach()
 
       policy_obs_sym = {}
-      policy_obs_sym[image_encoder_obs_key] = image_encoder_rnn_state_sym
       for key, value in policy_obs.items():
-        if key == image_encoder_obs_key:
-          continue
-        policy_obs_sym[key] = symmetry_fn(policy_obs_key, key)(value).detach()
+        if symms is not None and key in symms:
+          policy_obs_sym[key] = symms[key]
+        else:
+          policy_obs_sym[key] = symmetry_fn(policy_obs_key, key)(value).detach()
 
     mini_batch_size = self.num_envs // num_mini_batches
     for _ in range(num_learning_epochs):

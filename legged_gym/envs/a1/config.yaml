@@ -36,6 +36,8 @@ env:
     cam_rpy_offset: [-3.1415927, 0.7853832, 1.5707963]
 
 observations:
+  image_encoder:
+    observations: [CAMERA_IMAGE]
   critic:
     observations: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
@@ -58,6 +60,15 @@ observations:
     ]
 
 symmetries:
+  image_encoder:
+    symmetries: [
+      CAMERA_IMAGE
+    ]
+  critic:
+    symmetries: [
+      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST
+    ]
   policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
@@ -417,17 +428,29 @@ sim:
     contact_collection: 2
 
 
+image_encoder:
+  class_name: RecurrentCNNModel
+  learning_rate: 1.e-3
+  obs_key: image_encoder
+  reconstruct_observations: [
+    "critic/RAY_CAST", "critic/BASE_ANG_VEL", "critic/BASE_LIN_VEL"]
+  max_batch_size: 64
+  params:
+    layer_activation: silu
+    recurrent_state_size: 512
+    # recurrent_proj_size: 128
+    hidden_layer_sizes: [512, 256, 128]
+    symlog_inputs: True
+    normalize_obs: True
+    model_type: cnn_simple
+    embedding_dim: 128
+
 policy:
   class_name: RecurrentCNNModel
   learning_rate: 1.e-5
   desired_kl: 0.01
   kl_key: actions
   obs_key: policy
-  reconstruct_observations: null # null means all observations are used for reconstruction
-  # If you want to provide observations for reconstruction, you can use the following:
-  # reconstruct_observations: [
-  #   "critic/RAY_CAST", "critic/DOF_VEL", "critic/DOF_POS", "critic/BASE_ANG_VEL",
-  #   "critic/BASE_LIN_VEL", "critic/PROJECTED_GRAVITY", "critic/ACTIONS"]
   params:
     layer_activation: "silu"
     recurrent_state_size: 256
@@ -438,9 +461,6 @@ policy:
       actions: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
       stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
       damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
-    model_type: cnn_simple
-    embedding_dim: 32
-    
 
 value:
   class_name: RecurrentMLPModel
@@ -479,7 +499,6 @@ algorithm:
   clip_param: 0.2
   bound_coefs:
     actions: 1.0
-  normalize_advantage_per_minibatch: True
 
 runner:
   record_video: True
