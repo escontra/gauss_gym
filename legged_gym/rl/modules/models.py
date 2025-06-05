@@ -56,6 +56,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
+        recurrent_proj_size: int = 0,
         symlog_inputs=False,
         normalize_obs=True,
         max_abs_value=None,
@@ -81,6 +82,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       layer_activation=layer_activation,
       hidden_layer_sizes=hidden_layer_sizes,
       recurrent_state_size=recurrent_state_size,
+      recurrent_proj_size=recurrent_proj_size,
       symlog_inputs=symlog_inputs,
       normalize_obs=normalize_obs,
       max_abs_value=max_abs_value)
@@ -117,6 +119,10 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
   def flatten_parameters(self):
     self.recurrent_model.flatten_parameters()
 
+  @property
+  def rnn_state_size(self):
+    return self.recurrent_model.rnn_state_size
+
 
 class ImageFeature(torch.nn.Module):
   def __init__(self, obs_space: Dict[str, space.Space], model_type: str = 'cnn_simple', embedding_dim: int = 256, dino_pretrained: bool = True):
@@ -151,7 +157,7 @@ class ImageFeature(torch.nn.Module):
         timm_model = timm.create_model(self.model_type[5:], pretrained=dino_pretrained, num_classes=0)
         cfg = timm_model.default_cfg
         encoder_dict[key] = nn.Sequential(
-          transforms.Normalize(mean=cfg['mean'], std=cfg['std'], inplace=True),
+          transforms.Normalize(mean=cfg['mean'], std=cfg['std']),
           timm_model,
           nn.Linear(timm_model.num_features, embedding_dim)
         )
@@ -202,7 +208,8 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
-        recurrent_state_size=256,
+        recurrent_state_size: int =256,
+        recurrent_proj_size: int = 0,
         symlog_inputs=False,
         normalize_obs=True,
         max_abs_value=None):
@@ -214,6 +221,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
+    self.recurrent_proj_size = recurrent_proj_size
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
     self.normalize_obs = normalize_obs
     self.max_abs_value = max_abs_value
@@ -226,8 +234,13 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     print(f'\tMLP Num Obs: {self.num_mlp_obs}')
     print(f'\tNormalizing obs: {self.normalize_obs}')
 
+    if self.recurrent_proj_size > 0:
+      self.rnn_proj = torch.nn.Linear(self.recurrent_state_size, self.recurrent_proj_size)
+    else:
+      self.rnn_proj = torch.nn.Identity()
+
     layers = []
-    input_size = self.recurrent_state_size
+    input_size = self.rnn_state_size
     for size in hidden_layer_sizes:
       layers.append(torch.nn.Linear(input_size, size))
       layers.append(get_activation(layer_activation))
@@ -270,6 +283,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
 
     # RNN.
     rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks, unpad=unpad)
+    rnn_state = self.rnn_proj(rnn_state)
 
     # Model.
     model_state = self.model(rnn_state.squeeze(0))
@@ -294,6 +308,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
 
   def flatten_parameters(self):
     self.memory.rnn.flatten_parameters()
+
+  @property
+  def rnn_state_size(self):
+    return self.recurrent_proj_size if self.recurrent_proj_size > 0 else self.recurrent_state_size
 
 
 class Memory(torch.nn.Module):
