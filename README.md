@@ -18,14 +18,21 @@
     - `cd legged-gym && pip install -e .`
 
 
-# Training:
+# Training
+
 1. Download zipped scenes from [here](https://drive.google.com/file/d/1bbmcaEKES6XivAXLE_FAyWAve-Olbhab/view?usp=sharing) and unzip to `<SCENE_PATH>`:
 2. Train policies with: `python legged_gym/scripts/train.py --task=a1 --terrain.scenes=<SCENE_PATH>`
   - This will create a folder under `logs/` with checkpoints.
 
-# Evaluation:
+# Evaluation
+
 1. Evaluate policies with: `python legged_gym/scripts/play.py --runner.load_run=<RUN_NAME>`
   - `<RUN_NAME>` is the name of the run in `logs/`.
 
-# Config structure:
+# Adding your own environment with PolyCam:
+
+Steps to add new scenes with polycam are outlined in `gaussian_splatting/polycam_scenes.sh` (requires access to [nerfstudio-walking](https://github.com/kerrj/nerfstudio-walking), message @alescontrela for access)
+
+# Config structure
+
 Configs for each environment are located in `legged_gym/envs/*/config.yaml`, and specify setting for both the environment and learning.
