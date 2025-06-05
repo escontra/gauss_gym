@@ -13,6 +13,8 @@ from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
 
+torch.backends.cuda.matmul.allow_tf32 = True
+
 
 class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
@@ -58,9 +60,9 @@ class Runner:
     else:
       self.image_encoder = None
 
-    self.use_image_encoder_features = False
+    self.use_image_encoder_features = True
     if self.use_image_encoder_features:
-      image_encoder_space = space.Space(np.float32, (self.image_encoder.recurrent_model.memory.hidden_size,), -np.inf, np.inf)
+      image_encoder_space = space.Space(np.float32, (self.image_encoder.rnn_state_size,), -np.inf, np.inf)
       self.policy_obs_space[self.image_encoder_key] = image_encoder_space
       self.value_obs_space[self.image_encoder_key] = image_encoder_space
       self.symm_obs_space[self.image_encoder_key] = image_encoder_space
@@ -86,7 +88,10 @@ class Runner:
       **self.cfg["value"]["params"]
     ).to(self.device)
 
+    self.global_num_updates = 0
+
     # Optimizers.
+    self.train_image_encoder = when.Every(self.cfg["image_encoder"]["train_every"])
     self.image_encoder_optimizer = torch.optim.Adam(
       self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
     )
@@ -245,8 +250,10 @@ class Runner:
       start = time.time()
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
+          potential_images = {k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}
+          potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in self.image_encoder.cnn_keys})
           self.recorder.record_statistics(
-            self.recorder.maybe_record(self.env, image_features={k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}),
+            self.recorder.maybe_record(self.env, image_features=potential_images),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
         with timer.section("buffer_add_obs"):
           if self.image_encoder.is_recurrent:
@@ -261,18 +268,19 @@ class Runner:
             self.buffer.update_hidden_state_buffers(
               f"{self.value_key}_hidden_states", n, (value_hidden_states,)
             )
-          _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
-            obs_dict[self.image_encoder_key],
-            image_encoder_hidden_states
-          )
-          if self.use_image_encoder_features:
-            obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
-            obs_dict[self.value_key][self.image_encoder_key] = image_encoder_rnn_state
-            _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
-              {k: self._get_symmetry_fn(self.image_encoder_key, k)(v) for k, v in obs_dict[self.image_encoder_key].items()},
-              image_encoder_hidden_states_sym
+          with torch.no_grad():
+            _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
+              obs_dict[self.image_encoder_key],
+              image_encoder_hidden_states
             )
-            symms[self.image_encoder_key] = image_encoder_rnn_state_sym
+            if self.use_image_encoder_features:
+              obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
+              obs_dict[self.value_key][self.image_encoder_key] = image_encoder_rnn_state
+              _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
+                {k: self._get_symmetry_fn(self.image_encoder_key, k)(v) for k, v in obs_dict[self.image_encoder_key].items()},
+                image_encoder_hidden_states_sym
+              )
+              symms[self.image_encoder_key] = image_encoder_rnn_state_sym
 
           self.buffer.update_data(self.image_encoder_key, n, obs_dict[self.image_encoder_key])
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
@@ -326,12 +334,13 @@ class Runner:
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
 
-      # We skip the first gradient update to initialize the observation normalizers.
-      _, last_image_encoder_rnn_state, _ = self.image_encoder(
-        obs_dict[self.image_encoder_key],
-        image_encoder_hidden_states
-      )
+      with torch.no_grad():
+        _, last_image_encoder_rnn_state, _ = self.image_encoder(
+          obs_dict[self.image_encoder_key],
+          image_encoder_hidden_states
+        )
       last_privileged_obs = {**obs_dict[self.value_key], self.image_encoder_key: last_image_encoder_rnn_state}
+      # We skip the first gradient update to initialize the observation normalizers.
       learn_stats = self._learn(last_privileged_obs, last_value_hidden_states=value_hidden_states, is_first=it == 0)
       self.learn_agg.add(learn_stats)
 
@@ -431,16 +440,17 @@ class Runner:
         learn_step_agg.add(metrics)
 
         # Reconstruction loss.
-        recon_loss, metrics = loss.reconstruction_loss(
-          batch,
-          self.image_encoder,
-          self.image_encoder_key,
-          self.cfg["image_encoder"]["max_batch_size"],
-          self.cfg["algorithm"]["symmetry"],
-          self._get_symmetry_fn,
-        )
-        total_loss += recon_loss
-        learn_step_agg.add(metrics)
+        if self.train_image_encoder(self.global_num_updates):
+          recon_loss, metrics = loss.reconstruction_loss(
+            batch,
+            self.image_encoder,
+            self.image_encoder_key,
+            self.cfg["image_encoder"]["max_batch_size"],
+            self.cfg["algorithm"]["symmetry"],
+            self._get_symmetry_fn,
+          )
+          total_loss += recon_loss
+          learn_step_agg.add(metrics)
 
         # SGD.
         self.image_encoder_optimizer.zero_grad()
@@ -453,6 +463,8 @@ class Runner:
         self.image_encoder_optimizer.step()
         self.policy_optimizer.step()
         self.value_optimizer.step()
+
+        del batch
 
         # Learning rate scheduler.
         if self.cfg["policy"]["desired_kl"] > 0.0:
@@ -470,6 +482,7 @@ class Runner:
           policy_stats[f'policy/{k}_min'] = v.min()
           policy_stats[f'policy/{k}_max'] = v.max()
         learn_step_agg.add(policy_stats)
+        self.global_num_updates += 1
 
       # Update the observation normalizers.
       with torch.no_grad():

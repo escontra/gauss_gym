@@ -52,7 +52,7 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS, CAMERA_IMAGE
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -429,6 +429,7 @@ sim:
 
 
 image_encoder:
+  train_every: -1
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3
   obs_key: image_encoder
@@ -438,7 +439,7 @@ image_encoder:
   params:
     layer_activation: silu
     recurrent_state_size: 512
-    # recurrent_proj_size: 128
+    recurrent_proj_size: 128
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -446,7 +447,8 @@ image_encoder:
     embedding_dim: 128
 
 policy:
-  class_name: RecurrentCNNModel
+  # TODO: Add skip connections.
+  class_name: RecurrentMLPModel
   learning_rate: 1.e-5
   desired_kl: 0.01
   kl_key: actions
@@ -507,9 +509,9 @@ runner:
   class_name: Runner
   use_wandb: True
   description: ""
-  log_every: 30.
+  log_every: 60.
   save_every: 600.
-  record_every: 600.
+  record_every: 1800.
   record_frames: 300.
   run_name: ""
   resume: False
