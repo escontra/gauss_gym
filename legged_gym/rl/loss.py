@@ -59,6 +59,7 @@ def actor_loss(
     bound_coefs,
     symmetry_coefs,
     clip_param,
+    symmetry_flip_latents,
 ):
   # Actor loss.
   hidden_states = batch[f"{policy_obs_key}_hidden_states"]
@@ -68,11 +69,14 @@ def actor_loss(
     hidden_states=hidden_states
   )
   if symmetry:
+    if symmetry_flip_latents:
+      hidden_states_sym = pytree.tree_map(lambda x: -1. * x, hidden_states)
+    else:
+      hidden_states_sym = hidden_states
     dists_sym, _, _ = policy_network(
       batch[f'{policy_obs_key}_sym'],
       masks=batch["masks"],
-      # hidden_states=pytree.tree_map(lambda x: -1. * x, hidden_states)
-      hidden_states=hidden_states
+      hidden_states=hidden_states_sym
     )
 
   kl_means = {}
@@ -129,7 +133,7 @@ def reconstruction_loss(
   max_batch_size,
   symmetry,
   symmetry_fn,
-
+  symmetry_flip_latents,
 ):
   orig_batch_size = batch["masks"].shape[1]
   if max_batch_size < orig_batch_size:
@@ -161,11 +165,14 @@ def reconstruction_loss(
 
   if symmetry:
     batch_sampled_sym = pytree.tree_map(lambda x: x[:, sample_idxs], batch[f'{image_encoder_obs_key}_sym'],)
+    if symmetry_flip_latents:
+      batch_sampled_hidden_states_sym = pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states)
+    else:
+      batch_sampled_hidden_states_sym = batch_sampled_hidden_states
     image_encoder_dists_sym, _, _ = image_encoder_network(
       batch_sampled_sym,
       masks=masks_sampled,
-      # hidden_states=pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states),
-      hidden_states=batch_sampled_hidden_states,
+      hidden_states=batch_sampled_hidden_states_sym,
       unpad=False
     )
     for name, dist in image_encoder_dists_sym.items():

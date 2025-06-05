@@ -20,13 +20,32 @@ env:
     # observation_manager.
     refresh_duration: 0.1
 
-    # Original intrinsics.
-    cam_width: 320
+    # Different realsense intrinsics: https://pastebin.com/fRwwuBmd
+
+    # 55.66 x 43.18 FOV
+    # cam_width: 320
+    # cam_height: 240
+    # fl_x: 303.0424
+    # fl_y: 303.1759
+    # pp_x: 161.5755
+    # pp_y: 124.6430
+
+    # 90.57 x 59.51 FOV
+    cam_width: 424
     cam_height: 240
-    fl_x: 303.0424
-    fl_y: 303.1759
-    pp_x: 161.5755
-    pp_y: 124.6430
+    fl_x: 209.908950805664
+    fl_y: 209.908950805664
+    pp_x: 211.966888427734
+    pp_y: 118.743743896484
+
+    # # 80.17 x 64.52 FOV
+    # cam_width: 640
+    # cam_height: 480
+    # fl_x: 380.212432861328
+    # fl_y: 380.212432861328
+    # pp_x: 319.940002441406
+    # pp_y: 237.724517822266
+
 
     # How much to downscale the image (and intrinsics) by.
     downscale_factor: 5.0
@@ -490,6 +509,7 @@ algorithm:
     stiffness: -0.01
     damping: -0.01
   symmetry: True
+  symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0
     stiffness: 3.0
@@ -509,8 +529,8 @@ runner:
   class_name: Runner
   use_wandb: True
   description: ""
-  log_every: 60.
-  save_every: 600.
+  log_every: 120.
+  save_every: 1800.
   record_every: 1800.
   record_frames: 300.
   run_name: ""

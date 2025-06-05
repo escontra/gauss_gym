@@ -434,7 +434,8 @@ class Runner:
           self.cfg["algorithm"]["entropy_coefs"],
           self.cfg["algorithm"]["bound_coefs"],
           self.cfg["algorithm"]["symmetry_coefs"],
-          self.cfg["algorithm"]["clip_param"]
+          self.cfg["algorithm"]["clip_param"],
+          self.cfg["algorithm"]["symmetry_flip_latents"]
         )
         total_loss += actor_loss
         learn_step_agg.add(metrics)
@@ -448,6 +449,7 @@ class Runner:
             self.cfg["image_encoder"]["max_batch_size"],
             self.cfg["algorithm"]["symmetry"],
             self._get_symmetry_fn,
+            self.cfg["algorithm"]["symmetry_flip_latents"]
           )
           total_loss += recon_loss
           learn_step_agg.add(metrics)
