@@ -521,10 +521,67 @@ class Runner:
     while True:
       with torch.no_grad():
         start = time.time()
-        _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
+        recon_dists, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
           obs_dict[self.image_encoder_key],
           image_encoder_hidden_states
         )
+
+        # import matplotlib.pyplot as plt
+        
+            
+        # if step % 1000 == 0:
+        #   # Create figure with subplots for each key in recon_dists
+        #   num_keys = len(recon_dists)
+        #   fig, axes = plt.subplots(num_keys, 1, figsize=(10, 5*num_keys))
+        #   if num_keys == 1:
+        #       axes = [axes]
+        #   for ax, (key, recon_dist) in zip(axes, recon_dists.items()):
+        #       # Get original observation
+        #       obs_group, obs_name = key.split('/')
+        #       orig_obs = obs_dict[obs_group][obs_name]
+              
+        #       # Handle 2D (image) and 1D (line) cases
+        #       if len(orig_obs.shape) == 4:  # Image case [batch, channels, height, width]
+        #           # Take first batch element
+        #           orig_img = orig_obs[self.env.selected_environment].permute(1,2,0).cpu().numpy()
+        #           recon_img = recon_dist.pred()[self.env.selected_environment].permute(1,2,0).cpu().numpy()
+                  
+        #           # Calculate global min and max for consistent color scaling
+        #           vmin = min(orig_img.min(), recon_img.min())
+        #           vmax = max(orig_img.max(), recon_img.max())
+
+        #           # Plot side by side with shared color scale
+        #           im = ax.imshow(np.hstack([orig_img, recon_img]), vmin=vmin, vmax=vmax)
+        #           ax.set_title(f'{key} - Original vs Reconstructed')
+        #           ax.axis('off')
+        #           # Add colorbar
+        #           cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        #           cbar.set_label('Value')
+
+        #       elif len(orig_obs.shape) == 3:  # Heatmap case
+        #           orig_img = orig_obs[self.env.selected_environment].cpu().numpy()
+        #           recon_img = recon_dist.pred()[self.env.selected_environment].cpu().numpy()
+                  
+        #           # Plot side by side
+        #           ax.imshow(np.hstack([orig_img, recon_img]))
+        #           ax.set_title(f'{key} - Original vs Reconstructed')
+        #           ax.axis('off')
+
+        #       else:  # Line case
+        #           # Take first batch element
+        #           orig_line = orig_obs[self.env.selected_environment].cpu().numpy()
+        #           recon_line = recon_dist.pred()[self.env.selected_environment].cpu().numpy()
+                  
+        #           ax.plot(orig_line, label='Original')
+        #           ax.plot(recon_line, label='Reconstructed')
+        #           ax.set_title(f'{key} - Original vs Reconstructed')
+        #           ax.legend()
+                  
+        #   plt.tight_layout()
+        #   plt.show()
+        #   input()
+
+
         if self.use_image_encoder_features:
           obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
         dists, _, policy_hidden_states = self.policy(

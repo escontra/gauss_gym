@@ -300,7 +300,7 @@ class GaussianSceneManager:
 
   def spawn_meshes(self):
     # Add meshes to the environment.
-    num_rows = np.floor(np.sqrt(self._terrain.num_meshes))
+    num_rows = np.floor(np.sqrt(self.num_meshes))
 
     curr_x_offset = 0.0
     curr_y_offset = 0.0
@@ -354,10 +354,15 @@ class GaussianSceneManager:
 
   def construct_trajectory_arrays(self):
     # Assign different env origins, cam_trans, quat, and offsets to each environment.
-    repeat_factor = int(np.ceil(self._env.num_envs / self._terrain.num_meshes))
-
     def repeat(x):
-      return np.repeat(np.array(x), repeat_factor, axis=0)[: self._env.num_envs]
+      x = np.repeat(np.array(x), self.robots_per_mesh, axis=0)
+      if x.shape[0] > self._env.num_envs:
+        x = x[:self._env.num_envs]
+      elif x.shape[0] < self._env.num_envs:
+        x_last = x[-1:]
+        x_last = np.repeat(x_last, self._env.num_envs - x.shape[0], axis=0)
+        x = np.concatenate([x, x_last], axis=0)
+      return x
 
     cam_trans_orig = np.array(
       list(self._terrain.get_value("cam_trans").values())
@@ -472,29 +477,39 @@ class GaussianSceneManager:
     cam_trans = cam_trans - self.env_origins
     return cam_trans, cam_quat
 
-  def mesh_id_for_env_id(self, env_id):
-    robots_per_mesh = int(
-      np.ceil(self._env.num_envs / self._terrain.num_meshes)
-    )
-    return int(np.floor(env_id / robots_per_mesh))
-
   def mesh_name_from_id(self, mesh_id):
     return '/'.join(self._terrain.mesh_keys[mesh_id])
-
-  def env_ids_for_mesh_id(self, mesh_id):
-    robots_per_mesh = int(
-      np.ceil(self._env.num_envs / self._terrain.num_meshes)
-    )
-    return torch.arange(
-      mesh_id * robots_per_mesh,
-      min((mesh_id + 1) * robots_per_mesh, self._env.num_envs),
-      device=self._env.device,
-      dtype=torch.int32,
-    )
 
   @property
   def num_meshes(self):
     return self._terrain.num_meshes
+
+  @property
+  def robots_per_mesh(self):
+    return max(int(
+      np.floor(self._env.num_envs / self.num_meshes)
+    ), 1)
+
+  def mesh_id_for_env_id(self, env_id):
+    return min(
+      int(env_id / self.robots_per_mesh),
+      self.num_meshes - 1
+    )
+
+  def env_ids_for_mesh_id(self, mesh_id):
+    lower_limit = mesh_id * self.robots_per_mesh
+    if lower_limit >= self._env.num_envs:
+      return torch.tensor([], device=self._env.device, dtype=torch.int32)
+    if mesh_id == self.num_meshes - 1:
+      upper_limit = self._env.num_envs
+    else:
+      upper_limit = min((mesh_id + 1) * self.robots_per_mesh, self._env.num_envs)
+    return torch.arange(
+      lower_limit,
+      upper_limit,
+      device=self._env.device,
+      dtype=torch.int32,
+    )
 
   def _get_nearest_traj_idx(self, monotonic):
     curr_cam_trans, _ = self.get_cam_link_pose_local_frame()
