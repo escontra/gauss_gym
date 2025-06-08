@@ -515,11 +515,18 @@ class Runner:
   def play(self):
     obs_dict = self.to_device(self.env.reset())
     policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+    image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
 
     inference_time, step = 0., 0
     while True:
       with torch.no_grad():
         start = time.time()
+        _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
+          obs_dict[self.image_encoder_key],
+          image_encoder_hidden_states
+        )
+        if self.use_image_encoder_features:
+          obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
         dists, _, policy_hidden_states = self.policy(
           obs_dict[self.policy_key],
           policy_hidden_states
@@ -527,8 +534,11 @@ class Runner:
         actions = {k: dist.pred() for k, dist in dists.items()}
         actions_scaled = self.scale_actions(actions)
         inference_time += time.time() - start
-        obs_dict, _, _, _ = self.env.step(actions_scaled)
-        obs_dict = self.to_device(obs_dict)
+        obs_dict, _, done, _ = self.env.step(actions_scaled)
+        obs_dict, done = self.to_device((obs_dict, done))
+
+        image_encoder_hidden_states = self.image_encoder.reset(done, image_encoder_hidden_states)
+        policy_hidden_states = self.policy.reset(done, policy_hidden_states)
 
       step += 1
       if step % 100 == 0:

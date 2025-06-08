@@ -269,11 +269,16 @@ class GaussianSceneManager:
       self._env.num_envs, 1, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.axis_geom = None
+    self.closest_axis_geom = None
+    self.target_axis_geom = None
     self.velocity_geom = None
     self.heading_geom = None
 
     # Index of the current robot state in the camera trajectory.
     self.state_idx = torch.zeros(
+      self._env.num_envs, device=self._env.device, dtype=torch.int64, requires_grad=False
+    )
+    self.target_idx = torch.zeros(
       self._env.num_envs, device=self._env.device, dtype=torch.int64, requires_grad=False
     )
 
@@ -510,27 +515,11 @@ class GaussianSceneManager:
     else:
       min_distance_idx = torch.argmin(distance, dim=1)
 
-    
     return min_distance_idx
 
   def _get_nearest_traj_pose(self, monotonic=False):
     nearest_traj_idx = self._get_nearest_traj_idx(monotonic)
-    nearest_traj_pos_idx = (
-      nearest_traj_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, self.cam_trans.shape[-1])
-    )
-    nearest_traj_pos = torch.gather(
-      self.cam_trans, dim=1, index=nearest_traj_pos_idx
-    ).squeeze(1)
-    nearest_traj_quat_idx = (
-      nearest_traj_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, self.cam_quat_xyzw.shape[-1])
-    )
-    nearest_traj_quat = torch.gather(
-      self.cam_quat_xyzw, dim=1, index=nearest_traj_quat_idx
-    ).squeeze(1)
+    nearest_traj_pos, nearest_traj_quat = self._retrieve_from_trajectory(self.cam_trans, self.cam_quat_xyzw, nearest_traj_idx)
     return nearest_traj_pos, nearest_traj_quat, nearest_traj_idx
 
   def to_robot_frame(self, cam_quat):
@@ -564,24 +553,7 @@ class GaussianSceneManager:
     # )
     state_idx = (rand * (high - low) + low).to(torch.int64)
     self.state_idx[env_ids] = state_idx
-
-    trans_idx = (
-      state_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, cam_trans_subs.shape[-1])
-    )
-    cam_trans = torch.gather(cam_trans_subs, dim=1, index=trans_idx).squeeze(1)
-
-    quat_idx = (
-      state_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, cam_quat_xyzw_subs.shape[-1])
-    )
-    cam_quat = torch.gather(cam_quat_xyzw_subs, dim=1, index=quat_idx).squeeze(
-      1
-    )
-
-    # Convert to robot frame.
+    cam_trans, cam_quat = self._retrieve_from_trajectory(cam_trans_subs, cam_quat_xyzw_subs, state_idx)
     robot_quat = self.to_robot_frame(cam_quat)
     return cam_trans, robot_quat
 
@@ -634,28 +606,11 @@ class GaussianSceneManager:
 
     # Choose a target pose moderately far away. If nearest_idx + 1 is chosen, target
     # velocities fall to 0 as the robot approaches this target.
-    target_idx = torch.clamp(nearest_idx + TARGET_IDX_OFFSET, 0, self.cam_trans.shape[1] - 1)
-    target_traj_quat_idx = (
-      target_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, self.cam_quat_xyzw.shape[-1])
-    )
-    target_traj_quat = torch.gather(
-      self.cam_quat_xyzw, dim=1, index=target_traj_quat_idx
-    ).squeeze(1)
+    self.target_idx = torch.clamp(nearest_idx + TARGET_IDX_OFFSET, 0, self.cam_trans.shape[1] - 1)
+    target_traj_trans, target_traj_quat = self._retrieve_from_trajectory(self.cam_trans, self.cam_quat_xyzw, self.target_idx)
     target_traj_quat = self.to_robot_frame(target_traj_quat)
     _, _, yaw = math.get_euler_xyz(target_traj_quat)
-    self.heading_command = math.wrap_to_pi(
-      yaw
-    )  # Match the orientation of the nearest camera.
-    target_traj_pos_idx = (
-      target_idx.unsqueeze(1)
-      .unsqueeze(2)
-      .expand(-1, 1, self.cam_trans.shape[-1])
-    )
-    target_traj_trans = torch.gather(
-      self.cam_trans, dim=1, index=target_traj_pos_idx
-    ).squeeze(1)
+    self.heading_command = math.wrap_to_pi(yaw)
     curr_cam_link_trans, _ = self.get_cam_link_pose_local_frame()
     pos_delta = target_traj_trans - curr_cam_link_trans
 
@@ -681,10 +636,50 @@ class GaussianSceneManager:
 
     return self.heading_command, self.velocity_command
 
+  def _retrieve_from_trajectory(self, trans, quat, index):
+    """Retrieve pose and trans from trajectory at given index.
+
+    Args:
+        trans (torch.Tensor): Pose trajectory. (N, T, 3)
+        quat (torch.Tensor): Quaternion trajectory. (N, T, 4)
+        index (torch.Tensor): Index to retrieve from trajectory. (N)
+
+    Returns:
+        trans (torch.Tensor): Retrieved pose. (N, 3)
+        quat (torch.Tensor): Retrieved quaternion. (N, 4)
+    """
+    trans_idx = (
+      index.unsqueeze(1)
+      .unsqueeze(2)
+      .expand(-1, 1, trans.shape[-1])
+    )
+    quat_idx = (
+      index.unsqueeze(1)
+      .unsqueeze(2)
+      .expand(-1, 1, quat.shape[-1])
+    )
+    trans = torch.gather(trans, dim=1, index=trans_idx).squeeze(1)
+    quat = torch.gather(quat, dim=1, index=quat_idx).squeeze(1)
+    return trans, quat
+
   def debug_vis(self, env):
     if self.axis_geom is None:
       self.axis_geom = sensors.BatchWireframeAxisGeometry(
         np.prod(self.cam_trans_viz.shape[:2]), 0.25, 0.005, 16
+      )
+    if self.closest_axis_geom is None:
+      self.closest_axis_geom = sensors.BatchWireframeAxisGeometry(
+        self._env.num_envs, 0.3, 0.01, 24,
+        color_x=(1, 0, 0),
+        color_y=(1, 0, 0),
+        color_z=(1, 0, 0),
+      )
+    if self.target_axis_geom is None:
+      self.target_axis_geom = sensors.BatchWireframeAxisGeometry(
+        self._env.num_envs, 0.3, 0.01, 24,
+        color_x=(0, 1, 0),
+        color_y=(0, 1, 0),
+        color_z=(0, 1, 0),
       )
     if self.velocity_geom is None:
       self.velocity_geom = sensors.BatchWireframeAxisGeometry(
@@ -701,11 +696,33 @@ class GaussianSceneManager:
         self._env.num_envs, 0.2, 0.01, 32, color_x=(1, 1, 0)
       )
 
+    closest_trans, closest_quat = self._retrieve_from_trajectory(self.cam_trans, self.cam_quat_xyzw, self.state_idx)
+    closest_trans = closest_trans + self.env_origins
+    closest_quat = self.to_robot_frame(closest_quat)
+
+    target_trans, target_quat = self._retrieve_from_trajectory(self.cam_trans, self.cam_quat_xyzw, self.target_idx)
+    target_trans = target_trans + self.env_origins
+    target_quat = self.to_robot_frame(target_quat)
+
     # Draw camera trajectory.
     if self._env.selected_environment < 0:
       self.axis_geom.draw(
         self.cam_trans_viz.reshape(-1, 3),
         self.cam_quat_xyzw_viz.reshape(-1, 4),
+        self._env.gym,
+        self._env.viewer,
+        self._env.envs[0],
+      )
+      self.closest_axis_geom.draw(
+        closest_trans.reshape(-1, 3),
+        closest_quat.reshape(-1, 4),
+        self._env.gym,
+        self._env.viewer,
+        self._env.envs[0],
+      )
+      self.target_axis_geom.draw(
+        target_trans.reshape(-1, 3),
+        target_quat.reshape(-1, 4),
         self._env.gym,
         self._env.viewer,
         self._env.envs[0],
@@ -723,6 +740,22 @@ class GaussianSceneManager:
         self._env.viewer,
         self._env.envs[0],
         only_render_selected=only_selected_range,
+      )
+      self.closest_axis_geom.draw(
+        closest_trans.reshape(-1, 3),
+        closest_quat.reshape(-1, 4),
+        self._env.gym,
+        self._env.viewer,
+        self._env.envs[0],
+        only_render_selected=self._env.selected_environment,
+      )
+      self.target_axis_geom.draw(
+        target_trans.reshape(-1, 3),
+        target_quat.reshape(-1, 4),
+        self._env.gym,
+        self._env.viewer,
+        self._env.envs[0],
+        only_render_selected=self._env.selected_environment,
       )
 
     # Draw velocity command.

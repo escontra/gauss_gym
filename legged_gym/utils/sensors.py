@@ -669,6 +669,15 @@ class FootContactSensor():
 
 
 def update_image(new_image, fig, im):
+
+    # Convert from channels first to channels last format
+    if len(new_image.shape) == 4:
+        new_image = new_image.transpose(0, 2, 3, 1)
+    elif len(new_image.shape) == 3:
+        new_image = new_image.transpose(1, 2, 0)
+    else:
+        raise ValueError(f'Invalid image shape: {new_image.shape}')
+
     # To visualize environment RGB.
     if len(new_image.shape) == 4:
         rows = cols = int(np.floor(np.sqrt(new_image.shape[0])))
