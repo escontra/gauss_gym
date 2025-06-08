@@ -6,7 +6,7 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False):
     mask_expanded = mask.clone()
     for _ in range(num_expand):
       mask_expanded = mask_expanded.unsqueeze(-1)
-    mask_expanded = mask_expanded.expand_as(x)
+    mask_expanded = mask_expanded.expand_as(x).detach()
     masked_x = x * mask_expanded
     count = mask_expanded.sum(dim=dim, keepdim=keepdim)
     sum_ = masked_x.sum(dim=dim, keepdim=keepdim)
@@ -61,7 +61,7 @@ def split_and_pad_trajectories(tensor, dones):
                  [b6, 0, 0, 0]     |    [True, False, False, False],
                 ]                  | ]    
             
-    Assumes that the inputy has the following dimension order: [time, number of envs, aditional dimensions]
+    Assumes that the input has the following dimension order: [time, number of envs, aditional dimensions]
     """
     dones = dones.clone()
     dones[-1] = 1
@@ -76,14 +76,19 @@ def split_and_pad_trajectories(tensor, dones):
     trajectories = torch.split(tensor.transpose(1, 0).flatten(0, 1),trajectory_lengths_list)
     padded_trajectories = torch.nn.utils.rnn.pad_sequence(trajectories)
 
+    # Pad dimension 0 up to original tensor length
+    if padded_trajectories.shape[0] < tensor.shape[0]:
+        padding = torch.zeros(tensor.shape[0] - padded_trajectories.shape[0], 
+                            *padded_trajectories.shape[1:], 
+                            device=tensor.device)
+        padded_trajectories = torch.cat([padded_trajectories, padding], dim=0)
 
-    trajectory_masks = trajectory_lengths > torch.arange(0, tensor.shape[0], device=tensor.device).unsqueeze(1)
+    trajectory_masks = trajectory_lengths > torch.arange(0, padded_trajectories.shape[0], device=tensor.device).unsqueeze(1)
     return padded_trajectories, trajectory_masks
 
 
 def unpad_trajectories(trajectories, masks):
-    """ Does the inverse operation of  split_and_pad_trajectories()
-    """
+    """ Does the inverse operation of  split_and_pad_trajectories()."""
     # Need to transpose before and after the masking to have proper reshaping
     obs_num_dims = len(trajectories.shape) - len(masks.shape)
     traj_transp = trajectories.transpose(1, 0)

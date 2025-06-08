@@ -1,6 +1,7 @@
 import torch
-from legged_gym.rl import utils
 import torch.utils._pytree as pytree
+
+from legged_gym.rl import utils
 
 
 def value_loss(

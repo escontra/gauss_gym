@@ -1195,7 +1195,32 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_tracking_lin_vel_y(self, tracking_sigma):
         # Tracking of linear velocity commands (y axes)
         return torch.exp(-torch.square(self.commands[:, 1] - self.filtered_lin_vel[:, 1]) / tracking_sigma)
-    
+
+    def _reward_tracking_lin_vel_tolerance(self, gaussian_margin, linear_margin):
+        def _move_or_stand_reward(val, target, standing):
+            move_reward = math.tolerance(
+                val,
+                lower=torch.where(target > 0, target, target - linear_margin),
+                upper=torch.where(target > 0, target + linear_margin, target),
+                margin=torch.abs(target),
+                sigmoid='linear',
+                value_at_margin=torch.zeros_like(target)
+            )
+            stand_still_reward = math.tolerance(
+                val,
+                margin=torch.full_like(target, gaussian_margin),
+                sigmoid='gaussian',
+                value_at_margin=torch.full_like(target, 0.01)
+            )
+            return move_reward * ~standing + stand_still_reward * standing
+
+        stand_command = self.get_small_command_mask()
+        velocity = self.filtered_lin_vel
+        commands = self.commands
+        x_reward = _move_or_stand_reward(velocity[:, 0], commands[:, 0], stand_command)
+        y_reward = _move_or_stand_reward(velocity[:, 1], commands[:, 1], stand_command)
+        return x_reward + y_reward
+
     def _reward_tracking_ang_vel(self, tracking_sigma):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.filtered_ang_vel[:, 2])
