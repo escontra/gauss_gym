@@ -53,13 +53,7 @@ class Recorder:
     self.camera_handles = []
     self.env_ids = []
     for mesh_id in range(env.scene_manager.num_meshes):
-      try:
-        env_ids = env.scene_manager.env_ids_for_mesh_id(mesh_id)
-      except Exception as e:
-        continue
-      if len(env_ids) == 0:
-        # TODO: some meshes have no envs. Why?
-        break
+      env_ids = env.scene_manager.env_ids_for_mesh_id(mesh_id)
       env_id = env_ids[0]
       camera_props = gymapi.CameraProperties()
       # camera_props.enable_tensors = True
