@@ -57,6 +57,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size=256,
         recurrent_proj_size: int = 0,
+        recurrent_skip_connection: bool = False,
         symlog_inputs=False,
         normalize_obs=True,
         max_abs_value=None,
@@ -83,6 +84,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       hidden_layer_sizes=hidden_layer_sizes,
       recurrent_state_size=recurrent_state_size,
       recurrent_proj_size=recurrent_proj_size,
+      recurrent_skip_connection=recurrent_skip_connection,
       symlog_inputs=symlog_inputs,
       normalize_obs=normalize_obs,
       max_abs_value=max_abs_value)
@@ -210,6 +212,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size: int =256,
         recurrent_proj_size: int = 0,
+        recurrent_skip_connection: bool = False,
         symlog_inputs=False,
         normalize_obs=True,
         max_abs_value=None):
@@ -222,6 +225,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
     self.recurrent_proj_size = recurrent_proj_size
+    self.recurrent_skip_connection = recurrent_skip_connection
     self.memory = Memory(self.obs_size, type='lstm', num_layers=1, hidden_size=self.recurrent_state_size)
     self.normalize_obs = normalize_obs
     self.max_abs_value = max_abs_value
@@ -283,10 +287,17 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
 
     # RNN.
     rnn_state, new_hidden_states = self.memory(processed_obs, hidden_states, masks, unpad=unpad)
+    rnn_state = rnn_state.squeeze(0)
     rnn_state = self.rnn_proj(rnn_state)
 
+    if self.recurrent_skip_connection:
+      # Concatenate the processed obs with the rnn state.
+      if masks is not None and unpad:
+        processed_obs = utils.unpad_trajectories(processed_obs, masks)
+      rnn_state = torch.cat([rnn_state, processed_obs], dim=-1)
+
     # Model.
-    model_state = self.model(rnn_state.squeeze(0))
+    model_state = self.model(rnn_state)
     if mean_only:
         outs = []
         for k in self.heads:
@@ -294,7 +305,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         return tuple(outs), new_hidden_states
     else:
         dists = {k: self.heads[k](model_state) for k in self.heads}
-        return dists, rnn_state.squeeze(0), new_hidden_states
+        return dists, rnn_state, new_hidden_states
 
   def stats(self):
     stats = {}
@@ -311,7 +322,10 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
 
   @property
   def rnn_state_size(self):
-    return self.recurrent_proj_size if self.recurrent_proj_size > 0 else self.recurrent_state_size
+    rnn_size = self.recurrent_proj_size if self.recurrent_proj_size > 0 else self.recurrent_state_size
+    if self.recurrent_skip_connection:
+      rnn_size += self.num_mlp_obs
+    return rnn_size
 
 
 class Memory(torch.nn.Module):
