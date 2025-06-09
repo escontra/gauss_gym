@@ -354,16 +354,6 @@ class GaussianSceneManager:
 
   def construct_trajectory_arrays(self):
     # Assign different env origins, cam_trans, quat, and offsets to each environment.
-    def repeat(x):
-      x = np.repeat(np.array(x), self.robots_per_mesh, axis=0)
-      if x.shape[0] > self._env.num_envs:
-        x = x[:self._env.num_envs]
-      elif x.shape[0] < self._env.num_envs:
-        x_last = x[-1:]
-        x_last = np.repeat(x_last, self._env.num_envs - x.shape[0], axis=0)
-        x = np.concatenate([x, x_last], axis=0)
-      return x
-
     cam_trans_orig = np.array(
       list(self._terrain.get_value("cam_trans").values())
     )
@@ -372,6 +362,22 @@ class GaussianSceneManager:
     )
     env_origins_z0 = np.pad(self.env_origins[:, :2], ((0, 0), (0, 1)), mode="constant", constant_values=0.0)
     cam_trans_orig = cam_trans_orig + env_origins_z0[:, None, :]
+
+    # Repeat environments evenly.
+    base_repeat = max(self._env.num_envs // self.num_meshes, 1)
+    remainder = self._env.num_envs % self.num_meshes if self._env.num_envs > self.num_meshes else 0
+    repeat_counts = [base_repeat] * self.num_meshes
+    for i in range(remainder):
+      repeat_counts[i] += 1
+    self.repeat_counts = np.array(repeat_counts)
+    self.repeats_cumsum = np.cumsum(self.repeat_counts)
+    def repeat(x):
+      x = np.array(x)
+      x = np.repeat(x, self.repeat_counts, axis=0)
+      if x.shape[0] > self._env.num_envs:
+        x = x[:self._env.num_envs]
+      assert x.shape[0] == self._env.num_envs
+      return x
 
     # Use warp to get ground position at each camera.
     directions = np.array([0, 0, -1])[None, None].repeat(cam_trans_orig.shape[0], axis=0).repeat(cam_trans_orig.shape[1], axis=1)
@@ -484,32 +490,22 @@ class GaussianSceneManager:
   def num_meshes(self):
     return self._terrain.num_meshes
 
-  @property
-  def robots_per_mesh(self):
-    return max(int(
-      np.floor(self._env.num_envs / self.num_meshes)
-    ), 1)
+  def robots_in_mesh_id(self, mesh_id):
+    return self.repeat_counts[mesh_id]
 
   def mesh_id_for_env_id(self, env_id):
-    return min(
-      int(env_id / self.robots_per_mesh),
-      self.num_meshes - 1
-    )
+    assert env_id < self._env.num_envs, f'Env id {env_id} is out of range'
+    if env_id >= self._env.num_envs:
+      return -1
+    return np.searchsorted(self.repeats_cumsum, env_id, side='right')
 
   def env_ids_for_mesh_id(self, mesh_id):
-    lower_limit = mesh_id * self.robots_per_mesh
-    if lower_limit >= self._env.num_envs:
+    assert mesh_id < self.num_meshes, f'Mesh id {mesh_id} is out of range'
+    start = np.sum(self.repeat_counts[:mesh_id])
+    if start >= self._env.num_envs:
       return torch.tensor([], device=self._env.device, dtype=torch.int32)
-    if mesh_id == self.num_meshes - 1:
-      upper_limit = self._env.num_envs
-    else:
-      upper_limit = min((mesh_id + 1) * self.robots_per_mesh, self._env.num_envs)
-    return torch.arange(
-      lower_limit,
-      upper_limit,
-      device=self._env.device,
-      dtype=torch.int32,
-    )
+    end = min(start + self.repeat_counts[mesh_id], self._env.num_envs)
+    return torch.arange(start, end, device=self._env.device, dtype=torch.int32)
 
   def _get_nearest_traj_idx(self, monotonic):
     curr_cam_trans, _ = self.get_cam_link_pose_local_frame()
