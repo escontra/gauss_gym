@@ -45,11 +45,20 @@ class Runner:
         for key in self.cfg["image_encoder"]["reconstruct_observations"]:
           obs_group, obs_name = key.split('/')
           obs_name = getattr(observation_groups, obs_name).name
-          reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
-          reconstruct_head[f'{obs_group}/{obs_name}'] = {
-            'output_type': 'mse',
-            'outscale': 1.0
-          }
+          if 'ray_cast' in obs_name.lower():
+            reconstruct_head[f'{obs_group}/{obs_name}'] = {
+              'output_type': 'voxel_grid_decoder',
+              'outscale': 1.0
+            }
+            reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
+              np.float32,
+              shape=(*self.env.obs_space()[obs_group][obs_name].shape, 16))
+          else:
+            reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
+            reconstruct_head[f'{obs_group}/{obs_name}'] = {
+              'output_type': 'mse',
+              'outscale': 1.0
+            }
       self.image_encoder: models.RecurrentModel = getattr(
         models, self.cfg["image_encoder"]["class_name"])(
         reconstruct_space,

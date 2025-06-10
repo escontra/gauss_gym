@@ -2,6 +2,7 @@ import torch
 import torch.utils._pytree as pytree
 
 from legged_gym.rl import utils
+from legged_gym.utils import voxel
 
 
 def value_loss(
@@ -157,34 +158,45 @@ def reconstruction_loss(
   metrics = {}
   for name, dist in image_encoder_dists.items():
     obs_group, obs_name = name.split('/')
-    recon_loss = dist.loss(
-      pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name]).detach()
-    )
-    recon_loss = utils.masked_mean(recon_loss, masks_sampled)
-    metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()
+    recon_obs = pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
+    if 'ray_cast' in obs_name.lower():
+      num_height_levels = dist[0].logit.shape[-1]
+      recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels_torch(recon_obs, num_height_levels, -1.0, 1.0)
+      recon_loss_occupancy = dist[0].loss(recon_occupancy_grid.detach())
+      recon_loss_centroid = dist[1].loss(recon_centroid_grid.detach())
+      recon_loss_occupancy = utils.masked_mean(recon_loss_occupancy, masks_sampled)
+      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_occupancy_loss'] = recon_loss_occupancy.item()
+      recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled)
+      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_centroid_loss'] = recon_loss_centroid.item()
+      recon_loss = recon_loss_occupancy + recon_loss_centroid
+      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()
+    else:
+      recon_loss = dist.loss(recon_obs.detach())
+      recon_loss = utils.masked_mean(recon_loss, masks_sampled)
+      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()
     losses.append(recon_loss)
 
-  if symmetry:
-    batch_sampled_sym = pytree.tree_map(lambda x: x[:, sample_idxs], batch[f'{image_encoder_obs_key}_sym'],)
-    if symmetry_flip_latents:
-      batch_sampled_hidden_states_sym = pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states)
-    else:
-      batch_sampled_hidden_states_sym = batch_sampled_hidden_states
-    image_encoder_dists_sym, _, _ = image_encoder_network(
-      batch_sampled_sym,
-      masks=masks_sampled,
-      hidden_states=batch_sampled_hidden_states_sym,
-      unpad=False
-    )
-    for name, dist in image_encoder_dists_sym.items():
-      obs_group, obs_name = name.split('/')
-      recon_loss = dist.loss(
-        symmetry_fn(obs_group, obs_name)(
-          pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
-      ).detach())
-      recon_loss = utils.masked_mean(recon_loss, masks_sampled)
-      metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss_sym'] = recon_loss.item()
-      losses.append(recon_loss)
+  # if symmetry:
+  #   batch_sampled_sym = pytree.tree_map(lambda x: x[:, sample_idxs], batch[f'{image_encoder_obs_key}_sym'],)
+  #   if symmetry_flip_latents:
+  #     batch_sampled_hidden_states_sym = pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states)
+  #   else:
+  #     batch_sampled_hidden_states_sym = batch_sampled_hidden_states
+  #   image_encoder_dists_sym, _, _ = image_encoder_network(
+  #     batch_sampled_sym,
+  #     masks=masks_sampled,
+  #     hidden_states=batch_sampled_hidden_states_sym,
+  #     unpad=False
+  #   )
+  #   for name, dist in image_encoder_dists_sym.items():
+  #     obs_group, obs_name = name.split('/')
+  #     recon_loss = dist.loss(
+  #       symmetry_fn(obs_group, obs_name)(
+  #         pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
+  #     ).detach())
+  #     recon_loss = utils.masked_mean(recon_loss, masks_sampled)
+  #     metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss_sym'] = recon_loss.item()
+  #     losses.append(recon_loss)
 
   total_loss = sum(losses)
   return total_loss, metrics

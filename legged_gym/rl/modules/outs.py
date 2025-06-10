@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from legged_gym.utils import math, space
+from legged_gym.rl.modules import decoder
 
 i32 = torch.int32
 f32 = torch.float32
@@ -198,8 +199,8 @@ class Binary(Output):
 
   def logp(self, event):
     event = event.to(f32)
-    logp = torch.nn.functional.log_sigmoid(self.logit)
-    lognotp = torch.nn.functional.log_sigmoid(-self.logit)
+    logp = torch.nn.functional.logsigmoid(self.logit)
+    lognotp = torch.nn.functional.logsigmoid(-self.logit)
     return event * logp + (1 - event) * lognotp
 
   def sample(self, shape=()):
@@ -357,7 +358,30 @@ class Head(torch.nn.Module):
     self.unimix = unimix
     self.bins = bins
     self.outscale = outscale
-    if self.impl == 'mse':
+    if self.impl == 'voxel_grid_decoder':
+      self.decoder = decoder.ConvDecoder3D(
+        in_channels=input_size,
+        out_resolution=self.output_size,
+        out_channels=input_size,
+        mults=(2, 3),
+        act_final=True
+      )
+      self.occupancy_grid_projection = nn.Conv3d(
+        in_channels=input_size,
+        out_channels=1,
+        kernel_size=1,
+        stride=1
+      )
+      self.centroid_grid_projection = nn.Sequential(
+        nn.Conv3d(
+          in_channels=input_size,
+          out_channels=1,
+          kernel_size=1,
+          stride=1
+        ),
+        nn.Sigmoid()
+      )
+    elif self.impl == 'mse':
       self.projection_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
       self._init_layer(self.projection_net)
     elif self.impl == 'symexp_twohot':
@@ -406,6 +430,18 @@ class Head(torch.nn.Module):
       raise NotImplementedError(self.impl)
     output = getattr(self, self.impl)(x)
     return output
+
+  def voxel_grid_decoder(self, x):
+    latent_grid = self.decoder(x)
+    bshape = latent_grid.shape[:-4]
+    latent_grid = latent_grid.reshape((-1, *latent_grid.shape[-4:]))
+    occupancy_grid = self.occupancy_grid_projection(latent_grid).squeeze(-1)
+    centroid_grid = self.centroid_grid_projection(latent_grid).squeeze(-1)
+    occupancy_grid = occupancy_grid.reshape((*bshape, *occupancy_grid.shape[-3:]))
+    centroid_grid = centroid_grid.reshape((*bshape, *centroid_grid.shape[-3:]))
+    occupancy_dist = Binary(occupancy_grid)
+    centroid_dist = MSE(centroid_grid)
+    return occupancy_dist, centroid_dist
 
   def mse(self, x):
     pred = self.projection_net(x)

@@ -488,11 +488,21 @@ def grid_pattern(pattern_cfg: "GridPatternCfg", device: str) -> Tuple[torch.Tens
         ray_directions (torch.Tensor): The ray directions
 
     """
-    y = torch.arange(
-        start=-pattern_cfg.width / 2, end=pattern_cfg.width / 2 + 1.0e-9, step=pattern_cfg.resolution, device=device
+    n_steps_y = int(pattern_cfg.width / pattern_cfg.resolution_width)
+    n_steps_x = int(pattern_cfg.length / pattern_cfg.resolution_length)
+    n_steps_y = (n_steps_y // 2) * 2
+    n_steps_x = (n_steps_x // 2) * 2
+    y = torch.linspace(
+        start=-pattern_cfg.width / 2,
+        end=pattern_cfg.width / 2,
+        steps=n_steps_y,
+        device=device
     )
-    x = torch.arange(
-        start=-pattern_cfg.length / 2, end=pattern_cfg.length / 2 + 1.0e-9, step=pattern_cfg.resolution, device=device
+    x = torch.linspace(
+        start=-pattern_cfg.length / 2,
+        end=pattern_cfg.length / 2,
+        steps=n_steps_x,
+        device=device
     )
     grid_x, grid_y = torch.meshgrid(x, y)
 
@@ -504,7 +514,8 @@ def grid_pattern(pattern_cfg: "GridPatternCfg", device: str) -> Tuple[torch.Tens
 
 @dataclass
 class GridPatternLocomotionCfg:
-    resolution: float = 0.1
+    resolution_width: float = 0.07
+    resolution_length: float = 0.1
     width: float = 1.0 #  for rmp, we use 8.0; for rl policy, should be 3.2
     length: float = 1.6 #  for rmp, we use 8.0; for rl policy, should be 3.2
     max_xy_drift: float = 0.05
