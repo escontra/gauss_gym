@@ -3,16 +3,13 @@ import os
 import pathlib
 import dataclasses
 from collections import defaultdict
-from isaacgym import gymapi
 from typing import Union, Dict, List
 import torch
-import warp as wp
+
+from isaacgym import gymapi
 
 import legged_gym
-from legged_gym.utils import sensors, math
-
-
-wp.init()
+from legged_gym.utils import sensors, math, visualization, warp_utils
 
 
 TARGET_IDX_OFFSET = 5
@@ -347,7 +344,7 @@ class GaussianSceneManager:
 
     self.all_vertices_mesh = np.concatenate(all_vertices)
     self.all_triangles_mesh = np.concatenate(all_triangles)
-    self.terrain_mesh = sensors.convert_to_wp_mesh(self.all_vertices_mesh, self.all_triangles_mesh, self._env.device)
+    self.terrain_mesh = warp_utils.convert_to_wp_mesh(self.all_vertices_mesh, self.all_triangles_mesh, self._env.device)
 
     self.env_origins = np.array(env_origins)
     self.construct_trajectory_arrays()
@@ -383,7 +380,7 @@ class GaussianSceneManager:
     directions = np.array([0, 0, -1])[None, None].repeat(cam_trans_orig.shape[0], axis=0).repeat(cam_trans_orig.shape[1], axis=1)
     directions_torch = math.to_torch(directions, device=self._env.device, requires_grad=False)
     cam_trans_orig_torch = math.to_torch(cam_trans_orig, device=self._env.device, requires_grad=False)
-    ground_positions_world_frame = sensors.ray_cast(cam_trans_orig_torch.view(-1, 3), directions_torch.reshape(-1, 3), self.terrain_mesh)
+    ground_positions_world_frame = warp_utils.ray_cast(cam_trans_orig_torch.view(-1, 3), directions_torch.reshape(-1, 3), self.terrain_mesh)
     ground_positions_world_frame = ground_positions_world_frame.view(*cam_trans_orig_torch.shape).cpu().numpy()
     ground_positions_world_frame = ground_positions_world_frame - env_origins_z0[:, None, :]
     self.ground_positions = math.to_torch(
@@ -675,25 +672,25 @@ class GaussianSceneManager:
 
   def debug_vis(self, env):
     if self.axis_geom is None:
-      self.axis_geom = sensors.BatchWireframeAxisGeometry(
+      self.axis_geom = visualization.BatchWireframeAxisGeometry(
         np.prod(self.cam_trans_viz.shape[:2]), 0.25, 0.005, 16
       )
     if self.closest_axis_geom is None:
-      self.closest_axis_geom = sensors.BatchWireframeAxisGeometry(
+      self.closest_axis_geom = visualization.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.3, 0.01, 24,
         color_x=(1, 0, 0),
         color_y=(1, 0, 0),
         color_z=(1, 0, 0),
       )
     if self.target_axis_geom is None:
-      self.target_axis_geom = sensors.BatchWireframeAxisGeometry(
+      self.target_axis_geom = visualization.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.3, 0.01, 24,
         color_x=(0, 1, 0),
         color_y=(0, 1, 0),
         color_z=(0, 1, 0),
       )
     if self.velocity_geom is None:
-      self.velocity_geom = sensors.BatchWireframeAxisGeometry(
+      self.velocity_geom = visualization.BatchWireframeAxisGeometry(
         self._env.num_envs,
         0.3,
         0.01,
@@ -703,7 +700,7 @@ class GaussianSceneManager:
         color_z=(0, 0, 0),
       )
     if self.heading_geom is None:
-      self.heading_geom = sensors.BatchWireframeAxisGeometry(
+      self.heading_geom = visualization.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.2, 0.01, 32, color_x=(1, 1, 0)
       )
 
