@@ -161,16 +161,27 @@ def reconstruction_loss(
     recon_obs = pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
     if 'ray_cast' in obs_name.lower():
       num_height_levels = dist[0].logit.shape[-1]
-      recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels_torch(recon_obs, num_height_levels, -1.0, 1.0)
+      # Compute ground truth occupancy grid and centroid grid. Get mask for
+      # unsaturated voxels.
+      recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels_torch(recon_obs, num_height_levels)
+      unsaturated_mask = voxel.unsaturated_voxels_mask(recon_occupancy_grid)
+
+      # Expand trajectory mask and combine with unsaturated mask.
+      masks_sampled_expanded = utils.broadcast_right(masks_sampled, unsaturated_mask)
+      masks_sampled_unsaturated = masks_sampled_expanded & unsaturated_mask
+
+      # Compute masked occupancy loss.
       recon_loss_occupancy = dist[0].loss(recon_occupancy_grid.detach())
-      recon_loss_centroid = dist[1].loss(recon_centroid_grid.detach())
-      masks_sampled_expanded = utils.broadcast_right(masks_sampled, recon_loss_occupancy)
-      recon_loss_occupancy = utils.masked_mean(recon_loss_occupancy, masks_sampled_expanded)
+      recon_loss_occupancy = utils.masked_mean(recon_loss_occupancy, masks_sampled_unsaturated)
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_occupancy_loss'] = recon_loss_occupancy.item()
+
+      # Compute masked centroid loss. Additionally mask out loss for
+      # unoccupied voxels.
+      recon_loss_centroid = dist[1].loss(recon_centroid_grid.detach())
       # With ground truth occupancy grid mask.
-      recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_expanded & recon_occupancy_grid)
+      recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_unsaturated & recon_occupancy_grid)
       # With predicted occupancy grid mask.
-      # recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_expanded & dist[0].pred())
+      # recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_unsaturated & dist[0].pred())
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_centroid_loss'] = recon_loss_centroid.item()
       recon_loss = recon_loss_occupancy + recon_loss_centroid
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()

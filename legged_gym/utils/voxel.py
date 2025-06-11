@@ -47,7 +47,7 @@ def heightmap_to_voxels_np(heightmap: np.ndarray, num_voxels: int, min_height: f
     return occupancy_grid, centroid_grid
 
 
-def heightmap_to_voxels_torch(heightmap: torch.Tensor, num_voxels: int, min_height: float, max_height: float) -> Tuple[torch.Tensor, torch.Tensor]:
+def heightmap_to_voxels_torch(heightmap: torch.Tensor, num_voxels: int, min_height: float=-1.0, max_height: float=1.0) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Convert a heightmap to voxel occupancy and centroid grids using PyTorch.
 
