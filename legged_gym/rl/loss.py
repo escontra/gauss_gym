@@ -163,7 +163,7 @@ def reconstruction_loss(
       num_height_levels = dist[0].logit.shape[-1]
       # Compute ground truth occupancy grid and centroid grid. Get mask for
       # unsaturated voxels.
-      recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels_torch(recon_obs, num_height_levels)
+      recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels(recon_obs, num_height_levels)
       unsaturated_mask = voxel.unsaturated_voxels_mask(recon_occupancy_grid)
 
       # Expand trajectory mask and combine with unsaturated mask.
