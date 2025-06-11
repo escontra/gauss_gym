@@ -53,7 +53,7 @@ observations:
       BASE_ANG_VEL, PROJECTED_GRAVITY,
       VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
       GAIT_PROGRESS,
-      RAY_CAST,
+      # RAY_CAST,
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -66,7 +66,7 @@ symmetries:
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS,
       GAIT_PROGRESS,
-      RAY_CAST,
+      # RAY_CAST,
     ]
   actions:
     symmetries: [
@@ -350,6 +350,8 @@ rewards:
     scale: -2.e-4
   action_rate:
     scale: -0.1 # -0.5
+  t1_pose:
+    scale: 1.0
   dof_acc:
     scale: -1.e-7
   dof_pos_limits:

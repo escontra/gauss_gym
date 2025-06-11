@@ -1294,6 +1294,32 @@ class LeggedRobot(base_task.BaseTask):
       weights = torch.tensor(weights, device=self.device)[None]
       reward =  torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos) * weights, dim=-1))
       return reward
+    
+    def _reward_t1_pose(self):
+      # Stay close to the default pose.
+      weights = []
+      for name in self.dof_names:
+          if 'Head' in name:
+              weights.append(1.0)
+          elif 'Shoulder' in name:
+              weights.append(1.0)
+          elif 'Elbow' in name:
+              weights.append(1.0)
+          elif 'Waist' in name:
+              weights.append(1.0)
+          elif 'Hip' in name:
+              weights.append(0.1)
+          elif 'Knee' in name:
+              weights.append(0.1)
+          elif 'Ankle_Pitch' in name:
+              weights.append(0.1)
+          elif 'Ankle_Roll' in name:
+              weights.append(1.0)
+          else:
+              raise ValueError(f"Unknown dof name: {name}")
+      weights = torch.tensor(weights, device=self.device)[None]
+      reward =  torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos) * weights, dim=-1))
+      return reward
 
     def _reward_feet_clearance(self, clearance_height):
       _, _, feet_vel, _ = self.get_feet_state()
