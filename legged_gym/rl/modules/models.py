@@ -111,12 +111,13 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
               hidden_states: Tuple[torch.Tensor, ...],
               masks: Optional[torch.Tensor]=None,
               mean_only: bool=False,
+              rnn_only: bool=False,
               unpad: bool=True) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     new_obs = {
        **obs,
        **self.image_feature_model(obs)
     }
-    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, unpad=unpad)
+    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, unpad=unpad, rnn_only=rnn_only)
 
   def flatten_parameters(self):
     self.recurrent_model.flatten_parameters()
@@ -282,6 +283,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
               masks: Optional[torch.Tensor]=None,
               mean_only: bool=False,
               unpad: bool=True,
+              rnn_only: bool=False,
               ) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
     processed_obs = self.process_obs(obs)
 
@@ -296,16 +298,20 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         processed_obs = utils.unpad_trajectories(processed_obs, masks)
       rnn_state = torch.cat([rnn_state, processed_obs], dim=-1)
 
-    # Model.
-    model_state = self.model(rnn_state)
-    if mean_only:
-        outs = []
-        for k in self.heads:
-          outs.append(self.heads[k].mean_net(model_state))
-        return tuple(outs), new_hidden_states
+    # Heads.
+    if rnn_only:
+      dists = None
     else:
-        dists = {k: self.heads[k](model_state) for k in self.heads}
-        return dists, rnn_state, new_hidden_states
+      model_state = self.model(rnn_state)
+      if mean_only:
+          outs = []
+          for k in self.heads:
+            outs.append(self.heads[k].mean_net(model_state))
+          dists = tuple(outs)
+      else:
+          dists = {k: self.heads[k](model_state) for k in self.heads}
+
+    return dists, rnn_state, new_hidden_states
 
   def stats(self):
     stats = {}

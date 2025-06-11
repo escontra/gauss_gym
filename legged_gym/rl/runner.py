@@ -16,6 +16,18 @@ from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, wh
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
+class TrainRateScheduler:
+  def __init__(self, warmup_steps: int, train_every_warmup: int, train_every_after: int):
+    self.every_warmup = when.Every(train_every_warmup)
+    self.every_after = when.Every(train_every_after)
+    self.warmup_steps = warmup_steps
+
+  def __call__(self, step: int):
+    if step < self.warmup_steps:
+      return self.every_warmup(step)
+    return self.every_after(step)
+
+
 class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
     self.env = env
@@ -52,7 +64,8 @@ class Runner:
             }
             reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
               np.float32,
-              shape=(*self.env.obs_space()[obs_group][obs_name].shape, 16))
+              shape=(*self.env.obs_space()[obs_group][obs_name].shape,
+                     self.cfg["image_encoder"]["voxel_height_levels"]))
           else:
             reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
             reconstruct_head[f'{obs_group}/{obs_name}'] = {
@@ -100,7 +113,6 @@ class Runner:
     self.global_num_updates = 0
 
     # Optimizers.
-    self.train_image_encoder = when.Every(self.cfg["image_encoder"]["train_every"])
     self.image_encoder_optimizer = torch.optim.Adam(
       self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
     )
@@ -110,6 +122,17 @@ class Runner:
     self.value_optimizer = torch.optim.Adam(
       self.value.parameters(), lr=self.value_learning_rate
     )
+
+    self.train_image_encoder = TrainRateScheduler(
+      **self.cfg["image_encoder"]["train_rate_scheduler"]
+    )
+    if self.cfg["image_encoder"]["learning_rate_scheduler"] is not None:
+      self.image_encoder_learning_rate_scheduler = getattr(
+        torch.optim.lr_scheduler, self.cfg["image_encoder"]["learning_rate_scheduler"]["class_name"])(
+        self.image_encoder_optimizer, **self.cfg["image_encoder"]["learning_rate_scheduler"]["params"]
+      )
+    else:
+      self.image_encoder_learning_rate_scheduler = None
 
     if self.cfg["algorithm"]["symmetry"]:
       assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
@@ -280,14 +303,16 @@ class Runner:
           with torch.no_grad():
             _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
               obs_dict[self.image_encoder_key],
-              image_encoder_hidden_states
+              image_encoder_hidden_states,
+              rnn_only=True
             )
             if self.use_image_encoder_features:
               obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
               obs_dict[self.value_key][self.image_encoder_key] = image_encoder_rnn_state
               _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
                 {k: self._get_symmetry_fn(self.image_encoder_key, k)(v) for k, v in obs_dict[self.image_encoder_key].items()},
-                image_encoder_hidden_states_sym
+                image_encoder_hidden_states_sym,
+                rnn_only=True
               )
               symms[self.image_encoder_key] = image_encoder_rnn_state_sym
 
@@ -346,7 +371,8 @@ class Runner:
       with torch.no_grad():
         _, last_image_encoder_rnn_state, _ = self.image_encoder(
           obs_dict[self.image_encoder_key],
-          image_encoder_hidden_states
+          image_encoder_hidden_states,
+          rnn_only=True
         )
       last_privileged_obs = {**obs_dict[self.value_key], self.image_encoder_key: last_image_encoder_rnn_state}
       # We skip the first gradient update to initialize the observation normalizers.
@@ -451,6 +477,7 @@ class Runner:
 
         # Reconstruction loss.
         if self.train_image_encoder(self.global_num_updates):
+          self.image_encoder_learning_rate_scheduler.step()
           recon_loss, metrics = loss.reconstruction_loss(
             batch,
             self.image_encoder,
@@ -504,6 +531,7 @@ class Runner:
           **learn_step_agg.result(),
           "policy_lr": self.policy_learning_rate,
           "value_lr": self.value_learning_rate,
+          "image_encoder_lr": self.image_encoder_learning_rate_scheduler.get_last_lr()
       }
 
   def scale_actions(self, actions):

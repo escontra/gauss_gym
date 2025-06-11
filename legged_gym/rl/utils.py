@@ -1,12 +1,19 @@
 import numpy as np
 import torch
 
-def masked_mean(x: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False):
-    num_expand = len(x.shape) - len(mask.shape)
-    mask_expanded = mask.clone()
+
+def broadcast_right(y: torch.Tensor, x: torch.Tensor):
+    "Broadcast y to the same shape as x by broadcasting right."
+    num_expand = len(x.shape) - len(y.shape)
+    y_expanded = y.clone()
     for _ in range(num_expand):
-      mask_expanded = mask_expanded.unsqueeze(-1)
-    mask_expanded = mask_expanded.expand_as(x).detach()
+      y_expanded = y_expanded.unsqueeze(-1)
+    y_expanded = y_expanded.expand_as(x).detach()
+    return y_expanded
+
+
+def masked_mean(x: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False):
+    mask_expanded = broadcast_right(mask, x)
     masked_x = x * mask_expanded
     count = mask_expanded.sum(dim=dim, keepdim=keepdim)
     sum_ = masked_x.sum(dim=dim, keepdim=keepdim)

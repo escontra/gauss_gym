@@ -90,7 +90,8 @@ def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     world_heights = sensor.get_data()[..., 2]
     base_heights = env.root_states[:, 2][..., None, None]
-    heights = base_heights - world_heights
+    init_height = env.base_init_state[2]
+    heights = (base_heights - world_heights) - init_height
     return heights
 
 def gs_render(env: "ANY_ENV", params, is_real=False):
