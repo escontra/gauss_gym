@@ -3,7 +3,6 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
 
 from rendering.batch_gs_renderer import MultiSceneRenderer
 from legged_gym.utils import visualization, math, warp_utils
@@ -172,42 +171,6 @@ class FootContactSensor():
           self.sphere_geom.draw(feet_edge_pos, env.gym, env.viewer, env.envs[0], custom_colors=colors)
 
 
-def update_image(new_image, fig, im):
-
-    # Convert from channels first to channels last format
-    if len(new_image.shape) == 4:
-        new_image = new_image.transpose(0, 2, 3, 1)
-    elif len(new_image.shape) == 3:
-        new_image = new_image.transpose(1, 2, 0)
-    else:
-        raise ValueError(f'Invalid image shape: {new_image.shape}')
-
-    # To visualize environment RGB.
-    if len(new_image.shape) == 4:
-        rows = cols = int(np.floor(np.sqrt(new_image.shape[0])))
-        new_image = new_image[:rows**2]
-        def image_grid(imgs, rows, cols):
-            assert len(imgs) == rows*cols
-            img = Image.fromarray(imgs[0])
-
-            w, h = img.size
-            grid = Image.new('RGB', size=(cols*w, rows*h))
-            grid_w, grid_h = grid.size
-            
-            for i, img in enumerate(imgs):
-                img = Image.fromarray(img)
-                grid.paste(img, box=(i%cols*w, i//cols*h))
-            return grid
-        to_plot = image_grid(new_image, rows, cols)
-    else:
-        to_plot = new_image
-
-    im.set_data(np.array(to_plot))
-    fig.canvas.flush_events()
-    fig.canvas.draw()
-    plt.pause(0.001)
-
-
 class GaussianSplattingRenderer():
     def __init__(self, env, scene_manager):        
         self.num_envs = env.num_envs
@@ -340,7 +303,7 @@ class GaussianSplattingRenderer():
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
         self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
-        update_image(self.process_image_fn(self.renders, self.env.selected_environment), self.fig, self.im)
+        visualization.update_image(self.process_image_fn(self.renders, self.env.selected_environment), self.fig, self.im)
 
 
 class LinkHeightSensor():

@@ -2,10 +2,78 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from PIL import Image
 
 from isaacgym import gymapi, gymutil
 
 from legged_gym.utils.math import quat_apply
+
+
+def plot_occupancy_grid(env, env_id, occupancy_grids, titles):
+    heights = env.sensors["raycast_grid"].ray_starts.clone()
+
+    fig = plt.figure(figsize=(10, 8))
+
+    for i, (occupancy_grid, title) in enumerate(zip(occupancy_grids, titles)):
+      heights = env.sensors["raycast_grid"].ray_starts.clone()
+      first_nonzero = torch.argmax(occupancy_grid.to(torch.int32), dim=-1)  # Find first non-zero in each row
+      heights[..., -1] = first_nonzero
+      heights = heights[env_id].reshape(-1, 3)
+    
+      heights_np = heights.cpu().numpy()
+      x = heights_np[:, 0]
+      y = heights_np[:, 1]
+      z = heights_np[:, 2]
+
+      ax = fig.add_subplot(len(occupancy_grids), 1, i+1, projection='3d')
+      ax.scatter(x, y, z, c=z, cmap='viridis', s=50, vmin=0, vmax=occupancy_grid.shape[-1])
+      ax.set_xlim([x.min(), x.max()])
+      ax.set_ylim([y.min(), y.max()])
+      ax.set_zlim([0, occupancy_grid.shape[-1]])
+      ax.set_xlabel('X')
+      ax.set_ylabel('Y')
+      ax.set_zlabel('Z')
+      ax.set_title(title)
+      ax.set_box_aspect([1, 1, 1])
+    
+    plt.show()
+
+
+def update_image(new_image, fig, im):
+
+    # Convert from channels first to channels last format
+    if len(new_image.shape) == 4:
+        new_image = new_image.transpose(0, 2, 3, 1)
+    elif len(new_image.shape) == 3:
+        new_image = new_image.transpose(1, 2, 0)
+    else:
+        raise ValueError(f'Invalid image shape: {new_image.shape}')
+
+    # To visualize environment RGB.
+    if len(new_image.shape) == 4:
+        rows = cols = int(np.floor(np.sqrt(new_image.shape[0])))
+        new_image = new_image[:rows**2]
+        def image_grid(imgs, rows, cols):
+            assert len(imgs) == rows*cols
+            img = Image.fromarray(imgs[0])
+
+            w, h = img.size
+            grid = Image.new('RGB', size=(cols*w, rows*h))
+            grid_w, grid_h = grid.size
+            
+            for i, img in enumerate(imgs):
+                img = Image.fromarray(img)
+                grid.paste(img, box=(i%cols*w, i//cols*h))
+            return grid
+        to_plot = image_grid(new_image, rows, cols)
+    else:
+        to_plot = new_image
+
+    im.set_data(np.array(to_plot))
+    fig.canvas.flush_events()
+    fig.canvas.draw()
+    plt.pause(0.001)
 
 
 class BatchWireframeSphereGeometry(gymutil.LineGeometry):
