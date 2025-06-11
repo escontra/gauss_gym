@@ -170,7 +170,7 @@ def reconstruction_loss(
       # With ground truth occupancy grid mask.
       recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_expanded & recon_occupancy_grid)
       # With predicted occupancy grid mask.
-      # recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_expanded | dist[0].pred())
+      # recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_expanded & dist[0].pred())
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_centroid_loss'] = recon_loss_centroid.item()
       recon_loss = recon_loss_occupancy + recon_loss_centroid
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss'] = recon_loss.item()
