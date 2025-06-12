@@ -63,7 +63,7 @@ def heightmap_to_voxels(heightmap: torch.Tensor, num_voxels: int, min_height: fl
 
 def unsaturated_voxels_mask(occupancy_grid: torch.Tensor):
     """
-    Create a mask of the unsaturated voxels in the occupancy grid.
+    Create a mask of the unsaturated columns in the occupancy grid.
 
     Args:
         occupancy_grid: [..., N, M, H] bool tensor indicating voxel occupancy
@@ -71,7 +71,8 @@ def unsaturated_voxels_mask(occupancy_grid: torch.Tensor):
     Returns:
         mask: [..., N, M, H] bool tensor indicating saturated voxels
     """
-    saturated_mask = torch.zeros_like(occupancy_grid)
-    saturated_mask[..., 0] = occupancy_grid[..., 0]
-    saturated_mask[..., -1] = occupancy_grid[..., -1]
-    return ~saturated_mask
+    lower_saturated = occupancy_grid[..., :1].expand_as(occupancy_grid)
+    upper_saturated = occupancy_grid[..., -1:].expand_as(occupancy_grid)
+    saturated_columns = lower_saturated | upper_saturated
+    unsaturated_mask = ~saturated_columns
+    return unsaturated_mask

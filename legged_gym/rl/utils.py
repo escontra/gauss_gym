@@ -41,18 +41,6 @@ def discount_values(rewards, dones, values, last_values, gamma, lam):
   return advantages
 
 
-def surrogate_loss(
-  old_actions_log_prob, actions_log_prob, advantages, e_clip=0.2
-):
-  ratio = torch.exp(actions_log_prob - old_actions_log_prob)
-  surrogate = -advantages * ratio
-  surrogate_clipped = -advantages * torch.clamp(
-    ratio, 1.0 - e_clip, 1.0 + e_clip
-  )
-  surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
-  return surrogate_loss
-
-
 def split_and_pad_trajectories(tensor, dones):
     """ Splits trajectories at done indices. Then concatenates them and padds with zeros up to the length og the longest trajectory.
     Returns masks corresponding to valid parts of the trajectories

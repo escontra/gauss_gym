@@ -49,6 +49,18 @@ def value_loss(
   return value_loss, advantages, metrics
 
 
+def surrogate_loss(
+  old_actions_log_prob, actions_log_prob, advantages, e_clip=0.2
+):
+  ratio = torch.exp(actions_log_prob - old_actions_log_prob)
+  surrogate = -advantages * ratio
+  surrogate_clipped = -advantages * torch.clamp(
+    ratio, 1.0 - e_clip, 1.0 + e_clip
+  )
+  surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
+  return surrogate_loss
+
+
 def actor_loss(
     advantages,
     batch,
@@ -89,7 +101,7 @@ def actor_loss(
     actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
     with torch.no_grad():
       old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
-    actor_loss = utils.surrogate_loss(
+    actor_loss = surrogate_loss(
       old_actions_log_prob_batch, actions_log_prob, advantages,
       e_clip=clip_param
     )
