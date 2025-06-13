@@ -560,7 +560,7 @@ class Runner:
         f"{self.value_key}_lr": self.value_learning_rate,
       }
       if self.image_encoder_enabled:
-        learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate_scheduler.get_last_lr().item()
+        learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate_scheduler.get_last_lr()[0]
 
       return {
           **learn_step_agg.result(),

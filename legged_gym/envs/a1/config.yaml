@@ -457,7 +457,7 @@ image_encoder:
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  max_batch_size: 128
+  max_batch_size: 196
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
     warmup_steps: 2000
