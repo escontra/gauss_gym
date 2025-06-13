@@ -1,7 +1,50 @@
+from typing import List, Dict, Any, Callable
 import torch
 import torch.utils._pytree as pytree
+import dataclasses
 
 from legged_gym.rl import utils
+
+
+@dataclasses.dataclass
+class MiniBatch:
+  obs: Dict[str, Any]
+  obs_sym: Dict[str, Any]
+  hidden_states: Dict[str, Any]
+  hidden_states_sym: Dict[str, Any]
+  rl_values: Dict[str, Any]
+  network_batch: Dict[str, Any]
+  network_sym_batch: Dict[str, Any]
+
+  def __repr__(self):
+    repr_str = 'Obs:'
+    for obs_group in self.obs.keys():
+      repr_str += f'\n\t{obs_group}:'
+      for obs_name in self.obs[obs_group].keys():
+        repr_str += f'\n\t\t{obs_name}: {self.obs[obs_group][obs_name].shape}'
+    repr_str += '\n\n'
+    repr_str += 'Obs Sym:'
+    for obs_group in self.obs_sym.keys():
+      repr_str += f'\n\t{obs_group}:'
+      for obs_name in self.obs[obs_group].keys():
+        repr_str += f'\n\t\t{obs_name}: {self.obs[obs_group][obs_name].shape}'
+    repr_str += '\n\n'
+    repr_str += 'Hidden States:'
+    for hidden_state_group in self.hidden_states.keys():
+      repr_str += f'\n\t{hidden_state_group}: {len(self.hidden_states[hidden_state_group])}'
+    repr_str += '\n\n'
+    repr_str += 'RL Values:'
+    for rl_value_group in self.rl_values.keys():
+      repr_str += f'\n\t{rl_value_group}: {type(self.rl_values[rl_value_group])}'
+    repr_str += '\n\n'
+    repr_str += 'Network Batch:'
+    for network_group in self.network_batch.keys():
+      repr_str += f'\n\t{network_group}'
+    repr_str += '\n\n'
+    repr_str += 'Network Sym Batch:'
+    for network_group in self.network_sym_batch.keys():
+      repr_str += f'\n\t{network_group}'
+    return repr_str
 
 
 class ExperienceBuffer:
@@ -126,104 +169,91 @@ class ExperienceBuffer:
       self,
       num_learning_epochs,
       num_mini_batches,
-      old_policy_network,
-      value_network,
-      last_value_obs,
-      last_value_hidden_states,
-      image_encoder_obs_key,
-      policy_obs_key,
-      value_obs_key,
-      dones_key,
-      symmetry,
-      symmetry_fn,
-      symm_key):
+      last_value_items: List,
+      obs_groups: List[str],
+      hidden_states_keys: List[str],
+      networks: Dict[str, torch.nn.Module],
+      obs_sym_groups: List[str],
+      symm_key: str,
+      symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
+      symmetry_flip_latents: bool,
+      dones_key: str,
+      rl_keys: List[str],
+  ):
 
     # Symmetry-augmented observations computed during the environment step.
-    symms = None
+    symms = {}
     if symm_key in self.tensor_dict and self.tensor_dict[symm_key]:
       symms, _, _, _ = self._split_and_pad_obs(symm_key, dones_key)
 
-    policy_obs, traj_masks, policy_hidden_states, last_was_done = self._split_and_pad_obs(
-      policy_obs_key, dones_key, f"{policy_obs_key}_hidden_states")
-    value_obs, _, value_hidden_states, _ = self._split_and_pad_obs(
-      value_obs_key, dones_key, f"{value_obs_key}_hidden_states")
-    image_encoder_obs, _, image_encoder_hidden_states, _ = self._split_and_pad_obs(
-      image_encoder_obs_key, dones_key, f"{image_encoder_obs_key}_hidden_states")
-
-    if symmetry:
-      # Symmetry-augmented observations.
-      image_encoder_obs_sym = {}
-      for key, value in image_encoder_obs.items():
-        image_encoder_obs_sym[key] = symmetry_fn(image_encoder_obs_key, key)(value).detach()
-
-      policy_obs_sym = {}
-      for key, value in policy_obs.items():
-        if symms is not None and key in symms:
-          policy_obs_sym[key] = symms[key]
-        else:
-          policy_obs_sym[key] = symmetry_fn(policy_obs_key, key)(value).detach()
+    obs, obs_sym, hidden_states = {}, {}, {}
+    for obs_group in obs_groups:
+      hs_key = None
+      if obs_group in hidden_states_keys:
+        hs_key = f"{obs_group}_hidden_states"
+      obs[obs_group], traj_masks, hidden_states[obs_group], last_was_done = self._split_and_pad_obs(
+        obs_group, dones_key, hs_key)
+      if obs_group in obs_sym_groups:
+        obs_sym[obs_group] = {}
+        for key, value in obs[obs_group].items():
+          if key in symms:
+            obs_sym[obs_group][key] = symms[key]
+          else:
+            obs_sym[obs_group][key] = symmetry_fn(obs_group, key)(value).detach()
 
     mini_batch_size = self.num_envs // num_mini_batches
     for _ in range(num_learning_epochs):
-        first_traj = 0
-        with torch.no_grad():
-          # Used for value bootstrap.
-          last_value = value_network(last_value_obs, last_value_hidden_states)[0]['value'].pred().detach()
-        for i in range(num_mini_batches):
-            start = i * mini_batch_size
-            stop = (i + 1) * mini_batch_size
-            last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
+      first_traj = 0
+      with torch.no_grad():
+        last_value_network = last_value_items[0]
+        last_value_args = last_value_items[1:]
+        last_value = list(last_value_network(*last_value_args)[0].values())[0].pred().detach()
+      for i in range(num_mini_batches):
+        start = i * mini_batch_size
+        stop = (i + 1) * mini_batch_size
+        last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
 
-            masks_batch = traj_masks[:, first_traj:last_traj]
-            image_encoder_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], image_encoder_obs)
-            policy_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs)
-            value_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], value_obs)
-            policy_hidden_states_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_hidden_states)
-            value_hidden_states_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], value_hidden_states)
-            image_encoder_hidden_states_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], image_encoder_hidden_states)
-            if symmetry:
-              symmetry_obs_batch = {
-                f'{policy_obs_key}_sym': pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs_sym),
-              }
-              symmetry_obs_batch[f'{image_encoder_obs_key}_sym'] = pytree.tree_map(lambda x: x[:, first_traj:last_traj], image_encoder_obs_sym)
+        masks_batch = traj_masks[:, first_traj:last_traj]
+        obs_batch, obs_sym_batch, hidden_states_batch, hidden_states_sym_batch = {}, {}, {}, {}
+        for obs_group in obs_groups:
+          obs_batch[obs_group] = pytree.tree_map(lambda x: x[:, first_traj:last_traj], obs[obs_group])
+          if obs_group in obs_sym_groups:
+            obs_sym_batch[obs_group] = pytree.tree_map(lambda x: x[:, first_traj:last_traj], obs_sym[obs_group])
+          if obs_group in hidden_states_keys:
+            hs = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hidden_states[obs_group])
+            hidden_states_batch[obs_group] = hs
+            if symmetry_flip_latents:
+              hidden_states_sym_batch[obs_group] = utils.mirror_latent(hs)
             else:
-              symmetry_obs_batch = {}
+              hidden_states_sym_batch[obs_group] = hs
 
-            dones_batch = self.tensor_dict[dones_key][:, start:stop]
-            time_outs_batch = self.tensor_dict["time_outs"][:, start:stop]
-            rewards_batch = self.tensor_dict["rewards"][:, start:stop]
-            actions_batch = {k: self.tensor_dict["actions"][k][:, start:stop] for k in self.tensor_dict["actions"].keys()}
-            last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
-            old_values_batch = self.tensor_dict["values"][:, start:stop]
-            with torch.no_grad():
-              old_dist_batch, _, _ = old_policy_network(
-                policy_obs_batch,
+        rl_values_batch = {}
+        rl_values_batch['last_value'] = pytree.tree_map(lambda x: x[start:stop], last_value)
+        rl_values_batch['masks'] = masks_batch
+        for key in rl_keys:
+          rl_values_batch[key] = pytree.tree_map(lambda x: x[:, start:stop], self.tensor_dict[key])
+
+        with torch.no_grad():
+          network_batch, network_sym_batch = {}, {}
+          for key, network in networks.items():
+            if key in obs_groups:
+              network_batch[key], _, _ = network(
+                obs_batch[key],
                 masks=masks_batch,
-                hidden_states=policy_hidden_states_batch
-              )
-              if symmetry:
-                symmetry_obs_batch['old_dists_sym'], _, _ = old_policy_network(
-                  symmetry_obs_batch[f'{policy_obs_key}_sym'],
-                  masks=masks_batch,
-                  hidden_states=policy_hidden_states_batch
-                )
+                hidden_states=hidden_states_batch[key])
+            if key in obs_sym_groups:
+              network_sym_batch[key], _, _ = network(
+                obs_sym_batch[key],
+                masks=masks_batch,
+                hidden_states=hidden_states_sym_batch[key])
 
-            yield {
-              policy_obs_key: policy_obs_batch,
-              f"{policy_obs_key}_hidden_states": policy_hidden_states_batch,
-              value_obs_key: value_obs_batch,
-              f"{value_obs_key}_hidden_states": value_hidden_states_batch,
-              image_encoder_obs_key: image_encoder_obs_batch,
-              f"{image_encoder_obs_key}_hidden_states": image_encoder_hidden_states_batch,
-              "actions": actions_batch,
-              "last_value": last_value_batch,
-              "masks": masks_batch,
-              "dones": dones_batch,
-              "time_outs": time_outs_batch,
-              "rewards": rewards_batch,
-              "old_values": old_values_batch,
-              "old_dists": old_dist_batch,
-              **symmetry_obs_batch,
-            }
-            
-            first_traj = last_traj
+        yield MiniBatch(
+          obs=obs_batch,
+          obs_sym=obs_sym_batch,
+          hidden_states=hidden_states_batch,
+          hidden_states_sym=hidden_states_sym_batch,
+          rl_values=rl_values_batch,
+          network_batch=network_batch,
+          network_sym_batch=network_sym_batch,
+        )
+        first_traj = last_traj

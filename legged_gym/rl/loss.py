@@ -3,10 +3,11 @@ import torch.utils._pytree as pytree
 
 from legged_gym.rl import utils
 from legged_gym.utils import voxel
+from legged_gym.rl import experience_buffer
 
 
 def value_loss(
-    batch,
+    batch: experience_buffer.MiniBatch,
     value_network,
     value_obs_key,
     gamma,
@@ -14,20 +15,20 @@ def value_loss(
     use_clipped_value_loss,
     clip_param): 
   values, _, _ = value_network(
-    batch[value_obs_key],
-    masks=batch["masks"],
-    hidden_states=batch[f"{value_obs_key}_hidden_states"]
+    batch.obs[value_obs_key],
+    masks=batch.rl_values["masks"],
+    hidden_states=batch.hidden_states[value_obs_key]
   )
   # Compute returns and advantages.
   with torch.no_grad():
-    rewards = batch["rewards"].clone()
+    rewards = batch.rl_values["rewards"].clone()
     value_preds = values['value'].pred().squeeze(-1)
-    rewards[batch["time_outs"]] = value_preds[batch["time_outs"]]
+    rewards[batch.rl_values["time_outs"]] = value_preds[batch.rl_values["time_outs"]]
     advantages = utils.discount_values(
       rewards,
-      batch["dones"] | batch["time_outs"],
+      batch.rl_values["dones"] | batch.rl_values["time_outs"],
       value_preds,
-      batch["last_value"].squeeze(-1),
+      batch.rl_values["last_value"].squeeze(-1),
       gamma,
       lam,
     )
@@ -37,7 +38,7 @@ def value_loss(
 
   # Value loss.
   if use_clipped_value_loss:
-    value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
+    value_clipped = batch.rl_values["old_values"].detach() + (values.pred() - batch.rl_values["old_values"].detach()).clamp(
         -clip_param, clip_param
     )
     value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
@@ -63,7 +64,7 @@ def surrogate_loss(
 
 def actor_loss(
     advantages,
-    batch,
+    batch: experience_buffer.MiniBatch,
     policy_network,
     policy_obs_key,
     symmetry,
@@ -73,24 +74,18 @@ def actor_loss(
     bound_coefs,
     symmetry_coefs,
     clip_param,
-    symmetry_flip_latents,
 ):
   # Actor loss.
-  hidden_states = batch[f"{policy_obs_key}_hidden_states"]
   dists, _, _ = policy_network(
-    batch[policy_obs_key],
-    masks=batch["masks"],
-    hidden_states=hidden_states
+    batch.obs[policy_obs_key],
+    masks=batch.rl_values["masks"],
+    hidden_states=batch.hidden_states[policy_obs_key]
   )
   if symmetry:
-    if symmetry_flip_latents:
-      hidden_states_sym = pytree.tree_map(lambda x: -1. * x, hidden_states)
-    else:
-      hidden_states_sym = hidden_states
     dists_sym, _, _ = policy_network(
-      batch[f'{policy_obs_key}_sym'],
-      masks=batch["masks"],
-      hidden_states=hidden_states_sym
+      batch.obs_sym[policy_obs_key],
+      masks=batch.rl_values["masks"],
+      hidden_states=batch.hidden_states_sym[policy_obs_key]
     )
 
   kl_means = {}
@@ -98,16 +93,17 @@ def actor_loss(
   losses = []
   for name, dist in dists.items():
     actor_loss_coef = actor_loss_coefs[name]
-    actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
+    actions_log_prob = dist.logp(batch.rl_values["actions"][name].detach()).sum(dim=-1)
     with torch.no_grad():
-      old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
+      old_actions_log_prob_batch = batch.network_batch[policy_obs_key][name].logp(
+        batch.rl_values["actions"][name]).sum(dim=-1)
     actor_loss = surrogate_loss(
       old_actions_log_prob_batch, actions_log_prob, advantages,
       e_clip=clip_param
     )
     losses.append(actor_loss_coef * actor_loss)
     metrics[f'actor_loss_{name}'] = actor_loss.item()
-    klm = torch.mean(torch.sum(dist.kl(batch["old_dists"][name]), axis=-1)).item()
+    klm = torch.mean(torch.sum(dist.kl(batch.network_batch[policy_obs_key][name]), axis=-1)).item()
     kl_means[name] = klm
     metrics[f'kl_mean_{name}'] = klm
 
@@ -141,24 +137,23 @@ def actor_loss(
 
 
 def reconstruction_loss(
-  batch,
+  batch: experience_buffer.MiniBatch,
   image_encoder_network,
   image_encoder_obs_key,
   max_batch_size,
   symmetry,
   symmetry_fn,
-  symmetry_flip_latents,
 ):
-  orig_batch_size = batch["masks"].shape[1]
+  orig_batch_size = batch.rl_values["masks"].shape[1]
   if max_batch_size < orig_batch_size:
     sample_idxs = torch.randperm(orig_batch_size)[:max_batch_size]
   else:
     sample_idxs = torch.arange(orig_batch_size)
-  batch_sampled = pytree.tree_map(lambda x: x[:, sample_idxs], batch[image_encoder_obs_key])
-  masks_sampled = batch["masks"][:, sample_idxs]
+  batch_sampled = pytree.tree_map(lambda x: x[:, sample_idxs], batch.obs[image_encoder_obs_key])
+  masks_sampled = batch.rl_values["masks"][:, sample_idxs]
   batch_sampled_hidden_states = pytree.tree_map(
     lambda x: x[:, sample_idxs],
-    batch[f"{image_encoder_obs_key}_hidden_states"])
+    batch.hidden_states[image_encoder_obs_key])
   image_encoder_dists, _, _ = image_encoder_network(
     batch_sampled,
     masks=masks_sampled,
@@ -170,7 +165,7 @@ def reconstruction_loss(
   metrics = {}
   for name, dist in image_encoder_dists.items():
     obs_group, obs_name = name.split('/')
-    recon_obs = pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
+    recon_obs = pytree.tree_map(lambda x: x[:, sample_idxs], batch.obs[obs_group][obs_name])
     if 'ray_cast' in obs_name.lower():
       num_height_levels = dist[0].logit.shape[-1]
       # Compute ground truth occupancy grid and centroid grid. Get mask for
@@ -204,11 +199,12 @@ def reconstruction_loss(
     losses.append(recon_loss)
 
   # if symmetry:
-  #   batch_sampled_sym = pytree.tree_map(lambda x: x[:, sample_idxs], batch[f'{image_encoder_obs_key}_sym'],)
-  #   if symmetry_flip_latents:
-  #     batch_sampled_hidden_states_sym = pytree.tree_map(lambda x: -1. * x, batch_sampled_hidden_states)
-  #   else:
-  #     batch_sampled_hidden_states_sym = batch_sampled_hidden_states
+  #   batch_sampled_sym = pytree.tree_map(
+  #     lambda x: x[:, sample_idxs],
+  #     batch.obs_sym[image_encoder_obs_key],)
+  #   batch_sampled_hidden_states_sym = pytree.tree_map(
+  #     lambda x: x[:, sample_idxs],
+  #     batch.hidden_states_sym[image_encoder_obs_key])
   #   image_encoder_dists_sym, _, _ = image_encoder_network(
   #     batch_sampled_sym,
   #     masks=masks_sampled,
@@ -219,7 +215,7 @@ def reconstruction_loss(
   #     obs_group, obs_name = name.split('/')
   #     recon_loss = dist.loss(
   #       symmetry_fn(obs_group, obs_name)(
-  #         pytree.tree_map(lambda x: x[:, sample_idxs], batch[obs_group][obs_name])
+  #         pytree.tree_map(lambda x: x[:, sample_idxs], batch.obs_sym[obs_group][obs_name])
   #     ).detach())
   #     recon_loss = utils.masked_mean(recon_loss, masks_sampled)
   #     metrics[f'image_encoder_recon_{obs_group}_{obs_name}_loss_sym'] = recon_loss.item()

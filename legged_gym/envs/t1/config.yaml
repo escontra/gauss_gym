@@ -434,6 +434,35 @@ sim:
     default_buffer_size_multiplier: 5.0
     contact_collection: 2
 
+image_encoder:
+  enabled: False
+  class_name: RecurrentCNNModel
+  learning_rate: 1.e-3
+  obs_key: image_encoder
+  reconstruct_observations: [
+    critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
+  ]
+  max_batch_size: 128
+  voxel_height_levels: 24 # TODO: cleanup
+  train_rate_scheduler:
+    warmup_steps: 2000
+    train_every_warmup: -1
+    train_every_after: 10
+  learning_rate_scheduler:
+    class_name: MultiStepLR
+    params:
+      milestones: [2000]
+      gamma: 0.1
+  params:
+    layer_activation: silu
+    recurrent_state_size: 512
+    recurrent_proj_size: 128
+    recurrent_skip_connection: True
+    hidden_layer_sizes: [512, 256, 128]
+    symlog_inputs: True
+    normalize_obs: True
+    model_type: cnn_simple
+    embedding_dim: 128
 
 policy:
   class_name: RecurrentMLPModel
@@ -445,6 +474,7 @@ policy:
   params:
     layer_activation: silu
     recurrent_state_size: 256
+    recurrent_skip_connection: True
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -460,6 +490,7 @@ value:
   params:
     layer_activation: silu
     recurrent_state_size: 512
+    recurrent_skip_connection: True
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -469,16 +500,16 @@ value:
 algorithm:
   gamma: 0.97
   lam: 0.95
-  policy_recon_loss_coef: 0.1
   actor_loss_coefs:
     actions: 1.0
-    stiffness: 0.25
-    damping: 0.25
+    stiffness: 0.1
+    damping: 0.1
   entropy_coefs:
     actions: -0.01
-    stiffness: -0.001
-    damping: -0.001
+    stiffness: -0.01
+    damping: -0.01
   symmetry: True
+  symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0
     stiffness: 3.0
@@ -490,7 +521,6 @@ algorithm:
   clip_param: 0.2
   bound_coefs:
     actions: 1.0
-  normalize_advantage_per_minibatch: True
 
 runner:
   record_video: True
@@ -499,9 +529,9 @@ runner:
   class_name: Runner
   use_wandb: True
   description: ""
-  log_every: 30.
-  save_every: 600.
-  record_every: 600.
+  log_every: 120.
+  save_every: 1800.
+  record_every: 1800.
   record_frames: 300.
   run_name: ""
   resume: False

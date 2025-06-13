@@ -34,8 +34,6 @@ class Runner:
     self.device = device
     self.cfg = cfg
     self._set_seed()
-    self.image_encoder_key = self.cfg["image_encoder"]["obs_key"]
-    self.image_encoder_obs_space = self.env.obs_space()[self.image_encoder_key]
     self.policy_key = self.cfg["policy"]["obs_key"]
     self.policy_obs_space = self.env.obs_space()[self.policy_key]
     self.value_key = self.cfg["value"]["obs_key"]
@@ -47,43 +45,46 @@ class Runner:
     self.symm_obs_space = {}
 
     # Image encoder.
-    if len(self.env.obs_space()[self.image_encoder_key].keys()) > 0:
-      self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
-      reconstruct_space = None
-      reconstruct_head = None
-      if self.cfg["image_encoder"]["reconstruct_observations"] is not None:
-        reconstruct_space = {}
-        reconstruct_head = {}
-        for key in self.cfg["image_encoder"]["reconstruct_observations"]:
-          obs_group, obs_name = key.split('/')
-          obs_name = getattr(observation_groups, obs_name).name
-          if 'ray_cast' in obs_name.lower():
-            reconstruct_head[f'{obs_group}/{obs_name}'] = {
-              'output_type': 'voxel_grid_decoder',
-              'outscale': 1.0
-            }
-            reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
-              np.float32,
-              shape=(*self.env.obs_space()[obs_group][obs_name].shape,
-                     self.cfg["image_encoder"]["voxel_height_levels"]))
-          else:
-            reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
-            reconstruct_head[f'{obs_group}/{obs_name}'] = {
-              'output_type': 'mse',
-              'outscale': 1.0
-            }
-      self.image_encoder: models.RecurrentModel = getattr(
-        models, self.cfg["image_encoder"]["class_name"])(
-        reconstruct_space,
-        self.image_encoder_obs_space,
-        head=reconstruct_head,
-        **self.cfg["image_encoder"]["params"]
-      ).to(self.device)
-    else:
-      self.image_encoder = None
+    self.image_encoder_enabled = self.cfg["image_encoder"]["enabled"]
+    if self.image_encoder_enabled:
+      self.image_encoder_key = self.cfg["image_encoder"]["obs_key"]
+      self.image_encoder_obs_space = self.env.obs_space()[self.image_encoder_key]
+      if len(self.env.obs_space()[self.image_encoder_key].keys()) > 0:
+        self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
+        reconstruct_space = None
+        reconstruct_head = None
+        if self.cfg["image_encoder"]["reconstruct_observations"] is not None:
+          reconstruct_space = {}
+          reconstruct_head = {}
+          for key in self.cfg["image_encoder"]["reconstruct_observations"]:
+            obs_group, obs_name = key.split('/')
+            obs_name = getattr(observation_groups, obs_name).name
+            if 'ray_cast' in obs_name.lower():
+              reconstruct_head[f'{obs_group}/{obs_name}'] = {
+                'output_type': 'voxel_grid_decoder',
+                'outscale': 1.0
+              }
+              reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
+                np.float32,
+                shape=(*self.env.obs_space()[obs_group][obs_name].shape,
+                      self.cfg["image_encoder"]["voxel_height_levels"]))
+            else:
+              reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
+              reconstruct_head[f'{obs_group}/{obs_name}'] = {
+                'output_type': 'mse',
+                'outscale': 1.0
+              }
+        self.image_encoder: models.RecurrentModel = getattr(
+          models, self.cfg["image_encoder"]["class_name"])(
+          reconstruct_space,
+          self.image_encoder_obs_space,
+          head=reconstruct_head,
+          **self.cfg["image_encoder"]["params"]
+        ).to(self.device)
+      else:
+        self.image_encoder = None
 
-    self.use_image_encoder_features = True
-    if self.use_image_encoder_features:
+      # Add image encoder features to policy and value obs space.
       image_encoder_space = space.Space(np.float32, (self.image_encoder.rnn_state_size,), -np.inf, np.inf)
       self.policy_obs_space[self.image_encoder_key] = image_encoder_space
       self.value_obs_space[self.image_encoder_key] = image_encoder_space
@@ -113,26 +114,27 @@ class Runner:
     self.global_num_updates = 0
 
     # Optimizers.
-    self.image_encoder_optimizer = torch.optim.Adam(
-      self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
-    )
+    if self.image_encoder_enabled:
+      self.train_image_encoder = TrainRateScheduler(
+        **self.cfg["image_encoder"]["train_rate_scheduler"]
+      )
+      self.image_encoder_optimizer = torch.optim.Adam(
+        self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
+      )
+      if self.cfg["image_encoder"]["learning_rate_scheduler"] is not None:
+        self.image_encoder_learning_rate_scheduler = getattr(
+          torch.optim.lr_scheduler, self.cfg["image_encoder"]["learning_rate_scheduler"]["class_name"])(
+          self.image_encoder_optimizer, **self.cfg["image_encoder"]["learning_rate_scheduler"]["params"]
+        )
+      else:
+        self.image_encoder_learning_rate_scheduler = None
+
     self.policy_optimizer = torch.optim.Adam(
       self.policy.parameters(), lr=self.policy_learning_rate
     )
     self.value_optimizer = torch.optim.Adam(
       self.value.parameters(), lr=self.value_learning_rate
     )
-
-    self.train_image_encoder = TrainRateScheduler(
-      **self.cfg["image_encoder"]["train_rate_scheduler"]
-    )
-    if self.cfg["image_encoder"]["learning_rate_scheduler"] is not None:
-      self.image_encoder_learning_rate_scheduler = getattr(
-        torch.optim.lr_scheduler, self.cfg["image_encoder"]["learning_rate_scheduler"]["class_name"])(
-        self.image_encoder_optimizer, **self.cfg["image_encoder"]["learning_rate_scheduler"]["params"]
-      )
-    else:
-      self.image_encoder_learning_rate_scheduler = None
 
     if self.cfg["algorithm"]["symmetry"]:
       assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
@@ -192,11 +194,13 @@ class Runner:
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
     )
-    self.image_encoder.load_state_dict(model_dict["image_encoder"], strict=True)
+    if self.image_encoder_enabled:
+      self.image_encoder.load_state_dict(model_dict["image_encoder"], strict=True)
     self.policy.load_state_dict(model_dict["policy"], strict=True)
     self.value.load_state_dict(model_dict["value"], strict=True)
     try:
-      self.image_encoder_optimizer.load_state_dict(model_dict["image_encoder_optimizer"])
+      if self.image_encoder_enabled:
+        self.image_encoder_optimizer.load_state_dict(model_dict["image_encoder_optimizer"])
       self.policy_optimizer.load_state_dict(model_dict["policy_optimizer"])
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
     except Exception as e:
@@ -233,26 +237,27 @@ class Runner:
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
-    self.image_encoder.train()
+    if self.image_encoder_enabled:
+      self.image_encoder.train()
+      self.image_encoder.flatten_parameters()
     self.policy.train()
-    self.value.train()
-    self.image_encoder.flatten_parameters()
     self.policy.flatten_parameters()
-    self.old_policy.flatten_parameters()
+    self.value.train()
     self.value.flatten_parameters()
+    self.old_policy.flatten_parameters()
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
     symms = {}
-    image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
-    image_encoder_hidden_states_sym = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+    if self.image_encoder_enabled:
+      image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+      image_encoder_hidden_states_sym = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     value_hidden_states = self.value.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     if init_at_random_ep_len:
         self.env.episode_length_buf = torch.randint_like(
           self.env.episode_length_buf,
           high=int(self.env.max_episode_length))
-
 
     # Replay buffer.
     self.buffer = experience_buffer.ExperienceBuffer(
@@ -261,7 +266,6 @@ class Runner:
       self.device,
     )
 
-    self.buffer.add_buffer(self.image_encoder_key, self.image_encoder_obs_space)
     self.buffer.add_buffer(self.policy_key, self.policy_obs_space)
     self.buffer.add_buffer(self.value_key, self.value_obs_space)
     self.buffer.add_buffer(self.symm_key, self.symm_obs_space)
@@ -271,8 +275,11 @@ class Runner:
     self.buffer.add_buffer("dones", (), dtype=bool)
     self.buffer.add_buffer("time_outs", (), dtype=bool)
 
-    if self.image_encoder.is_recurrent:
-      self.buffer.add_hidden_state_buffers(f"{self.image_encoder_key}_hidden_states", (image_encoder_hidden_states,))
+    if self.image_encoder_enabled:
+      self.buffer.add_buffer(self.image_encoder_key, self.image_encoder_obs_space)
+      if self.image_encoder.is_recurrent:
+        self.buffer.add_hidden_state_buffers(f"{self.image_encoder_key}_hidden_states", (image_encoder_hidden_states,))
+
     if self.policy.is_recurrent:
       self.buffer.add_hidden_state_buffers(f"{self.policy_key}_hidden_states", (policy_hidden_states,))
     if self.value.is_recurrent:
@@ -283,15 +290,12 @@ class Runner:
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
           potential_images = {k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}
-          potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in self.image_encoder.cnn_keys})
+          if self.image_encoder_enabled:
+            potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in self.image_encoder.cnn_keys})
           self.recorder.record_statistics(
             self.recorder.maybe_record(self.env, image_features=potential_images),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
         with timer.section("buffer_add_obs"):
-          if self.image_encoder.is_recurrent:
-            self.buffer.update_hidden_state_buffers(
-              f"{self.image_encoder_key}_hidden_states", n, (image_encoder_hidden_states,)
-            )
           if self.policy.is_recurrent:
             self.buffer.update_hidden_state_buffers(
               f"{self.policy_key}_hidden_states", n, (policy_hidden_states,)
@@ -300,13 +304,17 @@ class Runner:
             self.buffer.update_hidden_state_buffers(
               f"{self.value_key}_hidden_states", n, (value_hidden_states,)
             )
-          with torch.no_grad():
-            _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
-              obs_dict[self.image_encoder_key],
-              image_encoder_hidden_states,
-              rnn_only=True
-            )
-            if self.use_image_encoder_features:
+          if self.image_encoder_enabled:
+            if self.image_encoder.is_recurrent:
+              self.buffer.update_hidden_state_buffers(
+                f"{self.image_encoder_key}_hidden_states", n, (image_encoder_hidden_states,)
+              )
+            with torch.no_grad():
+              _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
+                obs_dict[self.image_encoder_key],
+                image_encoder_hidden_states,
+                rnn_only=True
+              )
               obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
               obs_dict[self.value_key][self.image_encoder_key] = image_encoder_rnn_state
               _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
@@ -315,8 +323,8 @@ class Runner:
                 rnn_only=True
               )
               symms[self.image_encoder_key] = image_encoder_rnn_state_sym
+            self.buffer.update_data(self.image_encoder_key, n, obs_dict[self.image_encoder_key])
 
-          self.buffer.update_data(self.image_encoder_key, n, obs_dict[self.image_encoder_key])
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
           self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
           self.buffer.update_data(self.symm_key, n, symms)
@@ -344,8 +352,9 @@ class Runner:
           obs_dict, rew, done, infos = self.env.step(actions_scaled)
           obs_dict, rew, done = self.to_device((obs_dict, rew, done))
 
-        image_encoder_hidden_states = self.image_encoder.reset(done, image_encoder_hidden_states)
-        image_encoder_hidden_states_sym = self.image_encoder.reset(done, image_encoder_hidden_states_sym)
+        if self.image_encoder_enabled:
+          image_encoder_hidden_states = self.image_encoder.reset(done, image_encoder_hidden_states)
+          image_encoder_hidden_states_sym = self.image_encoder.reset(done, image_encoder_hidden_states_sym)
         policy_hidden_states = self.policy.reset(done, policy_hidden_states)
         value_hidden_states = self.value.reset(done, value_hidden_states)
         with timer.section("buffer_update_data"):
@@ -368,13 +377,15 @@ class Runner:
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
 
-      with torch.no_grad():
-        _, last_image_encoder_rnn_state, _ = self.image_encoder(
-          obs_dict[self.image_encoder_key],
-          image_encoder_hidden_states,
-          rnn_only=True
-        )
-      last_privileged_obs = {**obs_dict[self.value_key], self.image_encoder_key: last_image_encoder_rnn_state}
+      last_privileged_obs = obs_dict[self.value_key]
+      if self.image_encoder_enabled:
+        with torch.no_grad():
+          _, last_image_encoder_rnn_state, _ = self.image_encoder(
+            obs_dict[self.image_encoder_key],
+            image_encoder_hidden_states,
+            rnn_only=True
+          )
+          last_privileged_obs[self.image_encoder_key] = last_image_encoder_rnn_state
       # We skip the first gradient update to initialize the observation normalizers.
       learn_stats = self._learn(last_privileged_obs, last_value_hidden_states=value_hidden_states, is_first=it == 0)
       self.learn_agg.add(learn_stats)
@@ -401,14 +412,16 @@ class Runner:
 
       if self.should_save(it):
         with timer.section("model_save"):
-          self.recorder.save( {
-              "policy": self.policy.state_dict(),
-              "value": self.value.state_dict(),
-              "image_encoder": self.image_encoder.state_dict(),
-              "policy_optimizer": self.policy_optimizer.state_dict(),
-              "value_optimizer": self.value_optimizer.state_dict(),
-              "image_encoder_optimizer": self.image_encoder_optimizer.state_dict(),
-            },
+          to_save = {
+            "policy": self.policy.state_dict(),
+            "value": self.value.state_dict(),
+            "policy_optimizer": self.policy_optimizer.state_dict(),
+            "value_optimizer": self.value_optimizer.state_dict(),
+          }
+          if self.image_encoder_enabled:
+            to_save["image_encoder"] = self.image_encoder.state_dict()
+            to_save["image_encoder_optimizer"] = self.image_encoder_optimizer.state_dict()
+          self.recorder.save(to_save,
             it + 1,
           )
       print(
@@ -429,20 +442,32 @@ class Runner:
         return {}
 
       self.old_policy.load_state_dict(self.policy.state_dict())
+
+      obs_groups = [self.policy_key, self.value_key]
+      hidden_states_keys = [self.policy_key, self.value_key]
+      obs_sym_groups = [self.policy_key]
+      if self.image_encoder_enabled:
+        obs_groups.append(self.image_encoder_key)
+        hidden_states_keys.append(self.image_encoder_key)
+        obs_sym_groups.append(self.image_encoder_key)
+
       for batch in self.buffer.reccurent_mini_batch_generator(
         self.cfg["algorithm"]["num_learning_epochs"],
         self.cfg["algorithm"]["num_mini_batches"],
-        self.old_policy,
-        self.value,
-        last_privileged_obs,
-        last_value_hidden_states,
-        self.image_encoder_key,
-        self.policy_key,
-        self.value_key,
-        "dones",
-        self.cfg["algorithm"]["symmetry"],
-        self._get_symmetry_fn,
-        self.symm_key
+        last_value_items=[self.value, last_privileged_obs, last_value_hidden_states],
+        obs_groups=obs_groups,
+        hidden_states_keys=hidden_states_keys,
+        networks={
+          self.policy_key: self.old_policy,
+        },
+        obs_sym_groups=obs_sym_groups,
+        symm_key=self.symm_key,
+        symmetry_fn=self._get_symmetry_fn,
+        symmetry_flip_latents=self.cfg["algorithm"]["symmetry_flip_latents"],
+        dones_key="dones",
+        rl_keys=[
+          "values", "time_outs", "rewards", "dones", "actions"
+        ],
       ):
         # Value loss.
         value_loss, advantages, metrics = loss.value_loss(
@@ -470,13 +495,12 @@ class Runner:
           self.cfg["algorithm"]["bound_coefs"],
           self.cfg["algorithm"]["symmetry_coefs"],
           self.cfg["algorithm"]["clip_param"],
-          self.cfg["algorithm"]["symmetry_flip_latents"]
         )
         total_loss += actor_loss
         learn_step_agg.add(metrics)
 
         # Reconstruction loss.
-        if self.train_image_encoder(self.global_num_updates):
+        if self.image_encoder_enabled and self.train_image_encoder(self.global_num_updates):
           self.image_encoder_learning_rate_scheduler.step()
           recon_loss, metrics = loss.reconstruction_loss(
             batch,
@@ -485,20 +509,24 @@ class Runner:
             self.cfg["image_encoder"]["max_batch_size"],
             self.cfg["algorithm"]["symmetry"],
             self._get_symmetry_fn,
-            self.cfg["algorithm"]["symmetry_flip_latents"]
           )
           total_loss += recon_loss
           learn_step_agg.add(metrics)
 
         # SGD.
-        self.image_encoder_optimizer.zero_grad()
+        if self.image_encoder_enabled:
+          self.image_encoder_optimizer.zero_grad()
         self.policy_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
         total_loss.backward()
+        params = list(self.policy.parameters()) + list(self.value.parameters())
+        if self.image_encoder_enabled:
+          params += list(self.image_encoder.parameters())
         torch.nn.utils.clip_grad_norm_(
-          list(self.policy.parameters()) + list(self.value.parameters()) + list(self.image_encoder.parameters()),
+          params,
           1.0)
-        self.image_encoder_optimizer.step()
+        if self.image_encoder_enabled:
+          self.image_encoder_optimizer.step()
         self.policy_optimizer.step()
         self.value_optimizer.step()
 
@@ -527,11 +555,16 @@ class Runner:
         self.policy.update_normalizer(self.buffer[self.policy_key])
         self.value.update_normalizer(self.buffer[self.value_key])
 
+      learning_rate_stats = {
+        f"{self.policy_key}_lr": self.policy_learning_rate,
+        f"{self.value_key}_lr": self.value_learning_rate,
+      }
+      if self.image_encoder_enabled:
+        learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate_scheduler.get_last_lr().item()
+
       return {
           **learn_step_agg.result(),
-          "policy_lr": self.policy_learning_rate,
-          "value_lr": self.value_learning_rate,
-          "image_encoder_lr": self.image_encoder_learning_rate_scheduler.get_last_lr()
+          **learning_rate_stats,
       }
 
   def scale_actions(self, actions):
@@ -563,8 +596,28 @@ class Runner:
           image_encoder_hidden_states
         )
 
+        occupancy_grid_dist, centroid_grid_dist = recon_dists['critic/ray_cast']
+        occupancy_grid_pred = occupancy_grid_dist.pred()
+        centroid_grid_pred = centroid_grid_dist.pred()
+        from legged_gym.utils import voxel
+        occupancy_grid_gt, centroid_grid_gt = voxel.heightmap_to_voxels(
+          obs_dict["critic"]["ray_cast"],
+          self.cfg["image_encoder"]["voxel_height_levels"],
+          -1,
+          1
+        )
+
+        # [N, 16, 14]
         # import matplotlib.pyplot as plt
         
+        if step % 1000 == 0:
+          from legged_gym.utils import visualization
+          visualization.plot_occupancy_grid(
+            self.env,
+            self.env.selected_environment,
+            [occupancy_grid_gt, occupancy_grid_pred],
+            ["Ground Truth", "Reconstructed"])
+          input()
             
         # if step % 1000 == 0:
         #   # Create figure with subplots for each key in recon_dists

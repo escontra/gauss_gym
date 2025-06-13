@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.utils._pytree as pytree
 
 
 def broadcast_right(y: torch.Tensor, x: torch.Tensor):
@@ -39,6 +40,10 @@ def discount_values(rewards, dones, values, last_values, gamma, lam):
       delta + gamma * lam * next_nonterminal * last_advantage
     )
   return advantages
+
+
+def mirror_latent(latent):
+  return pytree.tree_map(lambda x: -1. * x, latent)
 
 
 def split_and_pad_trajectories(tensor, dones):

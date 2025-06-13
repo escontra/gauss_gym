@@ -55,8 +55,10 @@ env:
     cam_rpy_offset: [-3.1415927, 0.7853832, 1.5707963]
 
 observations:
-  image_encoder:
-    observations: [CAMERA_IMAGE]
+  # image_encoder:
+  #   observations: [
+  #     CAMERA_IMAGE, PROJECTED_GRAVITY #, DOF_POS, DOF_VEL, ACTIONS
+  #   ]
   critic:
     observations: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
@@ -71,7 +73,7 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS, RAY_CAST
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -81,7 +83,7 @@ observations:
 symmetries:
   image_encoder:
     symmetries: [
-      CAMERA_IMAGE
+      CAMERA_IMAGE, PROJECTED_GRAVITY, A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS
     ]
   critic:
     symmetries: [
@@ -448,17 +450,29 @@ sim:
 
 
 image_encoder:
-  train_every: -1
+  enabled: False
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3
   obs_key: image_encoder
   reconstruct_observations: [
-    "critic/RAY_CAST", "critic/BASE_ANG_VEL", "critic/BASE_LIN_VEL"]
-  max_batch_size: 64
+    critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
+  ]
+  max_batch_size: 128
+  voxel_height_levels: 24 # TODO: cleanup
+  train_rate_scheduler:
+    warmup_steps: 2000
+    train_every_warmup: -1
+    train_every_after: 10
+  learning_rate_scheduler:
+    class_name: MultiStepLR
+    params:
+      milestones: [2000]
+      gamma: 0.1
   params:
     layer_activation: silu
     recurrent_state_size: 512
     recurrent_proj_size: 128
+    recurrent_skip_connection: True
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -466,7 +480,6 @@ image_encoder:
     embedding_dim: 128
 
 policy:
-  # TODO: Add skip connections.
   class_name: RecurrentMLPModel
   learning_rate: 1.e-5
   desired_kl: 0.01
@@ -475,6 +488,7 @@ policy:
   params:
     layer_activation: "silu"
     recurrent_state_size: 256
+    recurrent_skip_connection: True
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -490,6 +504,7 @@ value:
   params:
     layer_activation: silu
     recurrent_state_size: 512
+    recurrent_skip_connection: True
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
@@ -499,7 +514,6 @@ value:
 algorithm:
   gamma: 0.97
   lam: 0.95
-  policy_recon_loss_coef: 0.1
   actor_loss_coefs:
     actions: 1.0
     stiffness: 0.1
