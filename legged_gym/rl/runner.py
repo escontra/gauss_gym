@@ -173,6 +173,9 @@ class Runner:
       self.value.parameters(), lr=self.value_learning_rate
     )
 
+    self._flatten_parameters()
+    self._set_eval_mode()
+
     if self.cfg["algorithm"]["symmetry"]:
       assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
       self.symmetry_groups = {}
@@ -246,6 +249,25 @@ class Runner:
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
 
+  def _flatten_parameters(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.flatten_parameters()
+    self.policy.flatten_parameters()
+    self.value.flatten_parameters()
+    self.old_policy.flatten_parameters()
+
+  def _set_train_mode(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.train()
+    self.policy.train()
+    self.value.train()
+
+  def _set_eval_mode(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.eval()
+    self.policy.eval()
+    self.value.eval()
+
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Logger aggregators.
     self.step_agg = agg.Agg()
@@ -262,14 +284,7 @@ class Runner:
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
-    if self.image_encoder_enabled:
-      self.image_encoder.train()
-      self.image_encoder.flatten_parameters()
-    self.policy.train()
-    self.policy.flatten_parameters()
-    self.value.train()
-    self.value.flatten_parameters()
-    self.old_policy.flatten_parameters()
+    self._set_eval_mode()
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
@@ -414,9 +429,12 @@ class Runner:
             rnn_only=True
           )
           last_privileged_obs[self.image_encoder_key] = last_image_encoder_rnn_state
+
       # We skip the first gradient update to initialize the observation normalizers.
+      self._set_train_mode()
       learn_stats = self._learn(last_privileged_obs, last_value_hidden_states=value_hidden_states, is_first=it == 0)
       self.learn_agg.add(learn_stats)
+      self._set_eval_mode()
 
       if self.should_log(it):
         with timer.section("logger_save"):
