@@ -6,6 +6,10 @@ sim_device: "cuda:0"
 graphics_device: "cuda:0"
 headless: False
 logdir: "default"
+multi_gpu: False
+multi_gpu_global_rank: 0
+multi_gpu_local_rank: 0
+multi_gpu_world_size: 1
 
 env:
   num_envs: 2048

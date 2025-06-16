@@ -1,5 +1,5 @@
 import types
-
+import os
 import pathlib
 import time
 import isaacgym
@@ -21,6 +21,19 @@ def main(argv=None):
     cfg = task_registry.get_cfgs(parsed.task)
     cfg = cfg.update({'headless': True})
     cfg = flags.Flags(cfg).parse(other)
+
+    if cfg["multi_gpu"]:
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        global_rank = int(os.getenv("RANK", "0"))
+        world_size = int(os.getenv("WORLD_SIZE", "1"))
+        print(f"Horovod global rank {global_rank} local rank: {local_rank}")
+        cfg = cfg.update({"sim_device": f'cuda:{local_rank}',
+                          "rl_device": f'cuda:{local_rank}',
+                          "multi_gpu_global_rank": global_rank,
+                          "multi_gpu_local_rank": local_rank,
+                          "multi_gpu_world_size": world_size,
+                          "seed": cfg["seed"] + global_rank}) # need a different seed for each env so that scaling works properly :)
+
     print(cfg)
     cfg = types.MappingProxyType(dict(cfg))
     task_class = task_registry.get_task_class(cfg["task"])
