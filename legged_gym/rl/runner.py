@@ -226,7 +226,7 @@ class Runner:
         key=lambda path: path.stat().st_mtime,
       )[-1]
     else:
-      model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
+      model_path = resume_path / "nn" / f"model_{checkpoint:06d}.pth"
     utils.print(f'\tLoading model weights from: {model_path}', color='blue')
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True

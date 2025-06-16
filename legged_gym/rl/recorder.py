@@ -234,7 +234,7 @@ class Recorder:
   @timer.section("save")
   def save(self, model_dict, it):
     self.maybe_init()
-    path = self.model_dir / f"model_{it}.pth"
+    path = self.model_dir / f"model_{it:06d}.pth"
     utils.print(f"Saving model to {path}", color='blue')
     torch.save(model_dict, path)
 
