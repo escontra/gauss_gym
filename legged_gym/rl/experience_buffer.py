@@ -173,6 +173,7 @@ class ExperienceBuffer:
       obs_groups: List[str],
       hidden_states_keys: List[str],
       networks: Dict[str, torch.nn.Module],
+      networks_sym: Dict[str, torch.nn.Module],
       obs_sym_groups: List[str],
       symm_key: str,
       symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
@@ -236,16 +237,17 @@ class ExperienceBuffer:
         with torch.no_grad():
           network_batch, network_sym_batch = {}, {}
           for key, network in networks.items():
-            if key in obs_groups:
-              network_batch[key], _, _ = network(
-                obs_batch[key],
-                masks=masks_batch,
-                hidden_states=hidden_states_batch[key])
-            if key in obs_sym_groups:
-              network_sym_batch[key], _, _ = network(
-                obs_sym_batch[key],
-                masks=masks_batch,
-                hidden_states=hidden_states_sym_batch[key])
+            assert key in obs_groups, f'Network key [{key}] not in obs_groups: [{obs_groups}]'
+            network_batch[key], _, _ = network(
+              obs_batch[key],
+              masks=masks_batch,
+              hidden_states=hidden_states_batch[key])
+          for key, network in networks_sym.items():
+            assert key in obs_sym_groups, f'Network key [{key}] not in obs_sym_groups: [{obs_sym_groups}]'
+            network_sym_batch[key], _, _ = network(
+              obs_sym_batch[key],
+              masks=masks_batch,
+              hidden_states=hidden_states_sym_batch[key])
 
         yield MiniBatch(
           obs=obs_batch,

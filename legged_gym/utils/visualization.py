@@ -151,7 +151,6 @@ class BatchWireframeSphereGeometry(gymutil.LineGeometry):
             colors_tmp['z'][:] = custom_colors[:, 2]
         else:
             colors_tmp = self.colors()
-            
 
         self.verts_tmp["x"][:, 0] = self.verts["x"][:, 0] + flat_pos[:, 0]
         self.verts_tmp["x"][:, 1] = self.verts["x"][:, 1] + flat_pos[:, 0]

@@ -13,6 +13,7 @@ class ObsManager:
         self.latency_buffers_per_group = {}
         self.delayed_frames_per_group = {}
         self.obs_group_cfg = obs_groups_cfg
+        self.initialize_env_ids = []
         for obs_group in obs_groups_cfg:
             if obs_group is None:
                 continue
@@ -88,8 +89,9 @@ class ObsManager:
         self.resample_sensor_latency(env_ids=env_ids)
         for obs_group in self.obs_group_cfg:
             for obs in obs_group.observations:
-                self.obs_buffers_per_group[obs_group.name][obs.name][:, env_ids] = 0.
+                self.obs_buffers_per_group[obs_group.name][obs.name][:, env_ids] = 0
                 self.delayed_frames_per_group[obs_group.name][obs.name][env_ids] = 0
+        self.initialize_env_ids = env_ids
 
     @timer.section("compute_obs")
     def compute_obs(self, env):
@@ -98,6 +100,10 @@ class ObsManager:
             self.obs_dict[obs_group.name] = {}
             for obs in obs_group.observations:
                 new_obs = obs.func(env, obs)
+                # Initialize the observation buffer with repeated observations.
+                if len(self.initialize_env_ids) > 0:
+                  fill_obs = new_obs[self.initialize_env_ids].unsqueeze(0)
+                  self.obs_buffers_per_group[obs_group.name][obs.name][:, self.initialize_env_ids] = fill_obs
                 # Add new observation to buffer.
                 self.obs_buffers_per_group[obs_group.name][obs.name] = torch.cat([
                     self.obs_buffers_per_group[obs_group.name][obs.name][1:],
@@ -139,6 +145,7 @@ class ObsManager:
                        scale = torch.tensor(scale, device=obs_value.device)[None]
                     obs_value *= scale
                 self.obs_dict[obs_group.name][obs.name] = obs_value
+        self.initialize_env_ids = []
         return self.obs_dict
 
     def _add_uniform_noise(self, obs, noise_level):

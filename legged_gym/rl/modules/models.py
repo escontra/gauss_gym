@@ -106,6 +106,21 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         stats.update({f'{name}_{k}': v for k, v in head.stats().items()})
     return stats
 
+  def encoder_parameters(self):
+    return list(self.image_feature_model.parameters())
+
+  def rnn_parameters(self):
+    return (
+      list(self.recurrent_model.memory.parameters())
+      + list(self.recurrent_model.rnn_proj.parameters())
+    )
+
+  def decoder_parameters(self):
+    return (
+      list(self.recurrent_model.model.parameters())
+      + list(self.recurrent_model.heads.parameters())
+    )
+
   def forward(self,
               obs: Dict[str, torch.Tensor],
               hidden_states: Tuple[torch.Tensor, ...],

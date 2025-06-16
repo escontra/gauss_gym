@@ -11,6 +11,7 @@ import torch
 
 import legged_gym
 from legged_gym.envs.base import base_task
+from legged_gym import utils
 from legged_gym.utils import (
   sensors,
   observation_groups,
@@ -269,7 +270,7 @@ class LeggedRobot(base_task.BaseTask):
                 progress = np.clip(self.common_step_counter / total_steps, 0., 1.)
                 curr_end = start + (end - start) * progress
                 curr_epoch = self.common_step_counter // self.cfg["runner"]["num_steps_per_env"]
-                print(f'Friction Curriculum [{curr_epoch}] progress: {progress*100:.2f}%, start: {start:.3f}, curr_end: {curr_end:.3f}, end: {end:.3f}')
+                utils.print(f'Friction Curriculum [{curr_epoch}] progress: {progress*100:.2f}%, start: {start:.3f}, curr_end: {curr_end:.3f}, end: {end:.3f}', color='yellow')
                 for i in range(self.num_envs):
                     dof_props = self.gym.get_actor_dof_properties(
                         self.envs[i],

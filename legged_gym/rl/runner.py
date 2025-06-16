@@ -11,6 +11,7 @@ import copy
 from legged_gym.rl import experience_buffer, loss, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
+from legged_gym import utils
 from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -50,7 +51,6 @@ class Runner:
       self.image_encoder_key = self.cfg["image_encoder"]["obs_key"]
       self.image_encoder_obs_space = self.env.obs_space()[self.image_encoder_key]
       if len(self.env.obs_space()[self.image_encoder_key].keys()) > 0:
-        self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
         reconstruct_space = None
         reconstruct_head = None
         if self.cfg["image_encoder"]["reconstruct_observations"] is not None:
@@ -88,7 +88,9 @@ class Runner:
       image_encoder_space = space.Space(np.float32, (self.image_encoder.rnn_state_size,), -np.inf, np.inf)
       self.policy_obs_space[self.image_encoder_key] = image_encoder_space
       self.value_obs_space[self.image_encoder_key] = image_encoder_space
-      self.symm_obs_space[self.image_encoder_key] = image_encoder_space
+      self.mirror_during_inference = self.cfg["image_encoder"]["mirror_latents_during_inference"]
+      if self.mirror_during_inference:
+        self.symm_obs_space[self.image_encoder_key] = image_encoder_space
 
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
@@ -118,6 +120,41 @@ class Runner:
       self.train_image_encoder = TrainRateScheduler(
         **self.cfg["image_encoder"]["train_rate_scheduler"]
       )
+
+      # if isinstance(self.cfg["image_encoder"]["learning_rate"], float):
+      #   param_groups = [
+      #     {
+      #       'params': self.image_encoder.parameters(),
+      #       'lr': self.cfg["image_encoder"]["learning_rate"],
+      #       'name': 'all'
+      #     }
+      #   ]
+      # else:
+      #   param_groups = [
+      #     {
+      #       'params': self.image_encoder.image_feature_model.parameters(),
+      #       'lr': self.cfg["image_encoder"]["learning_rate"]["encoder"],
+      #       'name': 'encoder'
+      #     },
+      #     {
+      #       'params': self.image_encoder.recurrent_model.parameters(),
+      #       'lr': self.cfg["image_encoder"]["learning_rate"]["rnn"],
+      #       'name': 'rnn'
+      #     },
+      #     # {
+      #     #   'params': self.image_encoder.decoder_parameters(),
+      #     #   'lr': self.cfg["image_encoder"]["learning_rate"]["decoder"],
+      #     #   'name': 'decoder'
+      #     # },
+      #   ]
+
+      # self.image_encoder_optimizer = torch.optim.Adam(
+      #   param_groups
+      # )
+
+      # assert set(self.image_encoder.parameters()) == set().union(*[group['params'] for group in self.image_encoder_optimizer.param_groups])
+
+      self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
       self.image_encoder_optimizer = torch.optim.Adam(
         self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
       )
@@ -158,7 +195,7 @@ class Runner:
     seed = self.cfg["seed"]
     if seed == -1:
       seed = np.random.randint(0, 10000)
-    print("Setting RL seed: {}".format(seed))
+    utils.print("Setting RL seed: {}".format(seed))
 
     random.seed(seed)
     np.random.seed(seed)
@@ -180,9 +217,9 @@ class Runner:
       )[-1]
     else:
       resume_path = resume_root / load_run
-    print(f"Loading checkpoint from: {resume_path}")
-    print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}')
-    print(f'\tLoading checkpoint: {checkpoint}')
+    utils.print(f"Loading checkpoint from: {resume_path}", color='blue')
+    utils.print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}', color='blue')
+    utils.print(f'\tLoading checkpoint: {checkpoint}', color='blue')
     if (checkpoint == "-1") or (checkpoint == -1):
       model_path = sorted(
         (resume_path / "nn").glob("*.pth"),
@@ -190,7 +227,7 @@ class Runner:
       )[-1]
     else:
       model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
-    print(f'\tLoading model weights from: {model_path}')
+    utils.print(f'\tLoading model weights from: {model_path}', color='blue')
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
     )
@@ -204,22 +241,10 @@ class Runner:
       self.policy_optimizer.load_state_dict(model_dict["policy_optimizer"])
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
     except Exception as e:
-      print(f"Failed to load optimizer: {e}")
+      utils.print(f"Failed to load optimizer: {e}", color='red')
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
-
-  def filter_nans(self, obs):
-    if isinstance(obs, dict):
-      for _, v in obs.items():
-        num_nan_envs = v.isnan().any(dim=-1).sum()
-    else:
-      num_nan_envs = obs.isnan().any(dim=-1).sum()
-
-    if num_nan_envs > 0:
-      print(f"{num_nan_envs} NaN envs")
-      obs = pytree.tree_map(lambda x: torch.nan_to_num(x, nan=0.0), obs)
-    return obs
 
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Logger aggregators.
@@ -251,7 +276,8 @@ class Runner:
     symms = {}
     if self.image_encoder_enabled:
       image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
-      image_encoder_hidden_states_sym = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+      if self.mirror_during_inference:
+        image_encoder_hidden_states_sym = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     value_hidden_states = self.value.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     if init_at_random_ep_len:
@@ -317,12 +343,13 @@ class Runner:
               )
               obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
               obs_dict[self.value_key][self.image_encoder_key] = image_encoder_rnn_state
-              _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
-                {k: self._get_symmetry_fn(self.image_encoder_key, k)(v) for k, v in obs_dict[self.image_encoder_key].items()},
-                image_encoder_hidden_states_sym,
-                rnn_only=True
-              )
-              symms[self.image_encoder_key] = image_encoder_rnn_state_sym
+              if self.mirror_during_inference:
+                _, image_encoder_rnn_state_sym, image_encoder_hidden_states_sym = self.image_encoder(
+                  {k: self._get_symmetry_fn(self.image_encoder_key, k)(v) for k, v in obs_dict[self.image_encoder_key].items()},
+                  image_encoder_hidden_states_sym,
+                  rnn_only=True
+                )
+                symms[self.image_encoder_key] = image_encoder_rnn_state_sym
             self.buffer.update_data(self.image_encoder_key, n, obs_dict[self.image_encoder_key])
 
           self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
@@ -354,7 +381,8 @@ class Runner:
 
         if self.image_encoder_enabled:
           image_encoder_hidden_states = self.image_encoder.reset(done, image_encoder_hidden_states)
-          image_encoder_hidden_states_sym = self.image_encoder.reset(done, image_encoder_hidden_states_sym)
+          if self.mirror_during_inference:
+            image_encoder_hidden_states_sym = self.image_encoder.reset(done, image_encoder_hidden_states_sym)
         policy_hidden_states = self.policy.reset(done, policy_hidden_states)
         value_hidden_states = self.value.reset(done, value_hidden_states)
         with timer.section("buffer_update_data"):
@@ -424,10 +452,10 @@ class Runner:
           self.recorder.save(to_save,
             it + 1,
           )
-      print(
+      utils.print(
         "epoch: {}/{} - {}s.".format(
           it + 1, num_learning_iterations, time.time() - start
-        )
+        ), color='green'
       )
       start = time.time()
 
@@ -460,6 +488,7 @@ class Runner:
         networks={
           self.policy_key: self.old_policy,
         },
+        networks_sym={},
         obs_sym_groups=obs_sym_groups,
         symm_key=self.symm_key,
         symmetry_fn=self._get_symmetry_fn,
@@ -519,11 +548,11 @@ class Runner:
         self.policy_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
         total_loss.backward()
-        params = list(self.policy.parameters()) + list(self.value.parameters())
+        all_params = list(self.policy.parameters()) + list(self.value.parameters())
         if self.image_encoder_enabled:
-          params += list(self.image_encoder.parameters())
+          all_params += list(self.image_encoder.parameters())
         torch.nn.utils.clip_grad_norm_(
-          params,
+          all_params,
           1.0)
         if self.image_encoder_enabled:
           self.image_encoder_optimizer.step()
@@ -688,6 +717,6 @@ class Runner:
 
       step += 1
       if step % 100 == 0:
-        print(f"Average inference time: {inference_time / step}")
-        print(f"\t Per env: {inference_time / step / self.env.num_envs}")
+        utils.print(f"Average inference time: {inference_time / step}", color='green')
+        utils.print(f"\t Per env: {inference_time / step / self.env.num_envs}", color='green')
         inference_time, step = 0., 0

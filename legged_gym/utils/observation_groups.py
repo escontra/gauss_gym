@@ -173,3 +173,8 @@ FEET_CONTACT = Observation(
   name="feet_contact",
   func=O.feet_contact,
 )
+
+IMAGE_ENCODER_LATENT = Observation(
+  name="image_encoder",
+  func=None,
+)

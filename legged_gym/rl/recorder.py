@@ -8,6 +8,7 @@ from typing import Dict, Any
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
 
+from legged_gym import utils
 from legged_gym.utils import config, timer, when
 
 
@@ -82,7 +83,7 @@ class Recorder:
   def maybe_record(self, env, image_features={}):
     if self.num_frames == self.cfg["runner"]["record_frames"]:
       # Stop recording.
-      print('STOP RECORDING')
+      utils.print('STOP RECORDING', color='blue')
       stacked_frame_dict = {k: np.stack(v) for k, v in self.frame_dict.items()}
       self.num_frames = 0
       self.reset_frame_dict()
@@ -94,7 +95,7 @@ class Recorder:
       return {}
     elif self.record_every():
       # Maybe start a new recording.
-      print('START RECORDING')
+      utils.print('START RECORDING', color='blue')
       self.update_frames(env, image_features)
       self.num_frames += 1
       return {}
@@ -125,7 +126,7 @@ class Recorder:
   def maybe_init(self):
     if self.initialized:
       return
-    print(f"Recording to: {self.log_dir}")
+    utils.print(f"Recording to: {self.log_dir}", color='blue')
     self.log_dir.mkdir(parents=True, exist_ok=True)
     self.model_dir = self.log_dir / "nn"
     self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -226,7 +227,7 @@ class Recorder:
       content = summary.SerializeToString()
       tf.summary.experimental.write_raw_pb(content, step)
     except (IOError, OSError) as e:
-      print('GIF summaries require ffmpeg in $PATH.', e)
+      utils.print('GIF summaries require ffmpeg in $PATH.', e, color='red')
       tf.summary.image(name, video, step)
     return gif_bytes
 
@@ -234,7 +235,7 @@ class Recorder:
   def save(self, model_dict, it):
     self.maybe_init()
     path = self.model_dir / f"model_{it}.pth"
-    print("Saving model to {}".format(path))
+    utils.print(f"Saving model to {path}", color='blue')
     torch.save(model_dict, path)
 
   def _mean(self, data):

@@ -2,6 +2,7 @@ import torch
 from typing import Callable
 import dataclasses
 from legged_gym.utils import observation_groups
+from legged_gym.rl import utils
 
 
 @dataclasses.dataclass(frozen=True)
@@ -212,4 +213,9 @@ T1_DAMPING = SymmetryModifier(
 GAIT_PROGRESS = SymmetryModifier(
   observation=observation_groups.GAIT_PROGRESS,
   symmetry_fn=identity_symmetry,
+)
+
+IMAGE_ENCODER_LATENT = SymmetryModifier(
+  observation=observation_groups.IMAGE_ENCODER_LATENT,
+  symmetry_fn=lambda env, obs: utils.mirror_latent(obs),
 )
