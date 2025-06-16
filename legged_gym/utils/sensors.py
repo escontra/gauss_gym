@@ -284,26 +284,15 @@ class GaussianSplattingRenderer():
                 0.005,
                 32)
             self.axis_geom = visualization.BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
-        if self.fig is None:
-            plt.ion()
-            self.fig, ax = plt.subplots()
-            n = int(np.floor(np.sqrt(self.num_envs)))
-            def process_image_fn(tensor, selected_env):
-              if selected_env >= 0:
-                return tensor[selected_env].cpu().numpy()
-              else:
-                return tensor.cpu().numpy()
-            self.process_image_fn = process_image_fn
-
-            if self.env.selected_environment >= 0:
-                self.im = ax.imshow(np.zeros((self.cam_height, self.cam_width, 3), dtype=np.uint8))
-            else:
-                self.im = ax.imshow(np.zeros((self.cam_height * n, self.cam_width * n, 3), dtype=np.uint8))
-            plt.show(block=False)
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
         self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
-        visualization.update_image(self.process_image_fn(self.renders, self.env.selected_environment), self.fig, self.im)
+        self.fig, self.im = visualization.update_image(
+           self.env,
+           self.fig,
+           self.im,
+           self.env.selected_environment,
+           self.renders)
 
 
 class LinkHeightSensor():

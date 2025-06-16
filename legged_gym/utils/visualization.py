@@ -10,24 +10,29 @@ from isaacgym import gymapi, gymutil
 from legged_gym.utils.math import quat_apply
 
 
-def plot_occupancy_grid(env, env_id, occupancy_grids, titles):
+def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
+  first_time = fig is None
+  if first_time:
+    assert plots is None, "plots should be None if fig is None"
+    plt.ion()
+    fig = plt.figure(figsize=(4, 8))
+    plots = [None] * len(occupancy_grids)
+
+  new_plots = []
+  for i, (occupancy_grid, title, plot) in enumerate(zip(occupancy_grids, titles, plots)):
     heights = env.sensors["raycast_grid"].ray_starts.clone()
+    first_nonzero = torch.argmax(occupancy_grid.to(torch.int32), dim=-1)  # Find first non-zero in each row
+    heights[..., -1] = first_nonzero
+    heights = heights[env_id].reshape(-1, 3)
+  
+    heights_np = heights.cpu().numpy()
+    x = heights_np[:, 0]
+    y = heights_np[:, 1]
+    z = heights_np[:, 2]
 
-    fig = plt.figure(figsize=(10, 8))
-
-    for i, (occupancy_grid, title) in enumerate(zip(occupancy_grids, titles)):
-      heights = env.sensors["raycast_grid"].ray_starts.clone()
-      first_nonzero = torch.argmax(occupancy_grid.to(torch.int32), dim=-1)  # Find first non-zero in each row
-      heights[..., -1] = first_nonzero
-      heights = heights[env_id].reshape(-1, 3)
-    
-      heights_np = heights.cpu().numpy()
-      x = heights_np[:, 0]
-      y = heights_np[:, 1]
-      z = heights_np[:, 2]
-
+    if plot is None:
       ax = fig.add_subplot(len(occupancy_grids), 1, i+1, projection='3d')
-      ax.scatter(x, y, z, c=z, cmap='viridis', s=50, vmin=0, vmax=occupancy_grid.shape[-1])
+      new_plots.append(ax.scatter(x, y, z, c=z, cmap='viridis', s=50, vmin=0, vmax=occupancy_grid.shape[-1]))
       ax.set_xlim([x.min(), x.max()])
       ax.set_ylim([y.min(), y.max()])
       ax.set_zlim([0, occupancy_grid.shape[-1]])
@@ -36,19 +41,41 @@ def plot_occupancy_grid(env, env_id, occupancy_grids, titles):
       ax.set_zlabel('Z')
       ax.set_title(title)
       ax.set_box_aspect([1, 1, 1])
-    
-    plt.show()
+    else:
+      plot._offsets3d = (x, y, z)
+      plot.set_array(z)
+      new_plots.append(plot)
+  
+  if first_time:
+    plt.show(block=False)
+
+  fig.canvas.flush_events()
+  fig.canvas.draw()
+  plt.pause(0.001)
+  return fig, new_plots
 
 
-def update_image(new_image, fig, im):
+def update_image(env, fig, im, env_id, image):
+    new_image = image[env_id] if env_id >= 0 else image
+    if isinstance(image, torch.Tensor):
+      new_image = new_image.cpu().numpy()
 
     # Convert from channels first to channels last format
     if len(new_image.shape) == 4:
         new_image = new_image.transpose(0, 2, 3, 1)
+        n, h, w, c = new_image.shape
     elif len(new_image.shape) == 3:
         new_image = new_image.transpose(1, 2, 0)
+        n = 1
+        h, w, c = new_image.shape
     else:
         raise ValueError(f'Invalid image shape: {new_image.shape}')
+
+    first_time = fig is None
+    if first_time:
+      plt.ion()
+      fig, ax = plt.subplots()
+      im = ax.imshow(np.zeros((h * n, w * n, 3), dtype=np.uint8))
 
     # To visualize environment RGB.
     if len(new_image.shape) == 4:
@@ -71,10 +98,15 @@ def update_image(new_image, fig, im):
         to_plot = new_image
 
     im.set_data(np.array(to_plot))
+
+    if first_time:
+      plt.show(block=False)
+
     fig.canvas.flush_events()
     fig.canvas.draw()
     plt.pause(0.001)
 
+    return fig, im
 
 class BatchWireframeSphereGeometry(gymutil.LineGeometry):
     """Draw multiple spheres without a for loop"""
