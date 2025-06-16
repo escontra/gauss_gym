@@ -88,12 +88,12 @@ symmetries:
   critic:
     symmetries: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST, IMAGE_ENCODER_LATENT
     ]
   policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST, IMAGE_ENCODER_LATENT
     ]
   actions:
     symmetries: [
@@ -451,6 +451,7 @@ sim:
 
 image_encoder:
   enabled: False
+  flip_latents_during_inference: False
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3
   obs_key: image_encoder
@@ -476,7 +477,7 @@ image_encoder:
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    model_type: cnn_simple
+    model_type: timm_test_convnext
     embedding_dim: 128
 
 policy:
@@ -545,7 +546,7 @@ runner:
   description: ""
   log_every: 120.
   save_every: 1800.
-  record_every: 1800.
+  record_every: 3600.
   record_frames: 300.
   run_name: ""
   resume: False
