@@ -99,21 +99,27 @@ def unpad_trajectories(trajectories, masks):
     return traj_viewed_transp
 
 
-def get_mlp_cnn_keys(obs):
+def get_mlp_cnn_keys(obs, project_dims={}):
   # TODO: Add option to process 2D observations with CNN or MLP. Currently only supports MLP.
   mlp_keys, mlp_2d_reshape_keys, cnn_keys = [], [], []
   num_mlp_obs = 0
   for k, v in obs.items():
     if len(v.shape) == 1:
       mlp_keys.append(k)
-      num_mlp_obs += np.prod(v.shape)
+      curr_mlp_obs = np.prod(v.shape)
     elif len(v.shape) == 2:
       mlp_keys.append(k)
       mlp_2d_reshape_keys.append(k)
-      num_mlp_obs += np.prod(v.shape)
+      curr_mlp_obs = np.prod(v.shape)
     elif len(v.shape) == 3:
       cnn_keys.append(k)
+      curr_mlp_obs = 0
     else:
       raise ValueError(f'Observation {k} has unexpected shape: {v.shape}')
+
+    if k in project_dims:
+      num_mlp_obs += project_dims[k]
+    else:
+      num_mlp_obs += curr_mlp_obs
 
   return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs

@@ -91,12 +91,19 @@ class Runner:
       self.mirror_during_inference = self.cfg["image_encoder"]["mirror_latents_during_inference"]
       if self.mirror_during_inference:
         self.symm_obs_space[self.image_encoder_key] = image_encoder_space
+  
+    policy_project_dims, value_project_dims = {}, {}
+    if self.cfg["policy"]["project_image_encoder_latent"]:
+      policy_project_dims[self.image_encoder_key] = self.cfg["policy"]["project_image_encoder_latent_dim"]
+    if self.cfg["value"]["project_image_encoder_latent"]:
+      value_project_dims[self.image_encoder_key] = self.cfg["value"]["project_image_encoder_latent_dim"]
 
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
       self.policy_obs_space,
+      project_dims=policy_project_dims,
       **self.cfg["policy"]["params"]
     ).to(self.device)
     # For KL.
@@ -110,6 +117,7 @@ class Runner:
       models, self.cfg["value"]["class_name"])(
       {'value': space.Space(np.float32, (1,), -np.inf, np.inf)},
       self.value_obs_space,
+      project_dims=value_project_dims,
       **self.cfg["value"]["params"]
     ).to(self.device)
 
