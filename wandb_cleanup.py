@@ -1,6 +1,7 @@
 import argparse
 import wandb
 import tqdm
+import collections
 
 from legged_gym import utils
 
@@ -14,10 +15,22 @@ def get_files_for_extension(run, extension):
 
 
 def delete_files(files, leave_num_files: int, dry_run: bool = False):
-  if len(files) <= 0 or len(files) <= leave_num_files:
+
+  # Determine number of files to leave for each step.
+  file_dict = collections.defaultdict(list)
+  for file in files:
+    log_step = int(file.name.split('_')[-2])
+    file_dict[log_step].append(file)
+
+  sorted_file_dict = dict(sorted(file_dict.items(), key=lambda x: x[0]))
+
+  if len(sorted_file_dict) <= leave_num_files:
     return
   else:
-    files = files[:-leave_num_files]
+    remove_keys = list(sorted(sorted_file_dict.keys()))[:-leave_num_files]
+    files = []
+    for k in remove_keys:
+      files.extend(sorted_file_dict[k])
 
   utils.print(
     f"\t\tDeleting {len(files):,} files: {[file.name for file in files[:5]]}",
