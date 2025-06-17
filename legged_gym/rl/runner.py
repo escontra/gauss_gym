@@ -12,7 +12,7 @@ from legged_gym.rl import experience_buffer, loss, recorder
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym import utils
-from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
+from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space, visualization
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
