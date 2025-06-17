@@ -19,5 +19,6 @@ setup(
         "tensorflow-cpu",
         "jaxtyping",
         "matplotlib",
+        "einops",
     ],
 )
