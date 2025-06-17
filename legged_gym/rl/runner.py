@@ -93,10 +93,11 @@ class Runner:
         self.symm_obs_space[self.image_encoder_key] = image_encoder_space
   
     policy_project_dims, value_project_dims = {}, {}
-    if self.cfg["policy"]["project_image_encoder_latent"]:
-      policy_project_dims[self.image_encoder_key] = self.cfg["policy"]["project_image_encoder_latent_dim"]
-    if self.cfg["value"]["project_image_encoder_latent"]:
-      value_project_dims[self.image_encoder_key] = self.cfg["value"]["project_image_encoder_latent_dim"]
+    if self.image_encoder_enabled:
+      if self.cfg["policy"]["project_image_encoder_latent"]:
+        policy_project_dims[self.image_encoder_key] = self.cfg["policy"]["project_image_encoder_latent_dim"]
+      if self.cfg["value"]["project_image_encoder_latent"]:
+        value_project_dims[self.image_encoder_key] = self.cfg["value"]["project_image_encoder_latent_dim"]
 
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
@@ -643,6 +644,7 @@ class Runner:
     if self.image_encoder_enabled:
       image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
 
+    self._set_eval_mode()
     inference_time, step = 0., 0
     while True:
       with torch.no_grad():
