@@ -223,6 +223,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         action_space: Dict[str, space.Space],
         obs_space: Dict[str, space.Space],
         head: Dict[str, Any],
+        project_dims: Optional[Dict[str, int]] = {},
         dont_normalize_keys: List[str] = [],
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
@@ -236,7 +237,19 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     self.obs_space = obs_space
     self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
-    self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = utils.get_mlp_cnn_keys(obs_space)
+
+    input_projectors = {}
+    for k, v in project_dims.items():
+      input_projectors[k] = nn.Sequential(
+        torch.nn.Linear(np.prod(obs_space[k].shape), v),
+        get_activation(layer_activation)
+      )
+    if input_projectors:
+      self.input_projectors = nn.ModuleDict(input_projectors)
+    else:
+      self.input_projectors = {}
+
+    self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = utils.get_mlp_cnn_keys(obs_space, project_dims)
     assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
@@ -286,8 +299,18 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         self.obs_normalizer.std,
         max_abs_value=self.max_abs_value,
         dont_normalize_keys=self.dont_normalize_keys + exclude_keys)
-    return process_mlp_features(obs, self.mlp_keys, self.mlp_2d_reshape_keys, self.symlog_inputs)
-  
+    for k in self.mlp_2d_reshape_keys:
+      obs[k] = obs[k].reshape(*obs[k].shape[:-2], -1)
+    if self.symlog_inputs:
+      for k in self.mlp_keys:
+        obs[k] = math.symlog(obs[k])
+
+    for k, net in self.input_projectors.items():
+      obs[k] = net(obs[k])
+    
+    features = torch.cat([obs[k] for k in self.mlp_keys], dim=-1)
+    return features
+
   def update_normalizer(self, obs: Dict[str, torch.Tensor]):
     if self.normalize_obs:
       self.obs_normalizer.update(obs)

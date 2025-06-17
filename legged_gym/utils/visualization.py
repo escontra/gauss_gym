@@ -15,7 +15,7 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
   if first_time:
     assert plots is None, "plots should be None if fig is None"
     plt.ion()
-    fig = plt.figure(figsize=(4, 8))
+    fig = plt.figure(figsize=(3, 3 * len(occupancy_grids)), tight_layout=True)
     plots = [None] * len(occupancy_grids)
 
   new_plots = []
@@ -49,6 +49,7 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
   if first_time:
     plt.show(block=False)
 
+  fig.tight_layout()
   fig.canvas.flush_events()
   fig.canvas.draw()
   plt.pause(0.001)
@@ -74,7 +75,9 @@ def update_image(env, fig, im, env_id, image):
     first_time = fig is None
     if first_time:
       plt.ion()
-      fig, ax = plt.subplots()
+      fig_height = 2.5
+      fig_width = (w / h) * fig_height
+      fig, ax = plt.subplots(figsize=(fig_width, fig_height), tight_layout=True)
       im = ax.imshow(np.zeros((h * n, w * n, 3), dtype=np.uint8))
 
     # To visualize environment RGB.
@@ -102,6 +105,7 @@ def update_image(env, fig, im, env_id, image):
     if first_time:
       plt.show(block=False)
 
+    fig.tight_layout()
     fig.canvas.flush_events()
     fig.canvas.draw()
     plt.pause(0.001)

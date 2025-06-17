@@ -77,7 +77,7 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS, #RAY_CAST
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS #, RAY_CAST
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -230,7 +230,7 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
   init_base_yaw:
-    apply: True
+    apply: False
     range: [0.0, 1.5]
     operation: "additive"
     distribution: "gaussian"
@@ -462,9 +462,7 @@ image_encoder:
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  # max_batch_size: 196
-  # max_batch_size: 64
-  max_batch_size: 16
+  max_batch_size: 64
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
     warmup_steps: 2000
@@ -478,9 +476,8 @@ image_encoder:
   params:
     layer_activation: silu
     recurrent_state_size: 512
-    recurrent_proj_size: 128
     recurrent_skip_connection: True
-    hidden_layer_sizes: [512, 256, 128]
+    hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
     # model_type: timm_test_convnext
@@ -489,6 +486,8 @@ image_encoder:
 
 policy:
   class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
   learning_rate: 1.e-5
   desired_kl: 0.01
   kl_key: actions
@@ -507,6 +506,8 @@ policy:
 
 value:
   class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
   learning_rate: 3.e-4
   obs_key: critic
   params:
