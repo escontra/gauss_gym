@@ -453,6 +453,22 @@ def _sigmoids(x: torch.Tensor, value_at_1: torch.Tensor, sigmoid: str):
   else:
     raise ValueError('Unknown sigmoid type {!r}.'.format(sigmoid))
 
+def linear_or_qaussian_tolerance(val, target, linear_margin, gaussian_margin, gaussian: bool):
+    linear_value = tolerance(
+        val,
+        lower=torch.where(target > 0, target, target - linear_margin),
+        upper=torch.where(target > 0, target + linear_margin, target),
+        margin=torch.abs(target),
+        sigmoid='linear',
+        value_at_margin=torch.zeros_like(target)
+    )
+    gaussian_value = tolerance(
+        val,
+        margin=torch.full_like(target, gaussian_margin),
+        sigmoid='gaussian',
+        value_at_margin=torch.full_like(target, 0.01)
+    )
+    return linear_value * ~gaussian + gaussian_value * gaussian
 
 def tolerance(
         x: torch.Tensor,
