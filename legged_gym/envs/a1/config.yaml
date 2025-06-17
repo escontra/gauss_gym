@@ -296,7 +296,7 @@ domain_rand:
     distribution: "uniform"
   dof_armature_ig_property:
     apply: True
-    range: [0.01, 0.015]
+    range: [0.0, 0.015]
     operation: "additive"
     distribution: "uniform"
 
@@ -483,7 +483,7 @@ policy:
   class_name: RecurrentMLPModel
   project_image_encoder_latent: True
   project_image_encoder_latent_dim: 32
-  learning_rate: 1.e-5
+  learning_rate: 1.e-3
   desired_kl: 0.01
   kl_key: actions
   obs_key: policy
@@ -503,7 +503,7 @@ value:
   class_name: RecurrentMLPModel
   project_image_encoder_latent: True
   project_image_encoder_latent_dim: 32
-  learning_rate: 3.e-4
+  learning_rate: 1.e-3
   obs_key: critic
   params:
     layer_activation: silu

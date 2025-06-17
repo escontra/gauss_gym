@@ -468,11 +468,17 @@ class LeggedRobot(base_task.BaseTask):
         for s in self.feet_shape_indices:
             if self.cfg["domain_rand"]["foot_friction"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].friction = foot_friction
+            else:
+              props[s].friction = np.mean(self.cfg["domain_rand"]["foot_friction"]["range"])
               # props[s].friction = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_friction"])
             if self.cfg["domain_rand"]["foot_compliance"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].compliance = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_compliance"])
+            else:
+              props[s].compliance = np.mean(self.cfg["domain_rand"]["foot_compliance"]["range"])
             if self.cfg["domain_rand"]["foot_restitution"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].restitution = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_restitution"])
+            else:
+              props[s].restitution = np.mean(self.cfg["domain_rand"]["foot_restitution"]["range"])
 
         return props
 
@@ -509,9 +515,11 @@ class LeggedRobot(base_task.BaseTask):
             for i in range(len(props)):
                 props["friction"][i] = math.apply_randomization(props["friction"][i], self.cfg["domain_rand"]["dof_friction_ig_property"])
 
-        if self.cfg["domain_rand"]["dof_armature_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-            for i in range(len(props)):
+        for i in range(len(props)):
+            if self.cfg["domain_rand"]["dof_armature_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
                 props["armature"][i] = math.apply_randomization(0.0, self.cfg["domain_rand"]["dof_armature_ig_property"])
+            else:
+                props["armature"][i] = np.mean(self.cfg["domain_rand"]["dof_armature_ig_property"]["range"])
 
         return props
 

@@ -643,6 +643,7 @@ class Runner:
     policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     if self.image_encoder_enabled:
       image_encoder_hidden_states = self.image_encoder.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
+      occupancy_fig_state = (None, None)
 
     self._set_eval_mode()
     inference_time, step = 0., 0
@@ -657,25 +658,23 @@ class Runner:
           )
           obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
 
-          occupancy_grid_dist, centroid_grid_dist = recon_dists['critic/ray_cast']
-          occupancy_grid_pred = occupancy_grid_dist.pred()
-          from legged_gym.utils import voxel
-          occupancy_grid_gt, centroid_grid_gt = voxel.heightmap_to_voxels(
-            obs_dict["critic"]["ray_cast"],
-            self.cfg["image_encoder"]["voxel_height_levels"],
-            -1,
-            1
-          )
-          
-          if step % 1000 == 0:
-            from legged_gym.utils import visualization
-            visualization.plot_occupancy_grid(
+          if step % 5 == 0:
+            occupancy_grid_dist, _ = recon_dists['critic/ray_cast']
+            occupancy_grid_pred = occupancy_grid_dist.pred()
+            from legged_gym.utils import voxel
+            occupancy_grid_gt, _ = voxel.heightmap_to_voxels(
+              obs_dict["critic"]["ray_cast"],
+              self.cfg["image_encoder"]["voxel_height_levels"],
+            )
+
+            occupancy_fig_state = visualization.update_occupancy_grid(
               self.env,
+              *occupancy_fig_state,
               self.env.selected_environment,
               [occupancy_grid_gt, occupancy_grid_pred],
-              ["Ground Truth", "Reconstructed"])
-            input()
-            
+              ["Ground Truth", "Reconstructed"]
+            )
+
         # if step % 1000 == 0:
         #   # Create figure with subplots for each key in recon_dists
         #   num_keys = len(recon_dists)
