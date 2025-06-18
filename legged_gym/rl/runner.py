@@ -557,7 +557,8 @@ class Runner:
 
         # Reconstruction loss.
         if self.image_encoder_enabled and self.train_image_encoder(self.global_num_updates):
-          self.image_encoder_learning_rate_scheduler.step()
+          if self.image_encoder_learning_rate_scheduler is not None:
+            self.image_encoder_learning_rate_scheduler.step()
           recon_loss, metrics = loss.reconstruction_loss(
             batch,
             self.image_encoder,
@@ -616,7 +617,10 @@ class Runner:
         f"{self.value_key}_lr": self.value_learning_rate,
       }
       if self.image_encoder_enabled:
-        learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate_scheduler.get_last_lr()[0]
+        if self.image_encoder_learning_rate_scheduler is not None:
+          learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate_scheduler.get_last_lr()[0]
+        else:
+          learning_rate_stats[f"{self.image_encoder_key}_lr"] = self.image_encoder_learning_rate
 
       return {
           **learn_step_agg.result(),
