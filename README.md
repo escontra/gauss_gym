@@ -15,7 +15,7 @@
 4. Install gauss-gym
 - Clone this repository
     - `git clone https://github.com/Alescontrela/gauss-gym.git`
-    - `cd legged-gym && pip install -e .`
+    - `cd gauss-gym && pip install -e .`
 
 
 # Training

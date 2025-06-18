@@ -483,7 +483,7 @@ policy:
   class_name: RecurrentMLPModel
   project_image_encoder_latent: True
   project_image_encoder_latent_dim: 32
-  learning_rate: 1.e-3
+  learning_rate: 1.e-5
   desired_kl: 0.01
   kl_key: actions
   obs_key: policy
@@ -503,7 +503,7 @@ value:
   class_name: RecurrentMLPModel
   project_image_encoder_latent: True
   project_image_encoder_latent_dim: 32
-  learning_rate: 1.e-3
+  learning_rate: 3.e-4
   obs_key: critic
   params:
     layer_activation: silu
