@@ -451,7 +451,7 @@ sim:
 
 image_encoder:
   enabled: True
-  mirror_latents_during_inference: False
+  mirror_latents_during_inference: True
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3
   obs_key: image_encoder
