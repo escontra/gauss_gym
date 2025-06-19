@@ -495,9 +495,26 @@ policy:
     symlog_inputs: True
     normalize_obs: True
     head:
-      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
-      stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
-      damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
+      actions:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.2
+          maxstd: 1.0
+          init_std: 0.9
+      stiffness:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.3
+          bounded: True
+      damping:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.3
+          bounded: True
 
 value:
   class_name: RecurrentMLPModel
@@ -512,8 +529,11 @@ value:
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: 
-      value: {output_type: mse, outscale: 1.0}
+    head:
+      value:
+        class_name: MSEHead
+        params:
+          outscale: 1.0
 
 algorithm:
   gamma: 0.97

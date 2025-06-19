@@ -18,6 +18,9 @@ IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
 
 
+_RNN_STATE = Tuple[torch.Tensor, torch.Tensor]
+
+
 class RecurrentModel(abc.ABC):
   is_recurrent = True
 
@@ -152,36 +155,34 @@ class ImageFeature(torch.nn.Module):
 
     print(f'{self.__class__.__name__}:')
     print('\tCNN Keys:')
-    for key in self.cnn_keys:
-      print(f'\t\t{key}: {obs_space[key].shape}')
-
     encoder_dict = {}
-    for key in self.cnn_keys:
-      if self.model_type == 'cnn_simple':
-        encoder_dict[key] = resnet.NatureCNN(3, embedding_dim)
-      elif self.model_type == 'cnn_resnet':
-        encoder_dict[key] = resnet.ResNet(
-            resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
-      elif self.model_type.startswith('dino'):
-        dino = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
-        encoder_dict[key] = nn.Sequential(
-          transforms.Normalize(
-              mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, inplace=True),
-          dino,
-          nn.Linear(dino.embed_dim, embedding_dim)
-        )
-      elif self.model_type.startswith('timm'):
-        import timm
-        timm_model = timm.create_model(self.model_type[5:], pretrained=dino_pretrained, num_classes=0)
-        cfg = timm_model.default_cfg
-        encoder_dict[key] = nn.Sequential(
-          transforms.Normalize(mean=cfg['mean'], std=cfg['std']),
-          timm_model,
-          nn.Linear(timm_model.num_features, embedding_dim)
-        )
-
-      else:
-        raise ValueError(f'Unknown model type: {model_type}')
+    if self.cnn_keys is not None:
+      for key in self.cnn_keys:
+        print(f'\t\t{key}: {obs_space[key].shape}')
+        if self.model_type == 'cnn_simple':
+          encoder_dict[key] = resnet.NatureCNN(3, embedding_dim)
+        elif self.model_type == 'cnn_resnet':
+          encoder_dict[key] = resnet.ResNet(
+              resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
+        elif self.model_type.startswith('dino'):
+          dino = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
+          encoder_dict[key] = nn.Sequential(
+            transforms.Normalize(
+                mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, inplace=True),
+            dino,
+            nn.Linear(dino.embed_dim, embedding_dim)
+          )
+        elif self.model_type.startswith('timm'):
+          import timm
+          timm_model = timm.create_model(self.model_type[5:], pretrained=dino_pretrained, num_classes=0)
+          cfg = timm_model.default_cfg
+          encoder_dict[key] = nn.Sequential(
+            transforms.Normalize(mean=cfg['mean'], std=cfg['std']),
+            timm_model,
+            nn.Linear(timm_model.num_features, embedding_dim)
+          )
+        else:
+          raise ValueError(f'Unknown model type: {model_type}')
     self.encoder = nn.ModuleDict(encoder_dict)
 
   def forward(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -213,7 +214,7 @@ class ImageFeature(torch.nn.Module):
   def modified_obs_space(self) -> Dict[str, space.Space]:
     modified_obs_space = {}
     for key in self.cnn_keys:
-      modified_obs_space[key] = space.Space(np.float32, (self.embedding_dim,), -np.inf, np.inf)
+      modified_obs_space[key] = space.Space(torch.float32, (self.embedding_dim,), -torch.inf, torch.inf)
     return modified_obs_space
 
 
@@ -224,7 +225,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         obs_space: Dict[str, space.Space],
         head: Dict[str, Any],
         project_dims: Optional[Dict[str, int]] = {},
-        dont_normalize_keys: List[str] = [],
+        dont_normalize_keys: Optional[List[str]] = None,
         layer_activation: str = "elu",
         hidden_layer_sizes=[256, 128, 64],
         recurrent_state_size: int =256,
@@ -235,13 +236,14 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         max_abs_value=None):
     super().__init__()
     self.obs_space = obs_space
+    self.obs_keys = list(obs_space.keys())
     self.dont_normalize_keys = dont_normalize_keys
     self.action_space = action_space
 
     input_projectors = {}
     for k, v in project_dims.items():
       input_projectors[k] = nn.Sequential(
-        torch.nn.Linear(np.prod(obs_space[k].shape), v),
+        torch.nn.Linear(int(np.prod(obs_space[k].shape)), v),
         get_activation(layer_activation)
       )
     if input_projectors:
@@ -250,7 +252,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
       self.input_projectors = {}
 
     self.mlp_keys, self.mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = utils.get_mlp_cnn_keys(obs_space, project_dims)
-    assert len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
+    assert self.cnn_keys is None or len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
     self.recurrent_state_size = recurrent_state_size
     self.recurrent_proj_size = recurrent_proj_size
@@ -262,8 +264,9 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     if self.normalize_obs:
       self.obs_normalizer = normalizers.DictNormalizer(obs_space, max_abs_value=self.max_abs_value, dont_normalize_keys=dont_normalize_keys)
     print('\tMLP Keys:')
-    for key in self.mlp_keys:
-      print(f'\t\t{key}: {obs_space[key].shape}')
+    if self.mlp_keys is not None:
+      for key in self.mlp_keys:
+        print(f'\t\t{key}: {obs_space[key].shape}')
     print(f'\tMLP Num Obs: {self.num_mlp_obs}')
     print(f'\tNormalizing obs: {self.normalize_obs}')
 
@@ -279,28 +282,41 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
       layers.append(get_activation(layer_activation))
       input_size = size
     self.model = torch.nn.Sequential(*layers)
-    heads = {k: outs.Head(input_size, v, **head[k]) for k, v in action_space.items()}
+    heads = {}
+    for k, v in action_space.items():
+      heads[k] = getattr(outs, head[k]['class_name'])(input_size, v, **head[k]['params'])
     self.heads = nn.ModuleDict(heads)
     print('\tOutput Heads')
     for k, v in heads.items():
-      print(f'\t\t{k}: {v.output_size} {v.impl}')
+      print(f'\t\t{k}: {v.output_size} {v.__class__.__name__}')
 
     self.symlog_inputs = symlog_inputs
 
-  def reset(self, dones: torch.Tensor, hidden_states: Optional[Tuple[torch.Tensor, ...]]=None) -> Tuple[torch.Tensor, ...]:
+  @torch.jit.export
+  def reset(
+      self,
+      dones: torch.Tensor,
+      hidden_states: Optional[Tuple[torch.Tensor, torch.Tensor]]=None) -> Tuple[torch.Tensor, torch.Tensor]:
     return self.memory.reset(dones, hidden_states)
 
   def process_obs(self, obs: Dict[str, torch.Tensor]) -> torch.Tensor:
-    exclude_keys = [k for k in obs.keys() if k not in self.obs_space.keys()]
+    if self.dont_normalize_keys is None:
+      dont_normalize_keys: List[str] = []
+    else:
+      dont_normalize_keys: List[str] = self.dont_normalize_keys
+    for k in obs.keys():
+      if k not in self.obs_keys:
+        dont_normalize_keys.append(k)
     if self.normalize_obs:
       obs = apply_normalizer(
         obs,
-        self.obs_normalizer.mean,
-        self.obs_normalizer.std,
+        self.obs_normalizer.mean(),
+        self.obs_normalizer.std(),
         max_abs_value=self.max_abs_value,
-        dont_normalize_keys=self.dont_normalize_keys + exclude_keys)
-    for k in self.mlp_2d_reshape_keys:
-      obs[k] = obs[k].reshape(*obs[k].shape[:-2], -1)
+        dont_normalize_keys=dont_normalize_keys)
+    if self.mlp_2d_reshape_keys is not None:
+      for k in self.mlp_2d_reshape_keys:
+        obs[k] = obs[k].reshape(*obs[k].shape[:-2], -1)
     if self.symlog_inputs:
       for k in self.mlp_keys:
         obs[k] = math.symlog(obs[k])
@@ -311,18 +327,21 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     features = torch.cat([obs[k] for k in self.mlp_keys], dim=-1)
     return features
 
+  @torch.jit.unused
   def update_normalizer(self, obs: Dict[str, torch.Tensor]):
     if self.normalize_obs:
       self.obs_normalizer.update(obs)
 
   def forward(self,
               obs: Dict[str, torch.Tensor],
-              hidden_states: Tuple[torch.Tensor, ...],
+              hidden_states: _RNN_STATE,
               masks: Optional[torch.Tensor]=None,
-              mean_only: bool=False,
               unpad: bool=True,
               rnn_only: bool=False,
-              ) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              ): # -> Tuple[
+                # Optional[Dict[str, Any]],
+                # torch.Tensor,
+                # Optional[_RNN_STATE]]:
     processed_obs = self.process_obs(obs)
 
     # RNN.
@@ -340,17 +359,12 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     if rnn_only:
       dists = None
     else:
-      model_state = self.model(rnn_state)
-      if mean_only:
-          outs = []
-          for k in self.heads:
-            outs.append(self.heads[k].mean_net(model_state))
-          dists = tuple(outs)
-      else:
-          dists = {k: self.heads[k](model_state) for k in self.heads}
+      model_state: torch.Tensor = self.model(rnn_state)
+      dists = {k: v(model_state) for k, v in self.heads.items()}
 
     return dists, rnn_state, new_hidden_states
 
+  @torch.jit.unused
   def stats(self):
     stats = {}
     for layer in self.model:
@@ -376,23 +390,24 @@ class Memory(torch.nn.Module):
     def __init__(self, input_size, type='lstm', num_layers=1, hidden_size=256):
         super().__init__()
         # RNN
-        self.rnn_cls = nn.GRU if type.lower() == 'gru' else nn.LSTM
+        rnn_cls = nn.GRU if type.lower() == 'gru' else nn.LSTM
+        self.is_lstm = rnn_cls is nn.LSTM
         self.num_layers = num_layers
         self.hidden_size = hidden_size
-        self.rnn = self.rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
+        self.rnn = rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
         self.rnn.flatten_parameters()
 
         # Learnable initial hidden state (size remains [L, 1, H])
         self.initial_hidden_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
-        if self.rnn_cls is nn.LSTM:
+        if rnn_cls is nn.LSTM:
             self.initial_cell_state = nn.Parameter(torch.zeros(self.num_layers, 1, self.hidden_size), requires_grad=True)
 
     def forward(
           self,
           input: torch.Tensor,
-          hidden_states: Tuple[torch.Tensor, ...],
+          hidden_states: _RNN_STATE,
           masks: Optional[torch.Tensor]=None,
-          unpad: bool=True) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+          unpad: bool=True) -> Tuple[torch.Tensor, Optional[_RNN_STATE]]:
         if masks is not None:  # Batch (update) mode.
             out, _ = self.rnn(input, hidden_states)
             if unpad:
@@ -402,39 +417,37 @@ class Memory(torch.nn.Module):
             out, new_hidden_states = self.rnn(input.unsqueeze(0), hidden_states)
             return out, new_hidden_states
 
-    def reset(self, dones, hidden_states=None):
-        if self.rnn_cls == nn.LSTM:
+    def reset(
+            self,
+            dones: torch.Tensor,
+            hidden_states: Optional[_RNN_STATE]=None
+          ) -> _RNN_STATE:
+        if self.is_lstm:
           if hidden_states is not None:
-            hidden_states[0][..., dones, :] = self.initial_hidden_state.detach().clone().to(hidden_states[0].device)
-            hidden_states[1][..., dones, :] = self.initial_cell_state.detach().clone().to(hidden_states[1].device)
+            hidden_states[0][:, dones, :] = self.initial_hidden_state.detach().clone().to(hidden_states[0].device)
+            hidden_states[1][:, dones, :] = self.initial_cell_state.detach().clone().to(hidden_states[1].device)
             return hidden_states
           else:
             return(
               self.initial_hidden_state.repeat(1, dones.shape[0], 1),
               self.initial_cell_state.repeat(1, dones.shape[0], 1)
             )
-        elif self.rnn_cls == nn.GRU:
-          if hidden_states is not None:
-            hidden_states[0][..., dones, :] = self.initial_hidden_state.detach().clone().to(hidden_states[0].device)
-            return hidden_states
-          else:
-            return (self.initial_hidden_state.repeat(1, dones.shape[0], 1),)
         else:
-          raise ValueError(f"Unknown RNN class: {self.rnn_cls}")
+          raise ValueError("GRU NOT SUPPORTED")
 
 
 def apply_normalizer(
         observations: Dict[str, torch.Tensor],
-        normalizer_mean: Optional[Dict[str, torch.Tensor]],
-        normalizer_std: Optional[Dict[str, torch.Tensor]],
+        normalizer_mean: Dict[str, torch.Tensor],
+        normalizer_std: Dict[str, torch.Tensor],
         use_mean_offset: bool = True,
-        dont_normalize_keys: List[str] = [],
+        dont_normalize_keys: Optional[List[str]] = None,
         max_abs_value: Optional[float] = None
     ) -> Dict[str, torch.Tensor]:
     normalized_observations = {}
 
     for k, v in observations.items():
-        if k in dont_normalize_keys:
+        if dont_normalize_keys is not None and k in dont_normalize_keys:
             normalized_observations[k] = v
             continue
         if use_mean_offset and normalizer_mean is not None:

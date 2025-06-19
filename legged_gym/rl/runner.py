@@ -61,18 +61,18 @@ class Runner:
             obs_name = getattr(observation_groups, obs_name).name
             if 'ray_cast' in obs_name.lower():
               reconstruct_head[f'{obs_group}/{obs_name}'] = {
-                'output_type': 'voxel_grid_decoder',
-                'outscale': 1.0
+                'class_name': 'VoxelGridDecoderHead',
+                'params': {}
               }
               reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
-                np.float32,
-                shape=(*self.env.obs_space()[obs_group][obs_name].shape,
-                      self.cfg["image_encoder"]["voxel_height_levels"]))
+                torch.float32,
+                shape=[*self.env.obs_space()[obs_group][obs_name].shape,
+                      self.cfg["image_encoder"]["voxel_height_levels"]])
             else:
               reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
               reconstruct_head[f'{obs_group}/{obs_name}'] = {
-                'output_type': 'mse',
-                'outscale': 1.0
+                'class_name': 'MSEHead',
+                'params': {'outscale': 1.0}
               }
         self.image_encoder: models.RecurrentModel = getattr(
           models, self.cfg["image_encoder"]["class_name"])(
@@ -85,7 +85,7 @@ class Runner:
         self.image_encoder = None
 
       # Add image encoder features to policy and value obs space.
-      image_encoder_space = space.Space(np.float32, (self.image_encoder.rnn_state_size,), -np.inf, np.inf)
+      image_encoder_space = space.Space(torch.float32, (self.image_encoder.rnn_state_size,), -torch.inf, torch.inf)
       self.policy_obs_space[self.image_encoder_key] = image_encoder_space
       self.value_obs_space[self.image_encoder_key] = image_encoder_space
       self.mirror_during_inference = self.cfg["image_encoder"]["mirror_latents_during_inference"]
@@ -116,7 +116,7 @@ class Runner:
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
     self.value: models.RecurrentModel = getattr(
       models, self.cfg["value"]["class_name"])(
-      {'value': space.Space(np.float32, (1,), -np.inf, np.inf)},
+      {'value': space.Space(torch.float32, (1,), -torch.inf, torch.inf)},
       self.value_obs_space,
       project_dims=value_project_dims,
       **self.cfg["value"]["params"]
@@ -254,6 +254,7 @@ class Runner:
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
     except Exception as e:
       utils.print(f"Failed to load optimizer: {e}", color='red')
+    return resume_path
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
@@ -339,9 +340,11 @@ class Runner:
       start = time.time()
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
-          potential_images = {k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}
+          policy_cnn_keys = self.policy.cnn_keys or []
+          potential_images = {k: obs_dict[self.policy_key][k] for k in policy_cnn_keys}
           if self.image_encoder_enabled:
-            potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in self.image_encoder.cnn_keys})
+            image_encoder_cnn_keys = self.image_encoder.cnn_keys or []
+            potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in image_encoder_cnn_keys})
           self.recorder.record_statistics(
             self.recorder.maybe_record(self.env, image_features=potential_images),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
@@ -600,6 +603,7 @@ class Runner:
 
         policy_stats = {}
         for k, v in self.policy.stats().items():
+          v = v.cpu().numpy()
           policy_stats[f'policy/{k}_mean'] = v.mean()
           policy_stats[f'policy/{k}_std'] = v.std()
           policy_stats[f'policy/{k}_min'] = v.min()

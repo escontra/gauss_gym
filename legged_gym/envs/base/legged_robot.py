@@ -87,21 +87,21 @@ class LeggedRobot(base_task.BaseTask):
         act_space = {
             'actions': space.Space(
                 shape=(self.num_actions,),
-                dtype=np.float32
+                dtype=torch.float32
             )
         }
         if self.cfg["commands"]["command_gains"]:
             act_space['stiffness'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][0],
-                high=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][1],
-                dtype=np.float32
+                low=self.default_dof_stiffness[0] * self.cfg["commands"]["command_gains_stiffness_range"][0],
+                high=self.default_dof_stiffness[0] * self.cfg["commands"]["command_gains_stiffness_range"][1],
+                dtype=torch.float32
             )
             act_space['damping'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][0],
-                high=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][1],
-                dtype=np.float32
+                low=self.default_dof_damping[0] * self.cfg["commands"]["command_gains_damping_range"][0],
+                high=self.default_dof_damping[0] * self.cfg["commands"]["command_gains_damping_range"][1],
+                dtype=torch.float32
             )
         return act_space
 

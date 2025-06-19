@@ -1,51 +1,40 @@
 import numpy as np
+from typing import List, Optional
+import torch
 
 
+@torch.jit.script
 class Space:
 
-  def __init__(self, dtype, shape=(), low=None, high=None):
-    # For integer types, high is one above the highest allowed value.
-    shape = (shape,) if isinstance(shape, int) else shape
-    self._dtype = np.dtype(dtype)
-    assert self._dtype is not object, self._dtype
-    assert isinstance(shape, tuple), shape
+  def __init__(
+      self,
+      dtype: torch.dtype,
+      shape: List[int],
+      low: Optional[torch.Tensor]=None,
+      high: Optional[torch.Tensor]=None):
+    self._dtype = dtype
     self._low = self._infer_low(dtype, shape, low, high)
     self._high = self._infer_high(dtype, shape, low, high)
-    self._shape = self._infer_shape(dtype, shape, self._low, self._high)
-    self._discrete = (
-        np.issubdtype(self.dtype, np.integer) or self.dtype == bool)
+    assert all(dim and dim > 0 for dim in shape), shape
+    self._shape = shape
 
   @property
-  def dtype(self):
+  def dtype(self) -> torch.dtype:
     return self._dtype
 
   @property
-  def shape(self):
+  def shape(self) -> List[int]:
     return self._shape
 
   @property
-  def low(self):
+  def low(self) -> torch.Tensor:
     return self._low
 
   @property
-  def high(self):
+  def high(self) -> torch.Tensor:
     return self._high
 
-  @property
-  def discrete(self):
-    return self._discrete
-
-  @property
-  def classes(self):
-    assert self.discrete
-    if self.dtype == bool:
-      classes = np.full(self.shape, 2, np.int32)
-    else:
-      classes = self._high - self._low
-    if not classes.ndim:
-      classes = int(classes.item())
-    return classes
-
+  @torch.jit.unused
   def __eq__(self, other):
     return (
         self._dtype == other.dtype and
@@ -54,13 +43,15 @@ class Space:
         np.all(self._high == other.high),
     )
 
+  @torch.jit.unused
   def __repr__(self):
     return (
-        f'Space({self.dtype.name}, '
+        f'Space({self.dtype}, '
         f'shape={self.shape}, '
         f'low={self.low}, '
         f'high={self.high})')
 
+  @torch.jit.unused
   def __contains__(self, value):
     value = np.asarray(value)
     if np.issubdtype(self.dtype, str):
@@ -75,6 +66,7 @@ class Space:
       return False
     return True
 
+  @torch.jit.unused
   def sample(self):
     low, high = self.low, self.high
     if np.issubdtype(self.dtype, np.floating):
@@ -82,48 +74,38 @@ class Space:
       high = np.minimum(np.ones(self.shape) * np.finfo(self.dtype).max, high)
     return np.random.uniform(low, high, self.shape).astype(self.dtype)
 
-  def _infer_low(self, dtype, shape, low, high):
-    if np.issubdtype(dtype, str):
-      assert low is None, low
-      return None
+  @torch.jit.unused
+  def _infer_low(self, dtype: torch.dtype, shape: List[int], low: Optional[torch.Tensor], high: Optional[torch.Tensor]) -> torch.Tensor:
     if low is not None:
+      if not isinstance(low, torch.Tensor):
+        low = torch.tensor(low, dtype=dtype)
       try:
-        return np.broadcast_to(low, shape)
+        return torch.broadcast_to(low, shape)
       except ValueError:
         raise ValueError(f'Cannot broadcast {low} to shape {shape}')
-    elif np.issubdtype(dtype, np.floating):
-      return -np.inf * np.ones(shape)
-    elif np.issubdtype(dtype, np.integer):
-      return np.iinfo(dtype).min * np.ones(shape, dtype)
-    elif np.issubdtype(dtype, bool):
-      return np.zeros(shape, bool)
+    elif dtype.is_floating_point:
+      return -torch.inf * torch.ones(shape)
+    elif dtype in (torch.int32, torch.int64, torch.int16, torch.int8, torch.uint8):
+      return torch.iinfo(dtype).min * torch.ones(shape, dtype=dtype)
+    elif dtype == torch.bool:
+      return torch.zeros(shape, dtype=dtype)
     else:
       raise ValueError('Cannot infer low bound from shape and dtype.')
 
-  def _infer_high(self, dtype, shape, low, high):
-    if np.issubdtype(dtype, str):
-      assert high is None, high
-      return None
+  @torch.jit.unused
+  def _infer_high(self, dtype: torch.dtype, shape: List[int], low: Optional[torch.Tensor], high: Optional[torch.Tensor]) -> torch.Tensor:
     if high is not None:
+      if not isinstance(high, torch.Tensor):
+        high = torch.tensor(high, dtype=dtype)
       try:
-        return np.broadcast_to(high, shape)
+        return torch.broadcast_to(high, shape)
       except ValueError:
         raise ValueError(f'Cannot broadcast {high} to shape {shape}')
-    elif np.issubdtype(dtype, np.floating):
-      return np.inf * np.ones(shape)
-    elif np.issubdtype(dtype, np.integer):
-      return np.iinfo(dtype).max * np.ones(shape, dtype)
-    elif np.issubdtype(dtype, bool):
-      return np.ones(shape, bool)
+    elif dtype.is_floating_point:
+      return torch.inf * torch.ones(shape)
+    elif dtype in (torch.int32, torch.int64, torch.int16, torch.int8, torch.uint8):
+      return torch.iinfo(dtype).max * torch.ones(shape, dtype=dtype)
+    elif dtype == torch.bool:
+      return torch.ones(shape, dtype=dtype)
     else:
       raise ValueError('Cannot infer high bound from shape and dtype.')
-
-  def _infer_shape(self, dtype, shape, low, high):
-    if shape is None and low is not None:
-      shape = low.shape
-    if shape is None and high is not None:
-      shape = high.shape
-    if not hasattr(shape, '__len__'):
-      shape = (shape,)
-    assert all(dim and dim > 0 for dim in shape), shape
-    return tuple(shape)
