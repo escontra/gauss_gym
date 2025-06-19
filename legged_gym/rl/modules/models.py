@@ -126,16 +126,16 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
 
   def forward(self,
               obs: Dict[str, torch.Tensor],
-              hidden_states: Tuple[torch.Tensor, ...],
+              hidden_states: _RNN_STATE,
               masks: Optional[torch.Tensor]=None,
-              mean_only: bool=False,
+              unpad: bool=True,
               rnn_only: bool=False,
-              unpad: bool=True) ->Tuple[Dict[str, Union[outs.Output, torch.Tensor]], Optional[Tuple[torch.Tensor, ...]]]:
+              ):
     new_obs = {
        **obs,
        **self.image_feature_model(obs)
     }
-    return self.recurrent_model(new_obs, hidden_states, masks, mean_only, unpad=unpad, rnn_only=rnn_only)
+    return self.recurrent_model(new_obs, hidden_states, masks, unpad=unpad, rnn_only=rnn_only)
 
   def flatten_parameters(self):
     self.recurrent_model.flatten_parameters()

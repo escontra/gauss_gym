@@ -656,12 +656,10 @@ class VoxelGridDecoderHead(nn.Module):
       self,
       input_size: int,
       output_space: space.Space,
-      outscale: float = 1.0,
     ):
     super().__init__()
     self.input_size = input_size
     self.output_size = output_space.shape
-    self.outscale = outscale
 
     self.decoder = decoder.ConvDecoder3D(
       in_channels=input_size,
