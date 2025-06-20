@@ -167,7 +167,7 @@ def reconstruction_loss(
     obs_group, obs_name = name.split('/')
     recon_obs = pytree.tree_map(lambda x: x[:, sample_idxs], batch.obs[obs_group][obs_name])
     if 'ray_cast' in obs_name.lower():
-      num_height_levels = dist[0].logit.shape[-1]
+      num_height_levels = dist.pred()[0].shape[-1]
       # Compute ground truth occupancy grid and centroid grid. Get mask for
       # unsaturated voxels.
       recon_occupancy_grid, recon_centroid_grid = voxel.heightmap_to_voxels(recon_obs, num_height_levels)
@@ -178,13 +178,13 @@ def reconstruction_loss(
       masks_sampled_unsaturated = masks_sampled_expanded & unsaturated_mask
 
       # Compute masked occupancy loss.
-      recon_loss_occupancy = dist[0].loss(recon_occupancy_grid.detach())
+      recon_loss_occupancy = dist.occupancy_grid_loss(recon_occupancy_grid.detach())
       recon_loss_occupancy = utils.masked_mean(recon_loss_occupancy, masks_sampled_unsaturated)
       metrics[f'image_encoder_recon_{obs_group}_{obs_name}_occupancy_loss'] = recon_loss_occupancy.item()
 
       # Compute masked centroid loss. Additionally mask out loss for
       # unoccupied voxels.
-      recon_loss_centroid = dist[1].loss(recon_centroid_grid.detach())
+      recon_loss_centroid = dist.centroid_grid_loss(recon_centroid_grid.detach())
       # With ground truth occupancy grid mask.
       recon_loss_centroid = utils.masked_mean(recon_loss_centroid, masks_sampled_unsaturated & recon_occupancy_grid)
       # With predicted occupancy grid mask.

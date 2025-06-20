@@ -1,4 +1,4 @@
-from typing import Tuple, Union, Dict
+from typing import Tuple, Union, Dict, List, Optional
 import functools
 import numpy as np
 import torch.utils._pytree as pytree
@@ -146,9 +146,8 @@ class Concat:
 @torch.jit.script
 class MSE:
 
-  def __init__(self, mean: torch.Tensor, squash=None):
+  def __init__(self, mean: torch.Tensor):
     self.mean = mean.to(torch.float32)
-    self.squash = squash
 
   def pred(self) -> torch.Tensor:
     return self.mean
@@ -157,8 +156,11 @@ class MSE:
   def loss(self, target: torch.Tensor) -> torch.Tensor:
     assert target.dtype == torch.float32, target.dtype
     assert self.mean.shape == target.shape, (self.mean.shape, target.shape)
-    squash = self.squash or (lambda x: x)
-    return torch.square(self.mean - (squash(target.to(f32))).detach())
+    return torch.square(self.mean - target.to(f32).detach())
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'MSE(mean={self.mean.shape})'
 
 
 class Huber(Output):
@@ -214,6 +216,10 @@ class Normal:
   def loss(self, target: torch.Tensor) -> torch.Tensor:
     return -self.logp(target.detach())
 
+  @torch.jit.export
+  def __repr__(self):
+    return f'Normal(mean={self.mean.shape}, stddev={self.stddev.shape})'
+
 
 @torch.jit.script
 class Binary:
@@ -232,13 +238,40 @@ class Binary:
     return event * logp + (1 - event) * lognotp
 
   @torch.jit.unused
-  def sample(self, shape: Tuple[int, ...]=()) -> torch.Tensor:
+  def sample(self, shape: Optional[List[int]]=None) -> torch.Tensor:
     prob = torch.nn.functional.sigmoid(self.logit)
+    shape = shape or ()
     return torch.bernoulli(prob, -1, shape + self.logit.shape)
 
   @torch.jit.unused
   def loss(self, target: torch.Tensor) -> torch.Tensor:
     return -self.logp(target.detach())
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'Binary(logit={self.logit.shape})'
+
+
+@torch.jit.script
+class VoxelDist:
+  def __init__(self, occupancy_logit_grid: torch.Tensor, centroid_grid: torch.Tensor):
+    self.occupancy_dist = Binary(occupancy_logit_grid)
+    self.centroid_dist = MSE(centroid_grid)
+
+  def pred(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    return (self.occupancy_dist.pred(), self.centroid_dist.pred())
+
+  @torch.jit.unused
+  def occupancy_grid_loss(self, event: torch.Tensor) -> torch.Tensor:
+    return self.occupancy_dist.loss(event)
+
+  @torch.jit.unused
+  def centroid_grid_loss(self, event: torch.Tensor) -> torch.Tensor:
+    return self.centroid_dist.loss(event)
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'VoxelDist(occupancy_grid={self.occupancy_dist.logit.shape}, centroid_grid={self.centroid_dist.mean.shape})'
 
 
 class Categorical(Output):
@@ -591,7 +624,7 @@ class NormalLogSTDHead(nn.Module):
     self.init_std = init_std
     self.minstd = minstd
     self.maxstd = maxstd
-    mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    mean_net = nn.Linear(input_size, int(np.prod(self.output_size)))
     if bounded:
       mean_net = nn.Sequential(
         mean_net,
@@ -636,7 +669,7 @@ class MSEHead(nn.Module):
     self.output_size = output_space.shape
     self.outscale = outscale
 
-    self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size)))
     self._init_layer(self.projection_net)
 
   @torch.jit.unused
@@ -648,7 +681,8 @@ class MSEHead(nn.Module):
   def forward(self, x: torch.Tensor) -> MSE:
     pred = self.projection_net(x)
     pred = utils.reshape_output(pred, self.output_size)
-    return MSE(pred)
+    output = MSE(pred)
+    return output
 
 
 class VoxelGridDecoderHead(nn.Module):
@@ -684,14 +718,12 @@ class VoxelGridDecoderHead(nn.Module):
       nn.Sigmoid()
     )
 
-  def forward(self, x: torch.Tensor) -> Tuple[Binary, MSE]:
+  def forward(self, x: torch.Tensor) -> VoxelDist:
     latent_grid = self.decoder(x)
-    bshape = latent_grid.shape[:-4]
-    latent_grid = latent_grid.reshape((-1, *latent_grid.shape[-4:]))
-    occupancy_grid = self.occupancy_grid_projection(latent_grid).squeeze(-1)
-    centroid_grid = self.centroid_grid_projection(latent_grid).squeeze(-1)
-    occupancy_grid = occupancy_grid.reshape((*bshape, *occupancy_grid.shape[-3:]))
-    centroid_grid = centroid_grid.reshape((*bshape, *centroid_grid.shape[-3:]))
-    occupancy_dist = Binary(occupancy_grid)
-    centroid_dist = MSE(centroid_grid)
-    return occupancy_dist, centroid_dist
+    batch_shape, obs_shape = latent_grid.shape[:-4], latent_grid.shape[-4:]
+    latent_grid = utils.flatten_batch(latent_grid, obs_shape)
+    occupancy_grid = self.occupancy_grid_projection(latent_grid).squeeze(1)
+    centroid_grid = self.centroid_grid_projection(latent_grid).squeeze(1)
+    occupancy_grid = utils.unflatten_batch(occupancy_grid, batch_shape)
+    centroid_grid = utils.unflatten_batch(centroid_grid, batch_shape)
+    return VoxelDist(occupancy_grid, centroid_grid)

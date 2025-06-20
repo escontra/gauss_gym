@@ -134,3 +134,19 @@ def get_mlp_cnn_keys(obs, project_dims={}) -> Tuple[
 @torch.jit.ignore
 def reshape_output(tensor: torch.Tensor, output_size: List[int]) -> torch.Tensor:
   return tensor.reshape((*tensor.shape[:-1], *output_size))
+
+@torch.jit.ignore
+def flatten_obs(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*tensor.shape[:-len(obs_size)], -1)
+
+@torch.jit.ignore
+def unflatten_obs(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*tensor.shape[:-1], *obs_size)
+
+@torch.jit.ignore
+def flatten_batch(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(-1, *obs_size)
+
+@torch.jit.ignore
+def unflatten_batch(tensor: torch.Tensor, batch_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*batch_size, *tensor.shape[1:])

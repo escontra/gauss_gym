@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from legged_gym.rl import utils
+
 
 class ConvDecoder3D(nn.Module):
 
@@ -30,7 +32,7 @@ class ConvDecoder3D(nn.Module):
       assert 3 <= self.minres[i] <= 16, self.minres
     self.init_shape = (self.depths[-1], *self.minres)
     self.space_proj = nn.Sequential(
-      nn.Linear(self.in_channels, np.prod(self.init_shape)),
+      nn.Linear(self.in_channels, int(np.prod(self.init_shape))),
       nn.GELU())
 
     conv_transpose_layers = []
@@ -68,12 +70,12 @@ class ConvDecoder3D(nn.Module):
       final_conv_layers.append(nn.GELU())
     self.final_conv = nn.Sequential(*final_conv_layers)
 
-  def __call__(self, x):
-    bshape = x.shape[:-1]
-    x = x.reshape((np.prod(bshape), -1))
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    batch_shape, obs_shape  = x.shape[:-1], x.shape[-1:]
+    x = utils.flatten_batch(x, obs_shape)
     x = self.space_proj(x)
-    x = x.reshape((x.shape[0], *self.init_shape))
+    x = utils.unflatten_obs(x, self.init_shape)
     x = self.conv_transpose_layers(x)
     x = self.final_conv(x)
-    x = x.reshape((*bshape, self.out_channels, *self.out_resolution))
+    x = utils.unflatten_batch(x, batch_shape)
     return x

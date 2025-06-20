@@ -66,8 +66,8 @@ class Runner:
               }
               reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
                 torch.float32,
-                shape=[*self.env.obs_space()[obs_group][obs_name].shape,
-                      self.cfg["image_encoder"]["voxel_height_levels"]])
+                shape=(*self.env.obs_space()[obs_group][obs_name].shape,
+                      self.cfg["image_encoder"]["voxel_height_levels"]))
             else:
               reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
               reconstruct_head[f'{obs_group}/{obs_name}'] = {
@@ -667,8 +667,8 @@ class Runner:
           obs_dict[self.policy_key][self.image_encoder_key] = image_encoder_rnn_state
 
           if step % 5 == 0:
-            occupancy_grid_dist, _ = recon_dists['critic/ray_cast']
-            occupancy_grid_pred = occupancy_grid_dist.pred()
+            occupancy_grid_dist = recon_dists['critic/ray_cast']
+            occupancy_grid_pred, _ = occupancy_grid_dist.pred()
             from legged_gym.utils import voxel
             occupancy_grid_gt, _ = voxel.heightmap_to_voxels(
               obs_dict["critic"]["ray_cast"],
