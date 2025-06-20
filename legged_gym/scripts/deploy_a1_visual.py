@@ -6,7 +6,8 @@ import functools
 
 import rospy
 import ros_numpy
-import cv2
+import torch
+import torch.nn.functional as F
 import pyrealsense2 as rs
 from sensor_msgs.msg import Image
 from unitree_legged_msgs.msg import Float32MultiArrayStamped
@@ -21,16 +22,28 @@ def get_input_filter(cfg):
 
   def input_filter(
     image: np.ndarray,
-    downscale_factor: float,
+    width: int,
+    height: int
   ):
     """Processes [H, W, 3] image."""
-    return cv2.resize(
-      image, (0, 0), fx=1 / downscale_factor, fy=1 / downscale_factor
-    )
+    orig_dtype = image.dtype
+    image = np.transpose(image, (2, 0, 1))[None]
+    image = torch.from_numpy(image).float() / 255.
+    image = F.interpolate(image, size=(height, width), mode='bilinear')
+    image = (255. * image.cpu().numpy()[0]).astype(orig_dtype)
+    image = np.transpose(image, (1, 2, 0))
+    return image
+ 
+  downscale_factor = cfg["env"]["camera_params"]["downscale_factor"]
+  orig_height = cfg["env"]["camera_params"]["cam_height"]
+  orig_width = cfg["env"]["camera_params"]["cam_width"]
+  new_height = int(orig_height / downscale_factor)
+  new_width = int(orig_width / downscale_factor)
 
   return functools.partial(
     input_filter,
-    downscale_factor=cfg["env"]["camera_params"]["downscale_factor"],
+    width=new_width,
+    height=new_height
   )
 
 
@@ -42,6 +55,7 @@ def get_started_pipeline(
   pipeline = rs.pipeline()
   config = rs.config()
   if serial_number != '':
+    print(f'Enabling device: {serial_number}')
     config.enable_device(serial_number)
   config.enable_stream(
     rs.stream.color,
@@ -107,7 +121,7 @@ def main(argv=None):
 
   rs_filter = get_input_filter(cfg)
   rs_pipeline, rs_profile = get_started_pipeline(cfg, parsed.serial_number)
-  print(f'RS Profile:\n{rs_profile}')
+  print(f'RS streams:\n{rs_profile.get_streams()}')
   # embedding_publisher = rospy.Publisher(
   #   parsed.namespace + "/visual_embedding",
   #   Float32MultiArrayStamped,
@@ -128,6 +142,8 @@ def main(argv=None):
   )
 
   rospy.loginfo("RealSense initialized.")
+  frames = rs_pipeline.wait_for_frames(2000)
+  print('Initial frames received!')
   try:
     # embedding_msg = Float32MultiArrayStamped()
     # embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
