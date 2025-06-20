@@ -160,6 +160,10 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
   def rnn_state_size(self) -> int:
     return self.recurrent_model.rnn_state_size
 
+  @property
+  def output_dist_names(self) -> List[str]:
+    return self.recurrent_model.output_dist_names
+
 
 class ImageFeature(torch.nn.Module):
   def __init__(
@@ -330,6 +334,17 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
       print(f'\t\t{k}: {v.output_size} {v.__class__.__name__}')
 
     self.symlog_inputs = symlog_inputs
+
+  @property
+  def output_dist_names(self) -> List[str]:
+    dist_names = []
+    for k, v in self.heads.items():
+      if isinstance(v, outs.VoxelGridDecoderHead):
+        dist_names.append(f'{k}/occupancy_grid')
+        dist_names.append(f'{k}/centroid_grid')
+      else:
+        dist_names.append(k)
+    return dist_names
 
   @torch.jit.export
   def reset(
