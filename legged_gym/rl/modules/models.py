@@ -77,6 +77,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       model_type=model_type,
       embedding_dim=embedding_dim,
       dino_pretrained=dino_pretrained)
+    self.cnn_keys = self.image_feature_model.cnn_keys
     self.mlp_obs_space = {**obs_space, **self.image_feature_model.modified_obs_space()}
     dont_normalize_keys = dont_normalize_keys or []
     self.recurrent_model = RecurrentMLPModel(
