@@ -20,7 +20,18 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
 
   new_plots = []
   for i, (occupancy_grid, title, plot) in enumerate(zip(occupancy_grids, titles, plots)):
-    heights = env.sensors["raycast_grid"].ray_starts.clone()
+    if env is None:
+      x = torch.linspace(-1, 1, occupancy_grid.shape[-3])
+      y = torch.linspace(-1, 1, occupancy_grid.shape[-2])
+      print(occupancy_grid.shape)
+      print(x.shape)
+      print(y.shape)
+      grid_x, grid_y = torch.meshgrid(x, y)
+      heights = torch.stack([grid_x, grid_y, torch.zeros_like(grid_x)], dim=-1)
+      heights = heights[None].repeat(occupancy_grid.shape[0], 1, 1, 1)
+    else:
+      heights = env.sensors["raycast_grid"].ray_starts.clone()
+
     first_nonzero = torch.argmax(occupancy_grid.to(torch.int32), dim=-1)  # Find first non-zero in each row
     heights[..., -1] = first_nonzero
     heights = heights[env_id].reshape(-1, 3)
