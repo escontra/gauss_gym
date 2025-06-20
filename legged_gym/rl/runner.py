@@ -287,10 +287,14 @@ class Runner:
     self.action_agg = agg.Agg()
     self.should_log = when.Clock(self.cfg["runner"]["log_every"])
     self.should_save = when.Clock(self.cfg["runner"]["save_every"])
-    self.recorder = recorder.Recorder(
-      log_dir, self.cfg, self.env.deploy_config(),
-      {'obs_space': self.env.obs_space(),
-       'action_space': self.env.action_space()})
+    save_spaces = {
+      'policy_obs_space': self.policy_obs_space,
+      'value_obs_space': self.value_obs_space,
+      'action_space': self.env.action_space(),
+    }
+    if self.image_encoder_enabled:
+      save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
