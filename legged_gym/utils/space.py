@@ -15,7 +15,6 @@ class Space:
     self._dtype = dtype
     self._low = self._infer_low(dtype, shape, low, high)
     self._high = self._infer_high(dtype, shape, low, high)
-    assert all(dim and dim > 0 for dim in shape), shape
     self._shape = shape
 
   @property
