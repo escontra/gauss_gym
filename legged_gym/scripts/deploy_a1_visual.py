@@ -62,6 +62,7 @@ def get_started_pipeline(
     cfg["env"]["camera_params"]["cam_width"],
     cfg["env"]["camera_params"]["cam_height"],
     rs.format.rgb8,
+    60
   )
   profile = pipeline.start(config)
   return pipeline, profile
