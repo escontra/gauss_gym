@@ -35,9 +35,11 @@ class DeploymentRunner:
     self.onnx_session = onnxruntime.InferenceSession(str(onnx_path), sess_options=sess_options, providers=[self.execution_provider])
     self.onnx_input_names = [inp.name for inp in self.onnx_session.get_inputs()]
     self.onnx_output_names = [out.name for out in self.onnx_session.get_outputs()]
+    print(f'Input names: {self.onnx_input_names}')
+    print(f'Output names: {self.onnx_output_names}')
     self.rnn_state_key = 'out_rnn_state'
     assert self.rnn_state_key in self.onnx_output_names
-    self.action_keys = self.onnx_output_names[:self.onnx_output_names.index(self.rnn_state_key)]
+    self.model_pred_keys = self.onnx_output_names[:self.onnx_output_names.index(self.rnn_state_key)]
     self.hidden_state_keys = self.onnx_output_names[self.onnx_output_names.index(self.rnn_state_key) + 1:]
     with open(hidden_states_path, 'rb') as f:
       self.onnx_init_hidden_states = pickle.load(f)
@@ -49,7 +51,7 @@ class DeploymentRunner:
     }
 
   def process_outputs(self, outputs):
-    model_preds = {k: outputs[k] for k in self.action_keysact_keys}
+    model_preds = {k: outputs[k] for k in self.model_pred_keys}
     rnn_state = outputs[self.rnn_state_key]
     hidden_states = (outputs[k] for k in self.hidden_state_keys)
     return model_preds, rnn_state, hidden_states
@@ -58,5 +60,5 @@ class DeploymentRunner:
     input_dict = self.get_input_dict(obs, self.onnx_init_hidden_states)
     outputs = self.onnx_session.run(self.onnx_output_names, input_dict)
     outputs = dict(zip(self.onnx_output_names, outputs))
-    model_preds, rnn_state, self.onnx_init_hidden_states = self.process_outputs(outputs, self.action_space.keys())
+    model_preds, rnn_state, self.onnx_init_hidden_states = self.process_outputs(outputs)
     return model_preds, rnn_state

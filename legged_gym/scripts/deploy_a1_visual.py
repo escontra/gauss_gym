@@ -13,8 +13,9 @@ from sensor_msgs.msg import Image
 from unitree_legged_msgs.msg import Float32MultiArrayStamped
 
 import legged_gym
-from legged_gym.utils import flags, config
-# from legged_gym.rl import deployment_runner_onnx
+from legged_gym.utils import flags, config, visualization
+from deployment.a1.a1_real import UnitreeA1Real
+from legged_gym.rl import deployment_runner_onnx
 
 
 def get_input_filter(cfg):
@@ -68,6 +69,7 @@ def get_started_pipeline(
   return pipeline, profile
 
 
+
 def main(argv=None):
   log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, "logs"))
   load_run_path = None
@@ -109,16 +111,29 @@ def main(argv=None):
   else:
     raise ValueError("Must specify logdir as 'default' or a path.")
 
-  # runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg)
+  runner = deployment_runner_onnx.DeploymentRunner(
+          cfg,
+          model_name='image_encoder',
+          execution_provider='CUDAExecutionProvider')
 
-  # if cfg["runner"]["resume"]:
-  #   assert cfg["runner"]["load_run"] != "", (
-  #     "Must specify load_run when resuming."
-  #   )
-  #   runner.load(log_root)
+  if cfg["runner"]["resume"]:
+    assert cfg["runner"]["load_run"] != "", (
+      "Must specify load_run when resuming."
+    )
+    runner.load(log_root)
 
   log_level = rospy.DEBUG if parsed.debug else rospy.INFO
   rospy.init_node("a1_visual_" + parsed.mode, log_level=log_level)
+
+  unitree_real_env = UnitreeA1Real(
+    robot_namespace=parsed.namespace,
+    cfg=cfg,
+    forward_depth_topic=None,
+    forward_depth_embedding_dims=None,
+    move_by_wireless_remote=False,
+    move_by_gamepad=False)
+  unitree_real_env.start_ros()
+  unitree_real_env.wait_untill_ros_working()
 
   rs_filter = get_input_filter(cfg)
   rs_pipeline, rs_profile = get_started_pipeline(cfg, parsed.serial_number)
@@ -145,6 +160,7 @@ def main(argv=None):
   rospy.loginfo("RealSense initialized.")
   frames = rs_pipeline.wait_for_frames(2000)
   print('Initial frames received!')
+  occupancy_fig_state = (None, None)
   try:
     # embedding_msg = Float32MultiArrayStamped()
     # embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
@@ -162,8 +178,23 @@ def main(argv=None):
         frame_got = True
         rospy.loginfo("Realsense frame recieved. Sending embeddings...")
 
+
       color_frame = np.asanyarray(color_frame.get_data())
       color_frame = rs_filter(color_frame)
+
+      obs = unitree_real_env.get_obs()
+      projected_gravity = obs['policy']['projected_gravity']
+
+      encoder_input = {
+              'projected_gravity': projected_gravity,
+              'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
+      }
+      for k, v in encoder_input.items():
+          print(k, v.shape)
+      model_preds, _ = runner.predict(encoder_input)
+      print('PREDICTED')
+      for k, v in model_preds.items():
+          print(k, v.shape)
 
       if parsed.debug:
         rgb_image_msg = ros_numpy.msgify(Image, color_frame, encoding="rgb8")
