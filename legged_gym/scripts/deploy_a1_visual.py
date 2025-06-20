@@ -13,7 +13,7 @@ from unitree_legged_msgs.msg import Float32MultiArrayStamped
 
 import legged_gym
 from legged_gym.utils import flags, config
-from legged_gym.rl import deployment_runner_onnx
+# from legged_gym.rl import deployment_runner_onnx
 
 
 def get_input_filter(cfg):
@@ -24,10 +24,9 @@ def get_input_filter(cfg):
     downscale_factor: float,
   ):
     """Processes [H, W, 3] image."""
-    image = cv2.resize(
+    return cv2.resize(
       image, (0, 0), fx=1 / downscale_factor, fy=1 / downscale_factor
     )
-    return image
 
   return functools.partial(
     input_filter,
@@ -37,16 +36,18 @@ def get_input_filter(cfg):
 
 def get_started_pipeline(
   cfg,
+  serial_number: str = '',
 ):
   # By default, rgb is not used.
   pipeline = rs.pipeline()
   config = rs.config()
+  if serial_number != '':
+    config.enable_device(serial_number)
   config.enable_stream(
     rs.stream.color,
     cfg["env"]["camera_params"]["cam_width"],
     cfg["env"]["camera_params"]["cam_height"],
     rs.format.rgb8,
-    1.0 / cfg["env"]["camera_params"]["refresh_duration"],
   )
   profile = pipeline.start(config)
   return pipeline, profile
@@ -61,6 +62,7 @@ def main(argv=None):
       "mode": "jetson",
       "debug": False,
       "namespace": "/a112138",
+      "serial_number": '',
     }
   ).parse_known(argv)
 
@@ -78,11 +80,11 @@ def main(argv=None):
   cfg = cfg.update({"runner.resume": True})
 
   cfg = flags.Flags(cfg).parse(other)
-  print(cfg)
+  # print(cfg)
   cfg = types.MappingProxyType(dict(cfg))
 
   deploy_cfg = config.Config.load(load_run_path / "deploy_config.yaml")
-  print(deploy_cfg)
+  # print(deploy_cfg)
   deploy_cfg = types.MappingProxyType(dict(deploy_cfg))
 
   if cfg["logdir"] == "default":
@@ -92,19 +94,19 @@ def main(argv=None):
   else:
     raise ValueError("Must specify logdir as 'default' or a path.")
 
-  runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg)
+  # runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg)
 
-  if cfg["runner"]["resume"]:
-    assert cfg["runner"]["load_run"] != "", (
-      "Must specify load_run when resuming."
-    )
-    runner.load(log_root)
+  # if cfg["runner"]["resume"]:
+  #   assert cfg["runner"]["load_run"] != "", (
+  #     "Must specify load_run when resuming."
+  #   )
+  #   runner.load(log_root)
 
   log_level = rospy.DEBUG if parsed.debug else rospy.INFO
   rospy.init_node("a1_visual_" + parsed.mode, log_level=log_level)
 
   rs_filter = get_input_filter(cfg)
-  rs_pipeline, rs_profile = get_started_pipeline(cfg)
+  rs_pipeline, rs_profile = get_started_pipeline(cfg, parsed.serial_number)
   print(f'RS Profile:\n{rs_profile}')
   # embedding_publisher = rospy.Publisher(
   #   parsed.namespace + "/visual_embedding",
