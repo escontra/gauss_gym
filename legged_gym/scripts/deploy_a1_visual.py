@@ -28,16 +28,8 @@ def get_input_filter(cfg):
     height: int
   ):
     """Processes [H, W, 3] image."""
-    # orig_dtype = image.dtype
     resized_image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
     return resized_image
-
-    image = np.transpose(image, (2, 0, 1))[None]
-    image = torch.from_numpy(image).float() / 255.
-    image = F.interpolate(image, size=(height, width), mode='bilinear')
-    image = (255. * image.cpu().numpy()[0]).astype(orig_dtype)
-    image = np.transpose(image, (1, 2, 0))
-    return image
  
   downscale_factor = cfg["env"]["camera_params"]["downscale_factor"]
   orig_height = cfg["env"]["camera_params"]["cam_height"]

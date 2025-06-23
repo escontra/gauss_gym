@@ -9,7 +9,7 @@ import torch
 from isaacgym import gymapi
 
 import legged_gym
-from legged_gym.utils import sensors, math, visualization, warp_utils
+from legged_gym.utils import sensors, math, visualization, warp_utils, visualization_geometries
 
 
 TARGET_IDX_OFFSET = 5
@@ -672,25 +672,25 @@ class GaussianSceneManager:
 
   def debug_vis(self, env):
     if self.axis_geom is None:
-      self.axis_geom = visualization.BatchWireframeAxisGeometry(
+      self.axis_geom = visualization_geometries.BatchWireframeAxisGeometry(
         np.prod(self.cam_trans_viz.shape[:2]), 0.25, 0.005, 16
       )
     if self.closest_axis_geom is None:
-      self.closest_axis_geom = visualization.BatchWireframeAxisGeometry(
+      self.closest_axis_geom = visualization_geometries.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.3, 0.01, 24,
         color_x=(1, 0, 0),
         color_y=(1, 0, 0),
         color_z=(1, 0, 0),
       )
     if self.target_axis_geom is None:
-      self.target_axis_geom = visualization.BatchWireframeAxisGeometry(
+      self.target_axis_geom = visualization_geometries.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.3, 0.01, 24,
         color_x=(0, 1, 0),
         color_y=(0, 1, 0),
         color_z=(0, 1, 0),
       )
     if self.velocity_geom is None:
-      self.velocity_geom = visualization.BatchWireframeAxisGeometry(
+      self.velocity_geom = visualization_geometries.BatchWireframeAxisGeometry(
         self._env.num_envs,
         0.3,
         0.01,
@@ -700,7 +700,7 @@ class GaussianSceneManager:
         color_z=(0, 0, 0),
       )
     if self.heading_geom is None:
-      self.heading_geom = visualization.BatchWireframeAxisGeometry(
+      self.heading_geom = visualization_geometries.BatchWireframeAxisGeometry(
         self._env.num_envs, 0.2, 0.01, 32, color_x=(1, 1, 0)
       )
 

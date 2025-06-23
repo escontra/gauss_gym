@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from rendering.batch_gs_renderer import MultiSceneRenderer
-from legged_gym.utils import visualization, math, warp_utils
+from legged_gym.utils import visualization, visualization_geometries, math, warp_utils
 
 
 class RayCaster():
@@ -90,7 +90,7 @@ class RayCaster():
         offset = torch.tensor([0.0, 0.0, 0.01], device=self.device)[None, None, None]
         ray_hits_world_viz = self.ray_hits_world + offset
         if self.sphere_geom is None:
-            self.sphere_geom = visualization.BatchWireframeSphereGeometry(
+            self.sphere_geom = visualization_geometries.BatchWireframeSphereGeometry(
                 self.num_envs * self.num_rays, 0.02, 10, 10, None, color=(0, 1, 0)
             )
         if self.env.selected_environment >= 0:
@@ -156,7 +156,7 @@ class FootContactSensor():
     
     def debug_vis(self, env):
         if self.sphere_geom is None:
-            self.sphere_geom = visualization.BatchWireframeSphereGeometry(
+            self.sphere_geom = visualization_geometries.BatchWireframeSphereGeometry(
                 self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg["asset"]["feet_contact_radius"], 16, 16, None, color=(1, 1, 0)
             )
         feet_edge_pos = self.feet_edge_pos.view(-1, 3)
@@ -273,7 +273,7 @@ class GaussianSplattingRenderer():
     
     def debug_vis(self, env):
         if self.frustrum_geom is None:
-            self.frustrum_geom = visualization.BatchWireframeFrustumGeometry(
+            self.frustrum_geom = visualization_geometries.BatchWireframeFrustumGeometry(
                 self.num_envs,
                 0.1,
                 0.2,
@@ -283,7 +283,7 @@ class GaussianSplattingRenderer():
                 self.fl_y,
                 0.005,
                 32)
-            self.axis_geom = visualization.BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
+            self.axis_geom = visualization_geometries.BatchWireframeAxisGeometry(self.num_envs, 0.25, 0.005, 32)
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
         self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
@@ -352,7 +352,7 @@ class LinkHeightSensor():
     
     def debug_vis(self, env):
         if self.sphere_geom is None:
-            self.sphere_geom = visualization.BatchWireframeSphereGeometry(
+            self.sphere_geom = visualization_geometries.BatchWireframeSphereGeometry(
                 self.num_envs * self.num_rays, 0.02, 20, 20, None, color=self.color
             )
         if self.env.selected_environment >= 0:
