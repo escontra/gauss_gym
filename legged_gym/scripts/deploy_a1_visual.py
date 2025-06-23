@@ -4,10 +4,11 @@ import types
 import numpy as np
 import functools
 
+import cv2
 import rospy
 import ros_numpy
-import torch
-import torch.nn.functional as F
+# import torch
+# import torch.nn.functional as F
 import pyrealsense2 as rs
 from sensor_msgs.msg import Image
 from unitree_legged_msgs.msg import Float32MultiArrayStamped
@@ -27,7 +28,10 @@ def get_input_filter(cfg):
     height: int
   ):
     """Processes [H, W, 3] image."""
-    orig_dtype = image.dtype
+    # orig_dtype = image.dtype
+    resized_image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+    return resized_image
+
     image = np.transpose(image, (2, 0, 1))[None]
     image = torch.from_numpy(image).float() / 255.
     image = F.interpolate(image, size=(height, width), mode='bilinear')
