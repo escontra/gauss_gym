@@ -193,6 +193,7 @@ def main(argv=None):
       model_preds, visual_embedding = runner.predict(encoder_input, rnn_only=not parsed.debug)
       embedding_msg.header.stamp = rospy.Time.now()
       embedding_msg.header.seq += 1
+      print(visual_embedding.tolist())
       embedding_msg.data = visual_embedding.tolist()
       embedding_publisher.publish(embedding_msg)
       encoder_duration = rospy.get_time() - encoder_start_time
