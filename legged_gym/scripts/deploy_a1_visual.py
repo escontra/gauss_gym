@@ -14,7 +14,7 @@ from sensor_msgs.msg import Image
 from unitree_legged_msgs.msg import Float32MultiArrayStamped
 
 import legged_gym
-from legged_gym.utils import flags, config, visualization
+from legged_gym.utils import flags, config, visualization, when
 from deployment.a1.a1_real import UnitreeA1Real
 from legged_gym.rl import deployment_runner_onnx
 
@@ -141,12 +141,14 @@ def main(argv=None):
   # )
   if parsed.debug:
     image_publisher = rospy.Publisher(
-      parsed.namespace + "/camera/depth/image_rect_raw",
+      parsed.namespace + "/camera/image_rect_raw",
       Image,
       queue_size=1,
     )
 
-  ros_rate = rospy.Rate(1.0 / cfg["env"]["camera_params"]["refresh_duration"])
+  duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
+  ros_rate = rospy.Rate(1.0 / duration)
+  get_frame = when.Clock(every=cfg["env"]["camera_params"]["refresh_duration"], first=True)
   rospy.loginfo(
     "Using refresh duration {}s".format(
       cfg["env"]["camera_params"]["refresh_duration"]
@@ -162,23 +164,18 @@ def main(argv=None):
   try:
     # embedding_msg = Float32MultiArrayStamped()
     # embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
-    frame_got = False
 
     while not rospy.is_shutdown():
-      frames = rs_pipeline.wait_for_frames(
-        int(cfg["env"]["camera_params"]["refresh_duration"] * 1000)
-      )
-      # embedding_msg.header.stamp = rospy.Time.now()
-      color_frame = frames.get_color_frame()
-      if not color_frame:
-        continue
-      if not frame_got:
-        frame_got = True
-        rospy.loginfo("Realsense frame recieved. Sending embeddings...")
-
-
-      color_frame = np.asanyarray(color_frame.get_data())
-      color_frame = rs_filter(color_frame)
+      inference_start_time = rospy.get_time()
+      get_new_frame = get_frame()
+      if get_new_frame:
+        frames = rs_pipeline.wait_for_frames(
+          int(cfg["env"]["camera_params"]["refresh_duration"] * 1000)
+        )
+        # embedding_msg.header.stamp = rospy.Time.now()
+        color_frame = frames.get_color_frame()
+        color_frame = np.asanyarray(color_frame.get_data())
+        color_frame = rs_filter(color_frame)
 
       obs = unitree_real_env.get_obs()
       projected_gravity = obs['policy']['projected_gravity']
@@ -187,10 +184,10 @@ def main(argv=None):
               'projected_gravity': projected_gravity,
               'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
       }
-      for k, v in encoder_input.items():
-          print(k, v.shape)
       model_preds, _ = runner.predict(encoder_input)
-      if step % 10 == 0 and debug:
+      inference_duration = rospy.get_time() - inference_start_time
+      rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
+      if parsed.debug and get_new_frame:
           print('PREDICTED')
           for k, v in model_preds.items():
               print(k, v.shape)
@@ -206,16 +203,14 @@ def main(argv=None):
           from PIL import Image as PILImage
           img = PILImage.fromarray(color_frame)
           img.save(f"visualizations/image_{step:06}.png")
+
+          rgb_image_msg = ros_numpy.msgify(Image, color_frame, encoding="rgb8")
+          rgb_image_msg.header.stamp = rospy.Time.now()
+          rgb_image_msg.header.frame_id = (
+            parsed.namespace + "/camera_color_optical_frame"
+          )
+          image_publisher.publish(rgb_image_msg)
       step += 1
-
-      if parsed.debug:
-        rgb_image_msg = ros_numpy.msgify(Image, color_frame, encoding="rgb8")
-        rgb_image_msg.header.stamp = rospy.Time.now()
-        rgb_image_msg.header.frame_id = (
-          parsed.namespace + "/camera_color_optical_frame"
-        )
-        image_publisher.publish(rgb_image_msg)
-
       ros_rate.sleep()
   finally:
     rs_pipeline.stop()
