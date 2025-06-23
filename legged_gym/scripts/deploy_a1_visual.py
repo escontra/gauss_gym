@@ -176,15 +176,24 @@ def main(argv=None):
         color_frame = frames.get_color_frame()
         color_frame = np.asanyarray(color_frame.get_data())
         color_frame = rs_filter(color_frame)
+        realsense_duration = rospy.get_time() - inference_start_time
+        rospy.loginfo_throttle(10, "realsense duration: {:.3f}".format(realsense_duration))
 
+      env_start_time = rospy.get_time()
       obs = unitree_real_env.get_obs()
       projected_gravity = obs['policy']['projected_gravity']
+      env_duration = rospy.get_time() - env_start_time
+      rospy.loginfo_throttle(10, "env duration: {:.3f}".format(env_duration))
 
+      encoder_start_time = rospy.get_time()
       encoder_input = {
               'projected_gravity': projected_gravity,
               'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
       }
       model_preds, _ = runner.predict(encoder_input)
+      encoder_duration = rospy.get_time() - encoder_start_time
+      rospy.loginfo_throttle(10, "encoder duration: {:.3f}".format(encoder_duration))
+
       inference_duration = rospy.get_time() - inference_start_time
       rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
       if parsed.debug and get_new_frame:
