@@ -190,7 +190,7 @@ def main(argv=None):
               'projected_gravity': projected_gravity,
               'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
       }
-      model_preds, _ = runner.predict(encoder_input)
+      model_preds, _ = runner.predict(encoder_input, rnn_only=not parsed.debug)
       encoder_duration = rospy.get_time() - encoder_start_time
       rospy.loginfo_throttle(10, "encoder duration: {:.3f}".format(encoder_duration))
 
