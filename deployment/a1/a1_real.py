@@ -187,12 +187,13 @@ class UnitreeA1Real:
             self.dummy_handler,
             queue_size= 1,
         )
-        self.visual_embedding_subscriber = rospy.Subscriber(
-            self.robot_namespace + "/visual_embedding",
-            Float32MultiArrayStamped,
-            self.update_visual_embedding,
-            queue_size= 1,
-        )
+        if not self.read_only:
+            self.visual_embedding_subscriber = rospy.Subscriber(
+                self.robot_namespace + "/visual_embedding",
+                Float32MultiArrayStamped,
+                self.update_visual_embedding,
+                queue_size= 1,
+            )
     
     def wait_untill_ros_working(self):
         rate = rospy.Rate(100)
@@ -314,7 +315,6 @@ class UnitreeA1Real:
               obs_dict[group.name][observation.name] = obs
 
         if hasattr(self, "visual_embedding_buffer"):
-            print(self.visual_embedding_buffer.shape)
             obs_dict["policy"]["image_encoder"] = self.visual_embedding_buffer
         self.obs_dict = obs_dict
 
