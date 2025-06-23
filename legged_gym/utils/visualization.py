@@ -21,9 +21,6 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles, show
     if env is None:
       x = torch.linspace(-1, 1, occupancy_grid.shape[-3])
       y = torch.linspace(-1, 1, occupancy_grid.shape[-2])
-      print(occupancy_grid.shape)
-      print(x.shape)
-      print(y.shape)
       grid_x, grid_y = torch.meshgrid(x, y)
       heights = torch.stack([grid_x, grid_y, torch.zeros_like(grid_x)], dim=-1)
       heights = heights[None].repeat(occupancy_grid.shape[0], 1, 1, 1)
