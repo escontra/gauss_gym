@@ -135,11 +135,11 @@ def main(argv=None):
   rs_filter = get_input_filter(cfg)
   rs_pipeline, rs_profile = get_started_pipeline(cfg, parsed.serial_number)
   print(f'RS streams:\n{rs_profile.get_streams()}')
-  # embedding_publisher = rospy.Publisher(
-  #   parsed.namespace + "/visual_embedding",
-  #   Float32MultiArrayStamped,
-  #   queue_size=1,
-  # )
+  embedding_publisher = rospy.Publisher(
+    parsed.namespace + "/visual_embedding",
+    Float32MultiArrayStamped,
+    queue_size=1,
+  )
   if parsed.debug:
     image_publisher = rospy.Publisher(
       parsed.namespace + "/camera/image_rect_raw",
@@ -163,8 +163,8 @@ def main(argv=None):
   os.makedirs('visualizations', exist_ok=True)
   step = 0
   try:
-    # embedding_msg = Float32MultiArrayStamped()
-    # embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
+    embedding_msg = Float32MultiArrayStamped()
+    embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
 
     while not rospy.is_shutdown():
       inference_start_time = rospy.get_time()
@@ -173,7 +173,6 @@ def main(argv=None):
         frames = rs_pipeline.wait_for_frames(
           int(cfg["env"]["camera_params"]["refresh_duration"] * 1000)
         )
-        # embedding_msg.header.stamp = rospy.Time.now()
         color_frame = frames.get_color_frame()
         color_frame = np.asanyarray(color_frame.get_data())
         color_frame = rs_filter(color_frame)
@@ -191,7 +190,11 @@ def main(argv=None):
               'projected_gravity': projected_gravity,
               'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
       }
-      model_preds, _ = runner.predict(encoder_input, rnn_only=not parsed.debug)
+      model_preds, visual_embedding = runner.predict(encoder_input, rnn_only=not parsed.debug)
+      embedding_msg.header.stamp = rospy.Time.now()
+      embedding_msg.header.seq += 1
+      embedding_msg.data = visual_embedding.tolist()
+      embedding_publisher.publish(embedding_msg)
       encoder_duration = rospy.get_time() - encoder_start_time
       rospy.loginfo_throttle(10, "encoder duration: {:.3f}".format(encoder_duration))
 
