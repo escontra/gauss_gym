@@ -7,6 +7,7 @@ os.environ["SDL_VIDEODRIVER"] = "dummy"
 import rospy
 from unitree_legged_msgs.msg import LowState
 from unitree_legged_msgs.msg import LegsCmd
+from unitree_legged_msgs.msg import Float32MultiArrayStamped
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
 
@@ -94,6 +95,7 @@ class UnitreeA1Real:
         self.actions = np.zeros((1, 12), dtype=np.float32)
 
         self.process_configs()
+        self.visual_embedding_buffer = None
 
         if self.move_by_gamepad:
             self.vel_x = 0.0
@@ -184,6 +186,12 @@ class UnitreeA1Real:
             "/body_pose",
             Pose,
             self.dummy_handler,
+            queue_size= 1,
+        )
+        self.visual_embedding_subscriber = rospy.Subscriber(
+            self.robot_namespace + "/visual_embedding",
+            Float32MultiArrayStamped,
+            self.update_visual_embedding,
             queue_size= 1,
         )
     
@@ -302,6 +310,11 @@ class UnitreeA1Real:
                   obs = scale * obs
               obs_dict[group.name][observation.name] = obs
 
+        if self.visual_embedding_buffer is not None:
+            print(self.visual_embedding_buffer)
+            print(type(self.visual_embedding_buffer))
+            print(self.visual_embedding_buffer.shape)
+            obs_dict["policy"]["image_encoder"] = self.visual_embedding_buffer
         self.obs_dict = obs_dict
 
 
@@ -360,6 +373,10 @@ class UnitreeA1Real:
             if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
                 self.command_buf[0, 2] = 0.
         self.low_state_get_time = rospy.Time.now()
+  
+    def update_visual_embedding(self, ros_msg):
+        self.visual_embedding_buffer = ros_msg.data
+        self.visual_embedding_get_time = rospy.Time.now()
 
     def update_base_pose(self, ros_msg):
         """ update robot odometry for position """
