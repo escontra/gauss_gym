@@ -4,11 +4,12 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 
-def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
+def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles, show=True):
   first_time = fig is None
   if first_time:
     assert plots is None, "plots should be None if fig is None"
-    plt.ion()
+    if show:
+      plt.ion()
     fig = plt.figure(figsize=(3, 3 * len(occupancy_grids)), tight_layout=True)
     plots = [None] * len(occupancy_grids)
 
@@ -51,17 +52,18 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles):
       plot.set_array(z)
       new_plots.append(plot)
   
-  if first_time:
+  if first_time and show:
     plt.show(block=False)
 
   fig.tight_layout()
   fig.canvas.flush_events()
   fig.canvas.draw()
-  plt.pause(0.001)
+  if show:
+    plt.pause(0.001)
   return fig, new_plots
 
 
-def update_image(env, fig, im, env_id, image):
+def update_image(env, fig, im, env_id, image, show=True):
     new_image = image[env_id] if env_id >= 0 else image
     if isinstance(image, torch.Tensor):
       new_image = new_image.cpu().numpy()
@@ -79,7 +81,8 @@ def update_image(env, fig, im, env_id, image):
 
     first_time = fig is None
     if first_time:
-      plt.ion()
+      if show:
+        plt.ion()
       fig_height = 2.5
       fig_width = (w / h) * fig_height
       fig, ax = plt.subplots(figsize=(fig_width, fig_height), tight_layout=True)
@@ -107,12 +110,13 @@ def update_image(env, fig, im, env_id, image):
 
     im.set_data(np.array(to_plot))
 
-    if first_time:
+    if first_time and show:
       plt.show(block=False)
 
     fig.tight_layout()
     fig.canvas.flush_events()
     fig.canvas.draw()
-    plt.pause(0.001)
+    if show:
+      plt.pause(0.001)
 
     return fig, im
