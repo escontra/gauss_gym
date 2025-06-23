@@ -56,9 +56,13 @@ class DeploymentRunner:
     hidden_states = (outputs[k] for k in self.hidden_state_keys)
     return model_preds, rnn_state, hidden_states
 
-  def predict(self, obs):
+  def predict(self, obs, rnn_only: bool = False):
     input_dict = self.get_input_dict(obs, self.onnx_init_hidden_states)
-    outputs = self.onnx_session.run(self.onnx_output_names, input_dict)
-    outputs = dict(zip(self.onnx_output_names, outputs))
+    if rnn_only:
+      output_keys = [self.rnn_state_key] + self.hidden_state_keys
+    else:
+      output_keys = self.onnx_output_names
+    outputs = self.onnx_session.run(output_keys, input_dict)
+    outputs = dict(zip(output_keys, outputs))
     model_preds, rnn_state, self.onnx_init_hidden_states = self.process_outputs(outputs)
     return model_preds, rnn_state
