@@ -101,16 +101,18 @@ def main(argv = None):
     else:
         raise ValueError("Must specify logdir as 'default' or a path.")
 
-    runner = deployment_runner_onnx.DeploymentRunner(deploy_cfg, cfg)
+    runner = deployment_runner_onnx.DeploymentRunner(
+        cfg,
+        model_name='policy'
+    )
 
     if cfg["runner"]["resume"]:
         assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
         runner.load(log_root)
 
     log_level = rospy.DEBUG if parsed.debug else rospy.INFO
-    rospy.init_node("a1_legged_gym_" + parsed.mode, log_level= log_level)
+    rospy.init_node("a1_policy_" + parsed.mode, log_level= log_level)
 
-    duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
 
     unitree_real_env = UnitreeA1Real(
         robot_namespace= parsed.namespace,
@@ -120,9 +122,9 @@ def main(argv = None):
         move_by_wireless_remote= False,
         move_by_gamepad=True,
     )
-
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
+    duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
     rate = rospy.Rate(1 / duration)
 
     standup_procedure(
@@ -133,12 +135,12 @@ def main(argv = None):
         kp= 80,
         kd= 1.5,
         warmup_timesteps= 100,
-        policy=runner.act,
+        policy=runner.predict,
     )
     while not rospy.is_shutdown():
         inference_start_time = rospy.get_time()
         obs = unitree_real_env.get_obs()
-        actions = runner.act(obs[cfg["policy"]["obs_key"]])['actions']
+        actions = runner.predict(obs[cfg["policy"]["obs_key"]])['actions']
         unitree_real_env.send_action(actions)
         inference_duration = rospy.get_time() - inference_start_time
         motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
