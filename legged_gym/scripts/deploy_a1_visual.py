@@ -188,9 +188,6 @@ def main(argv=None):
       inference_duration = rospy.get_time() - inference_start_time
       rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
       if parsed.debug and get_new_frame:
-          print('PREDICTED')
-          for k, v in model_preds.items():
-              print(k, v.shape)
           occupancy_grid_state = visualization.update_occupancy_grid(
                   None,
                   *occupancy_fig_state,
