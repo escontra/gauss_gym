@@ -198,6 +198,10 @@ class UnitreeA1Real:
         rate = rospy.Rate(100)
         while not hasattr(self, "low_state_buffer"):
             rate.sleep()
+        rate = rospy.Rate(100)
+        if not self.read_only:
+            while not hasattr(self, "visual_embedding_buffer"):
+                rate.sleep()
         rospy.loginfo("UnitreeA1Real.low_state_buffer acquired, stop waiting.")
         
     def process_configs(self):
@@ -310,8 +314,6 @@ class UnitreeA1Real:
               obs_dict[group.name][observation.name] = obs
 
         if hasattr(self, "visual_embedding_buffer"):
-            print(self.visual_embedding_buffer)
-            print(type(self.visual_embedding_buffer))
             print(self.visual_embedding_buffer.shape)
             obs_dict["policy"]["image_encoder"] = self.visual_embedding_buffer
         self.obs_dict = obs_dict
@@ -374,7 +376,7 @@ class UnitreeA1Real:
         self.low_state_get_time = rospy.Time.now()
   
     def update_visual_embedding(self, ros_msg):
-        self.visual_embedding_buffer = ros_msg.data
+        self.visual_embedding_buffer = np.array(ros_msg.data)[None].astype(np.float32)
         self.visual_embedding_get_time = rospy.Time.now()
 
     def update_base_pose(self, ros_msg):

@@ -140,7 +140,8 @@ def main(argv = None):
     while not rospy.is_shutdown():
         inference_start_time = rospy.get_time()
         obs = unitree_real_env.get_obs()
-        actions = runner.predict(obs[cfg["policy"]["obs_key"]])['actions']
+        preds, _ = runner.predict(obs[cfg["policy"]["obs_key"]])
+        actions = preds['out_actions']
         unitree_real_env.send_action(actions)
         inference_duration = rospy.get_time() - inference_start_time
         motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
