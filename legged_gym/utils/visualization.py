@@ -15,6 +15,9 @@ def update_occupancy_grid(env, fig, plots, env_id, occupancy_grids, titles, show
 
   new_plots = []
   for i, (occupancy_grid, title, plot) in enumerate(zip(occupancy_grids, titles, plots)):
+    if isinstance(occupancy_grid, np.ndarray):
+      occupancy_grid = torch.from_numpy(occupancy_grid)
+
     if env is None:
       x = torch.linspace(-1, 1, occupancy_grid.shape[-3])
       y = torch.linspace(-1, 1, occupancy_grid.shape[-2])
