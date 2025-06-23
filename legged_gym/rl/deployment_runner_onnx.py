@@ -50,8 +50,11 @@ class DeploymentRunner:
       **{f"hidden_{i}": h for i, h in enumerate(hidden_states)},
     }
 
-  def process_outputs(self, outputs):
-    model_preds = {k: outputs[k] for k in self.model_pred_keys}
+  def process_outputs(self, outputs, rnn_only: bool):
+    if rnn_only:
+      model_preds = {}
+    else:
+      model_preds = {k: outputs[k] for k in self.model_pred_keys}
     rnn_state = outputs[self.rnn_state_key]
     hidden_states = (outputs[k] for k in self.hidden_state_keys)
     return model_preds, rnn_state, hidden_states
@@ -64,5 +67,5 @@ class DeploymentRunner:
       output_keys = self.onnx_output_names
     outputs = self.onnx_session.run(output_keys, input_dict)
     outputs = dict(zip(output_keys, outputs))
-    model_preds, rnn_state, self.onnx_init_hidden_states = self.process_outputs(outputs)
+    model_preds, rnn_state, self.onnx_init_hidden_states = self.process_outputs(outputs, rnn_only)
     return model_preds, rnn_state
