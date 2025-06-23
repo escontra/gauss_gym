@@ -127,7 +127,8 @@ def main(argv=None):
     forward_depth_topic=None,
     forward_depth_embedding_dims=None,
     move_by_wireless_remote=False,
-    move_by_gamepad=False)
+    move_by_gamepad=False,
+    read_only=True)
   unitree_real_env.start_ros()
   unitree_real_env.wait_untill_ros_working()
 

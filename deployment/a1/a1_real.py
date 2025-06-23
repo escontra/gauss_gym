@@ -28,6 +28,7 @@ class UnitreeA1Real:
             move_by_gamepad=True, # if True, command will not listen to move_cmd_subscriber, but gamepad.
             cfg= dict(),
             extra_cfg= dict(),
+            read_only: bool = False,
         ):
         """
         NOTE:
@@ -52,6 +53,7 @@ class UnitreeA1Real:
         self.ang_vel_deadband = ang_vel_deadband
         self.move_by_wireless_remote = move_by_wireless_remote
         self.move_by_gamepad = move_by_gamepad
+        self.read_only = read_only
         assert not (self.move_by_wireless_remote and self.move_by_gamepad), "Cannot move by both wireless remote and gamepad at the same time."
         self.cfg = cfg
         self.extra_cfg = dict(
@@ -147,11 +149,12 @@ class UnitreeA1Real:
         # initialze several buffers so that the system works even without message update.
         # self.low_state_buffer = LowState() # not initialized, let input message update it.
         self.base_position_buffer = np.zeros((self.num_envs, 3), dtype=np.float32)
-        self.legs_cmd_publisher = rospy.Publisher(
-            self.robot_namespace + self.legs_cmd_topic,
-            LegsCmd,
-            queue_size= 1,
-        )
+        if not self.read_only:
+          self.legs_cmd_publisher = rospy.Publisher(
+              self.robot_namespace + self.legs_cmd_topic,
+              LegsCmd,
+              queue_size= 1,
+          )
         # self.debug_publisher = rospy.Publisher(
         #     "/DNNmodel_debug",
         #     Float32MultiArray,
@@ -276,7 +279,7 @@ class UnitreeA1Real:
     """ Get obs components and cat to a single obs input """
     def compute_observation(self):
         """Use the updated low_state_buffer to compute observation vector."""
-        assert hasattr(self, "legs_cmd_publisher"), "start_ros() not called, ROS handlers are not initialized!"
+        assert hasattr(self, "legs_cmd_publisher") or self.read_only, "start_ros() not called, ROS handlers are not initialized!"
         if self.move_by_gamepad:
             self._poll_gamepad()
         obs_dict = {}
