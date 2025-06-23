@@ -95,7 +95,6 @@ class UnitreeA1Real:
         self.actions = np.zeros((1, 12), dtype=np.float32)
 
         self.process_configs()
-        self.visual_embedding_buffer = None
 
         if self.move_by_gamepad:
             self.vel_x = 0.0
@@ -310,7 +309,7 @@ class UnitreeA1Real:
                   obs = scale * obs
               obs_dict[group.name][observation.name] = obs
 
-        if self.visual_embedding_buffer is not None:
+        if hasattr(self, "visual_embedding_buffer"):
             print(self.visual_embedding_buffer)
             print(type(self.visual_embedding_buffer))
             print(self.visual_embedding_buffer.shape)
