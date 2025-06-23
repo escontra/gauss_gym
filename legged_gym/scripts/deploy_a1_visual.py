@@ -157,6 +157,8 @@ def main(argv=None):
   frames = rs_pipeline.wait_for_frames(2000)
   print('Initial frames received!')
   occupancy_fig_state = (None, None)
+  os.makedirs('visualizations', exist_ok=True)
+  step = 0
   try:
     # embedding_msg = Float32MultiArrayStamped()
     # embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
@@ -188,9 +190,23 @@ def main(argv=None):
       for k, v in encoder_input.items():
           print(k, v.shape)
       model_preds, _ = runner.predict(encoder_input)
-      print('PREDICTED')
-      for k, v in model_preds.items():
-          print(k, v.shape)
+      if step % 10 == 0 and debug:
+          print('PREDICTED')
+          for k, v in model_preds.items():
+              print(k, v.shape)
+          occupancy_grid_state = visualization.update_occupancy_grid(
+                  None,
+                  *occupancy_fig_state,
+                  0,
+                  [model_preds['out_critic/ray_cast/occupancy_grid']],
+                  ['pred'],
+                  show=False
+                  )
+          occupancy_grid_state[0].savefig(f"visualizations/occupancy_{step:06}.png")
+          from PIL import Image as PILImage
+          img = PILImage.fromarray(color_frame)
+          img.save(f"visualizations/image_{step:06}.png")
+      step += 1
 
       if parsed.debug:
         rgb_image_msg = ros_numpy.msgify(Image, color_frame, encoding="rgb8")
