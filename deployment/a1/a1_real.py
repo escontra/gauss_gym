@@ -338,6 +338,7 @@ class UnitreeA1Real:
         """ publish the joint position directly to the robot. NOTE: The joint order from input should
         be in simulation order. The value should be absolute value rather than related to dof_pos.
         """
+        assert not self.read_only, "Cannot publish legs cmd in read-only mode."
         robot_coordinates_action = np.clip(
             robot_coordinates_action,
             self.joint_limits_low,

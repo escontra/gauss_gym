@@ -68,7 +68,6 @@ def main(argv = None):
     load_run_path = None
     parsed, other = flags.Flags({
         'runner': {'load_run': ''},
-        'mode': 'jetson',
         'debug': False,
         'namespace': '/a112138',
     }).parse_known(argv)
@@ -90,10 +89,6 @@ def main(argv = None):
     print(cfg)
     cfg = types.MappingProxyType(dict(cfg))
 
-    deploy_cfg = config.Config.load(load_run_path / 'deploy_config.yaml')
-    print(deploy_cfg)
-    deploy_cfg = types.MappingProxyType(dict(deploy_cfg))
-
     if cfg["logdir"] == "default":
         log_root = pathlib.Path(legged_gym.GAUSS_GYM_ROOT_DIR) / 'logs'
     elif cfg["logdir"] != "":
@@ -111,7 +106,7 @@ def main(argv = None):
         runner.load(log_root)
 
     log_level = rospy.DEBUG if parsed.debug else rospy.INFO
-    rospy.init_node("a1_policy_" + parsed.mode, log_level= log_level)
+    rospy.init_node("a1_policy", log_level= log_level)
 
 
     unitree_real_env = UnitreeA1Real(
