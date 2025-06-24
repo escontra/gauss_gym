@@ -639,8 +639,8 @@ class Runner:
     actions_env = {}
     for k, v in self.env.action_space().items():
       action = actions[k]
-      low = torch.tensor(v.low, device=self.device)[None]
-      high = torch.tensor(v.high, device=self.device)[None]
+      low = v.low.clone().detach().to(self.device)[None]
+      high = v.high.clone().detach().to(self.device)[None]
       needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
       if needs_scaling:
         scaled_action = (action + 1) / 2 * (high - low) + low
