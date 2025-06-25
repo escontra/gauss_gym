@@ -67,7 +67,8 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         max_abs_value: Optional[float] = None,
         model_type: str = 'cnn_simple',
         embedding_dim: int = 256,
-        dino_pretrained: bool = True):
+        dino_pretrained: bool = True,
+        torchaug_transforms: bool = True):
 
     super().__init__()
     print(f'{self.__class__.__name__}:')
@@ -76,7 +77,8 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       obs_space,
       model_type=model_type,
       embedding_dim=embedding_dim,
-      dino_pretrained=dino_pretrained)
+      dino_pretrained=dino_pretrained,
+      torchaug_transforms=torchaug_transforms)
     self.cnn_keys = self.image_feature_model.cnn_keys
     self.mlp_obs_space = {**obs_space, **self.image_feature_model.modified_obs_space()}
     dont_normalize_keys = dont_normalize_keys or []

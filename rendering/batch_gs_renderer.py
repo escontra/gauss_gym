@@ -140,10 +140,10 @@ class BatchPLYRenderer:
     def batch_render(
         self,
         c2ws: Float[Tensor, "num_cameras 4 4"],
-        fl_x: float,
-        fl_y: float,
-        pp_x: float,
-        pp_y: float,
+        fl_x: Union[float, Tensor],
+        fl_y: Union[float, Tensor],
+        pp_x: Union[float, Tensor],
+        pp_y: Union[float, Tensor],
         h: int,
         w: int,
         camera_linear_velocity: Union[Float[Tensor, "num_cameras 3"], None] = None,
@@ -179,22 +179,34 @@ class BatchPLYRenderer:
         # Invert camera-to-world matrices
         # convert it back to opencv format
         w2cs = torch.inverse(c2ws)
-        
-        # Create camera intrinsics matrix
-        K = torch.tensor([
-            [fl_x, 0, pp_x],
-            [0, fl_y, pp_y],
-            [0, 0, 1]
-        ], device=self.device, dtype=torch.float32)
-        
-        # Initialize output tensors
         num_images = c2ws.shape[0]
+        if isinstance(fl_x, float):
+          fl_x = torch.full((num_images,), fl_x, device=self.device)
+        if isinstance(fl_y, float):
+          fl_y = torch.full((num_images,), fl_y, device=self.device)
+        if isinstance(pp_x, float):
+          pp_x = torch.full((num_images,), pp_x, device=self.device)
+        if isinstance(pp_y, float):
+          pp_y = torch.full((num_images,), pp_y, device=self.device)
+
+        # Create camera intrinsics matrix
+        #     [fl_x, 0, pp_x],
+        #     [0, fl_y, pp_y],
+        #     [0, 0, 1]
+        K = torch.eye(3, device=self.device, dtype=torch.float32)[None].repeat(num_images, 1, 1)
+        K[:, 0, 0] = fl_x
+        K[:, 1, 1] = fl_y
+        K[:, 0, 2] = pp_x
+        K[:, 1, 2] = pp_y
+
+        # Initialize output tensors
         imgs_out = torch.empty((num_images, h, w, 3), device=out_device, dtype=torch.uint8)
         # depth_out = torch.empty((num_images, h, w, 1), device=out_device, dtype=torch.float32)
         
         # Render in batches
         for i in range(0, num_images, minibatch):
             batch_w2cs = w2cs[i:i + minibatch]
+            batch_K = K[i:i + minibatch]
 
             original_B_size = len(batch_w2cs)
             # for simplicity either blur the whole minibatch or none. in expectation this is the same as 
@@ -228,7 +240,7 @@ class BatchPLYRenderer:
                   self.opacities,
                   self.colors,
                   batch_w2cs,
-                  K[None].repeat(len(batch_w2cs), 1, 1),
+                  batch_K,
                   w,
                   h,
                   radius_clip=3.0,
@@ -273,10 +285,10 @@ class MultiSceneRenderer:
     def batch_render(
         self,
         scene_poses: Dict[str, Float[Tensor, "num_cameras 4 4"]],
-        fl_x: float,
-        fl_y: float,
-        pp_x: float,
-        pp_y: float,
+        fl_x: Union[float, Dict[str, float]],
+        fl_y: Union[float, Dict[str, float]],
+        pp_x: Union[float, Dict[str, float]],
+        pp_y: Union[float, Dict[str, float]],
         h: int,
         w: int,
         camera_linear_velocity: Union[Dict[str, Float[Tensor, "num_cameras 3"]], None] = None,
@@ -314,11 +326,28 @@ class MultiSceneRenderer:
                 cam_ang_vel = camera_angular_velocity[ply_path].to(renderer.device)
               if ply_path not in self.renderers:
                   raise KeyError(f"No renderer initialized for {ply_path}. Available renderers: {list(self.renderers.keys())}")
-              
+
+              if isinstance(fl_x, dict):
+                curr_fl_x = fl_x[ply_path]
+              else:
+                curr_fl_x = fl_x
+              if isinstance(fl_y, dict):
+                curr_fl_y = fl_y[ply_path]
+              else:
+                curr_fl_y = fl_y
+              if isinstance(pp_x, dict):
+                curr_pp_x = pp_x[ply_path]
+              else:
+                curr_pp_x = pp_x
+              if isinstance(pp_y, dict):
+                curr_pp_y = pp_y[ply_path]
+              else:
+                curr_pp_y = pp_y
+
               # Render on the assigned GPU and move results to output GPU
               c2ws = c2ws.to(renderer.device)
               imgs = renderer.batch_render(
-                  c2ws, fl_x, fl_y, pp_x, pp_y, h, w,
+                  c2ws, curr_fl_x, curr_fl_y, curr_pp_x, curr_pp_y, h, w,
                   camera_linear_velocity=cam_lin_vel,
                   camera_angular_velocity=cam_ang_vel,
                   motion_blur_frac=motion_blur_frac,

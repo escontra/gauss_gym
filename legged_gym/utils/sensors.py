@@ -194,11 +194,6 @@ class GaussianSplattingRenderer():
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
         self.env = env
 
-        # How often the camera image is refreshed.
-        self.refresh_duration_interval_s = self.env.cfg["env"]["camera_params"]["refresh_duration_interval_s"]
-        self.refresh_duration_resampling_interval_s = self.env.cfg["env"]["camera_params"]["refresh_duration_resampling_interval_s"]
-        self.refresh_duration_s = np.random.uniform(*self.refresh_duration_interval_s)
-
         downscale_factor = float(self.env.cfg["env"]["camera_params"]["downscale_factor"])
         self.cam_height = int(self.env.cfg["env"]["camera_params"]["cam_height"] / downscale_factor)
         self.cam_width = int(self.env.cfg["env"]["camera_params"]["cam_width"] / downscale_factor)
@@ -206,6 +201,20 @@ class GaussianSplattingRenderer():
         self.fl_y = self.env.cfg["env"]["camera_params"]["fl_y"] / downscale_factor
         self.pp_x = self.env.cfg["env"]["camera_params"]["pp_x"] / downscale_factor
         self.pp_y = self.env.cfg["env"]["camera_params"]["pp_y"] / downscale_factor
+
+        # Camera intrinsics randomization.
+        self.apply_domain_rand = self.env.cfg["domain_rand"]["apply_domain_rand"]
+        self.camera_refresh_interval_s = self.env.cfg["domain_rand"]["camera_refresh_interval_s"]
+        self.fl_rand_params = self.env.cfg["domain_rand"]["focal_length"]
+        self.pp_rand_params = self.env.cfg["domain_rand"]["principal_point"]
+        self.refresh_duration_rand_params = self.env.cfg["domain_rand"]["refresh_duration"]
+        self.fl_x_sample = torch.full((self.num_envs,), self.fl_x, device=self.device, dtype=torch.float32)
+        self.fl_y_sample = torch.full((self.num_envs,), self.fl_y, device=self.device, dtype=torch.float32)
+        self.pp_x_sample = torch.full((self.num_envs,), self.pp_x, device=self.device, dtype=torch.float32)
+        self.pp_y_sample = torch.full((self.num_envs,), self.pp_y, device=self.device, dtype=torch.float32)
+        self.refresh_duration_s_sample = np.mean(self.refresh_duration_rand_params["range"])
+        self._maybe_sample_camera_params()
+
         self.renders = torch.zeros(self.num_envs, 3, self.cam_height, self.cam_width, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
@@ -215,6 +224,32 @@ class GaussianSplattingRenderer():
             np.array(self.env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self.num_envs, 0),
             dtype=torch.float, device=self.device, requires_grad=False
         )
+
+    def _maybe_sample_camera_params(self):
+        if self.apply_domain_rand and self.fl_rand_params["apply"]:
+            self.fl_x_sample[:] = math.apply_randomization(
+                torch.full((self.num_envs,), self.fl_x, device=self.device),
+                self.fl_rand_params
+            )
+            self.fl_y_sample[:] = math.apply_randomization(
+                torch.full((self.num_envs,), self.fl_y, device=self.device),
+                self.fl_rand_params
+            )
+
+        if self.apply_domain_rand and self.pp_rand_params["apply"]:
+            self.pp_x_sample[:] = math.apply_randomization(
+                torch.full((self.num_envs,), self.pp_x, device=self.device),
+                self.pp_rand_params
+            )
+            self.pp_y_sample[:] = math.apply_randomization(
+                torch.full((self.num_envs,), self.pp_y, device=self.device),
+                self.pp_rand_params
+            )
+
+        if self.apply_domain_rand and self.refresh_duration_rand_params["apply"]:
+            self.refresh_duration_s_sample = math.apply_randomization(
+                0.0, self.refresh_duration_rand_params
+            )
 
     def update(self, dt, env_ids=...):
         """Render images with Gaussian splatting.
@@ -226,19 +261,19 @@ class GaussianSplattingRenderer():
         self.camera_positions[:] = cam_trans
         self.camera_quats_xyzw[:] = cam_quat
 
-        if self.env.common_step_counter % int(self.refresh_duration_resampling_interval_s / self.env.dt) == 0:
+        if self.apply_domain_rand and self.env.common_step_counter % int(self.camera_refresh_interval_s / self.env.dt) == 0:
           print('Resampling refresh duration...')
-          self.refresh_duration_s = np.random.uniform(*self.refresh_duration_interval_s)
-          print(f'New refresh duration: {self.refresh_duration_s}')
+          self._maybe_sample_camera_params()
+          print(f'New refresh duration: {self.refresh_duration_s_sample}')
 
         # Refresh rate is determined by the refresh_duration_s.
-        if int(self.refresh_duration_s / self.env.dt) == 0:
+        if int(self.refresh_duration_s_sample / self.env.dt) == 0:
           should_refresh = True
         else:
           # TODO: We're using `common_step_counter` here. Using `episode_length_buf` would be more accurate,
           # but is considerably slower as every step would require at least a few renders. With `common_step_counter`,
           # we only need to render every `refresh_duration_s` steps.
-          should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration_s / self.env.dt)) == 0
+          should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration_s_sample / self.env.dt)) == 0
         if not should_refresh:
           self.new_frames_acquired = False
           return
@@ -257,17 +292,22 @@ class GaussianSplattingRenderer():
         c2ws[:, :3, 3] = cam_trans
 
         scene_poses, scene_linear_velocities, scene_angular_velocities = {}, {}, {}
+        scene_fl_x, scene_fl_y, scene_pp_x, scene_pp_y = {}, {}, {}, {}
         for k, (start, end) in self.scene_manager.scene_start_end_ids.items():
             scene_poses[self.scene_path_map[k]] = c2ws[start:end]
             scene_linear_velocities[self.scene_path_map[k]] = cam_lin_vel[start:end]
             scene_angular_velocities[self.scene_path_map[k]] = cam_ang_vel[start:end]
+            scene_fl_x[self.scene_path_map[k]] = self.fl_x_sample[start:end]
+            scene_fl_y[self.scene_path_map[k]] = self.fl_y_sample[start:end]
+            scene_pp_x[self.scene_path_map[k]] = self.pp_x_sample[start:end]
+            scene_pp_y[self.scene_path_map[k]] = self.pp_y_sample[start:end]
 
         renders = self._gs_renderer.batch_render(
             scene_poses,
-            fl_x=self.fl_x,
-            fl_y=self.fl_y,
-            pp_x=self.pp_x,
-            pp_y=self.pp_y,
+            fl_x=scene_fl_x,
+            fl_y=scene_fl_y,
+            pp_x=scene_pp_x,
+            pp_y=scene_pp_y,
             h=self.cam_height,
             w=self.cam_width,
             camera_linear_velocity=scene_linear_velocities,

@@ -15,38 +15,21 @@ env:
 
   force_renderer: False
   camera_params:
-    # Refresh duration. How often the camera image is refreshed.
-    # Not to be confused with the sythetic refresh_duration used in
-    # observation_manager.
-    refresh_duration_interval_s: [0.05, 0.12]
-    refresh_duration_resampling_interval_s: 3.0
-
     # Different realsense intrinsics: https://pastebin.com/fRwwuBmd
-
-    # 55.66 x 43.18 FOV
-    # cam_width: 320
-    # cam_height: 240
-    # fl_x: 303.0424
-    # fl_y: 303.1759
-    # pp_x: 161.5755
-    # pp_y: 124.6430
-
-    # 90.57 x 59.51 FOV
+    # 69.95 x 43.18 FOV
     cam_width: 424
     cam_height: 240
-    fl_x: 209.908950805664
-    fl_y: 209.908950805664
-    pp_x: 211.966888427734
-    pp_y: 118.743743896484
-
-    # # 80.17 x 64.52 FOV
-    # cam_width: 640
-    # cam_height: 480
-    # fl_x: 380.212432861328
-    # fl_y: 380.212432861328
-    # pp_x: 319.940002441406
-    # pp_y: 237.724517822266
-
+    fl_x: 303.042358398438
+    fl_y: 303.17578125
+    pp_x: 213.575500488281
+    pp_y: 124.642997741699
+    # # 70.29 x 43.18 FOV
+    # cam_width: 320
+    # cam_height: 180
+    # fl_x: 227.281799316406
+    # fl_y: 227.381851196289
+    # pp_x: 161.181625366211
+    # pp_y: 93.4822463989258
 
     # How much to downscale the image (and intrinsics) by.
     downscale_factor: 5.0
@@ -218,6 +201,26 @@ curriculum:
 
 domain_rand:
   apply_domain_rand: True
+
+  camera_refresh_interval_s: 3.0
+  # Refresh duration. How often the camera image is refreshed.
+  # Not to be confused with the sythetic refresh_duration used in
+  # observation_manager.
+  refresh_duration:
+    apply: True
+    range: [0.05, 0.12]
+    operation: "additive"
+    distribution: "uniform"
+  focal_length:
+    apply: True
+    range: [0.0, 3.0]
+    operation: "additive"
+    distribution: "gaussian"
+  principal_point:
+    apply: True
+    range: [0.0, 1.5]
+    operation: "additive"
+    distribution: "gaussian"
 
   init_dof_pos:
     apply: True
@@ -486,6 +489,7 @@ image_encoder:
     normalize_obs: True
     model_type: timm_test_convnext
     embedding_dim: 128
+    torchaug_transforms: True
 
 policy:
   class_name: RecurrentMLPModel
