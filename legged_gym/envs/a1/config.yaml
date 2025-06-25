@@ -18,7 +18,8 @@ env:
     # Refresh duration. How often the camera image is refreshed.
     # Not to be confused with the sythetic refresh_duration used in
     # observation_manager.
-    refresh_duration: 0.1
+    refresh_duration_interval_s: [0.05, 0.12]
+    refresh_duration_resampling_interval_s: 3.0
 
     # Different realsense intrinsics: https://pastebin.com/fRwwuBmd
 
@@ -56,6 +57,9 @@ env:
 
 observations:
   image_encoder:
+    add_noise: True
+    add_latency: True
+    latency_resampling_interval_s: 3.0
     observations: [
       CAMERA_IMAGE, PROJECTED_GRAVITY #, DOF_POS, DOF_VEL, ACTIONS
     ]
@@ -451,6 +455,7 @@ sim:
 
 image_encoder:
   enabled: True
+  num_steps_per_env: 24
   mirror_latents_during_inference: False
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3

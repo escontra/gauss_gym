@@ -189,13 +189,15 @@ class GaussianSplattingRenderer():
             output_gpu=self.device
         )
 
-        self.fig, self.process_image_fn, self.im = None, None, None
+        self.viz_state = (None, None)
         self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
         self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
         self.env = env
 
         # How often the camera image is refreshed.
-        self.refresh_duration = float(self.env.cfg["env"]["camera_params"]["refresh_duration"])
+        self.refresh_duration_interval_s = self.env.cfg["env"]["camera_params"]["refresh_duration_interval_s"]
+        self.refresh_duration_resampling_interval_s = self.env.cfg["env"]["camera_params"]["refresh_duration_resampling_interval_s"]
+        self.refresh_duration_s = np.random.uniform(*self.refresh_duration_interval_s)
 
         downscale_factor = float(self.env.cfg["env"]["camera_params"]["downscale_factor"])
         self.cam_height = int(self.env.cfg["env"]["camera_params"]["cam_height"] / downscale_factor)
@@ -207,6 +209,7 @@ class GaussianSplattingRenderer():
         self.renders = torch.zeros(self.num_envs, 3, self.cam_height, self.cam_width, device=self.device, dtype=torch.uint8)
         self.frustrum_geom = None
         self.axis_geom = None
+        self.new_frames_acquired = True
 
         self.local_offset = torch.tensor(
             np.array(self.env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self.num_envs, 0),
@@ -223,15 +226,21 @@ class GaussianSplattingRenderer():
         self.camera_positions[:] = cam_trans
         self.camera_quats_xyzw[:] = cam_quat
 
-        # Refresh rate is determined by the refresh_duration.
-        if int(self.refresh_duration / self.env.dt) == 0:
+        if self.env.common_step_counter % int(self.refresh_duration_resampling_interval_s / self.env.dt) == 0:
+          print('Resampling refresh duration...')
+          self.refresh_duration_s = np.random.uniform(*self.refresh_duration_interval_s)
+          print(f'New refresh duration: {self.refresh_duration_s}')
+
+        # Refresh rate is determined by the refresh_duration_s.
+        if int(self.refresh_duration_s / self.env.dt) == 0:
           should_refresh = True
         else:
           # TODO: We're using `common_step_counter` here. Using `episode_length_buf` would be more accurate,
           # but is considerably slower as every step would require at least a few renders. With `common_step_counter`,
-          # we only need to render every `refresh_duration` steps.
-          should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration / self.env.dt)) == 0
+          # we only need to render every `refresh_duration_s` steps.
+          should_refresh = ((self.env.common_step_counter - 1) % int(self.refresh_duration_s / self.env.dt)) == 0
         if not should_refresh:
+          self.new_frames_acquired = False
           return
 
         cam_lin_vel, cam_ang_vel = self.scene_manager.get_cam_velocity_world_frame()
@@ -265,10 +274,14 @@ class GaussianSplattingRenderer():
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,
         )
-        self.renders[env_ids] = torch.cat(list(renders.values()), dim=0).permute(0, 3, 1, 2)
+        self.renders[:] = torch.cat(list(renders.values()), dim=0).permute(0, 3, 1, 2)
+        self.new_frames_acquired = True
 
     def get_data(self):
-        return self.renders
+        if self.new_frames_acquired:
+          return self.renders
+        else:
+          return None
     
     
     def debug_vis(self, env):
@@ -287,12 +300,12 @@ class GaussianSplattingRenderer():
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
         self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
-        self.fig, self.im = visualization.update_image(
-           self.env,
-           self.fig,
-           self.im,
-           self.env.selected_environment,
-           self.renders)
+        # if self.new_frames_acquired:
+        #   self.viz_state = visualization.update_image(
+        #     self.env,
+        #     *self.viz_state,
+        #     self.env.selected_environment,
+        #     self.renders)
 
 
 class LinkHeightSensor():

@@ -1,26 +1,24 @@
 import torch
 from typing import List
 from legged_gym.utils import observation_groups, math, timer, space
+import collections
 
 
 class ObsManager:
     def __init__(self, env, obs_groups_cfg: List[observation_groups.ObservationGroup]):
         self.env = env
         self.device = env.device
-        self.obs_dims_per_group_obs = {}
         self.obs_dict = {}
-        self.obs_buffers_per_group = {}
-        self.latency_buffers_per_group = {}
-        self.delayed_frames_per_group = {}
+        self.obs_dims_per_group_obs = collections.defaultdict(dict)
+        self.obs_buffers_per_group = collections.defaultdict(dict)
+        self.latency_buffers_per_group = collections.defaultdict(dict)
+        self.delayed_frames_per_group = collections.defaultdict(dict)
+        self.obs_available_for_timestep = collections.defaultdict(dict)
         self.obs_group_cfg = obs_groups_cfg
         self.initialize_env_ids = []
         for obs_group in obs_groups_cfg:
             if obs_group is None:
                 continue
-            self.obs_dims_per_group_obs[obs_group.name] = {}
-            self.obs_buffers_per_group[obs_group.name] = {}
-            self.latency_buffers_per_group[obs_group.name] = {}
-            self.delayed_frames_per_group[obs_group.name] = {}
             sync_latency_names, sync_latency_buffer = [], None
             if obs_group.sync_latency is not None:
                 sync_latency_names = [obs.name for obs in obs_group.sync_latency]
@@ -55,6 +53,7 @@ class ObsManager:
                 self.delayed_frames_per_group[obs_group.name][obs.name] = torch.zeros_like(
                     self.latency_buffers_per_group[obs_group.name][obs.name],
                     dtype=torch.long, device=self.device)
+                self.obs_available_for_timestep[obs_group.name][obs.name] = torch.zeros((buffer_length, env.num_envs), dtype=torch.bool, device=self.device)
   
     def _sample_latency_buffer(self, latency_range, size):
         return math.torch_rand_float(
@@ -91,6 +90,7 @@ class ObsManager:
             for obs in obs_group.observations:
                 self.obs_buffers_per_group[obs_group.name][obs.name][:, env_ids] = 0
                 self.delayed_frames_per_group[obs_group.name][obs.name][env_ids] = 0
+                self.obs_available_for_timestep[obs_group.name][obs.name][:, env_ids] = False
         self.initialize_env_ids = env_ids
 
     @timer.section("compute_obs")
@@ -101,14 +101,24 @@ class ObsManager:
             for obs in obs_group.observations:
                 new_obs = obs.func(env, obs)
                 # Initialize the observation buffer with repeated observations.
-                if len(self.initialize_env_ids) > 0:
+                if len(self.initialize_env_ids) > 0 and new_obs is not None:
                   fill_obs = new_obs[self.initialize_env_ids].unsqueeze(0)
                   self.obs_buffers_per_group[obs_group.name][obs.name][:, self.initialize_env_ids] = fill_obs
+                  self.obs_available_for_timestep[obs_group.name][obs.name][:, self.initialize_env_ids] = True
                 # Add new observation to buffer.
-                self.obs_buffers_per_group[obs_group.name][obs.name] = torch.cat([
-                    self.obs_buffers_per_group[obs_group.name][obs.name][1:],
-                    new_obs.unsqueeze(0),
-                ], dim=0)
+                self.obs_available_for_timestep[obs_group.name][obs.name] = torch.roll(self.obs_available_for_timestep[obs_group.name][obs.name], -1, dims=0)
+                if new_obs is not None:
+                  self.obs_buffers_per_group[obs_group.name][obs.name] = torch.cat([
+                      self.obs_buffers_per_group[obs_group.name][obs.name][1:],
+                      new_obs.unsqueeze(0),
+                  ], dim=0)
+                  self.obs_available_for_timestep[obs_group.name][obs.name][-1, :] = True
+                else:
+                  self.obs_buffers_per_group[obs_group.name][obs.name] = torch.cat([
+                      self.obs_buffers_per_group[obs_group.name][obs.name][1:],
+                      torch.zeros_like(self.obs_buffers_per_group[obs_group.name][obs.name][-1:])
+                  ], dim=0)
+                  self.obs_available_for_timestep[obs_group.name][obs.name][-1, :] = False
 
                 # Whether to refresh the observation delay buffer.
                 if int(obs.refresh_duration / self.env.dt) == 0:
@@ -129,8 +139,22 @@ class ObsManager:
                     0,
                     self.obs_buffers_per_group[obs_group.name][obs.name].shape[0],
                 )
+
+                if new_obs is None:
+                    # Don't return the observation if it's not available.
+                    continue
+
+                # Get the nearest valid index for which the observation is available.
+                indices = self.obs_buffers_per_group[obs_group.name][obs.name].shape[0] - self.delayed_frames_per_group[obs_group.name][obs.name]
+                is_valid_index = self.obs_available_for_timestep[obs_group.name][obs.name]
+                rows = torch.arange(is_valid_index.shape[0], device=self.device).unsqueeze(1)
+                dists = (rows - indices.unsqueeze(0)).to(torch.float).abs()
+                dists = dists.masked_fill(~is_valid_index, float('inf'))
+                index_nearest = dists.argmin(dim=0)
+                no_true = ~is_valid_index.any(dim=0)
+                index_nearest = index_nearest.masked_fill(no_true, -1)
                 obs_value = self.obs_buffers_per_group[obs_group.name][obs.name][
-                    -self.delayed_frames_per_group[obs_group.name][obs.name],
+                    index_nearest,
                     torch.arange(self.env.num_envs, device= self.device),
                 ].clone()
 
