@@ -300,12 +300,12 @@ class GaussianSplattingRenderer():
 
         self.frustrum_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], self.env.selected_environment)
         self.axis_geom.draw(self.camera_positions, self.camera_quats_xyzw, env.gym, env.viewer, env.envs[0], only_render_selected=self.env.selected_environment)
-        # if self.new_frames_acquired:
-        #   self.viz_state = visualization.update_image(
-        #     self.env,
-        #     *self.viz_state,
-        #     self.env.selected_environment,
-        #     self.renders)
+        if self.new_frames_acquired:
+          self.viz_state = visualization.update_image(
+            self.env,
+            *self.viz_state,
+            self.env.selected_environment,
+            self.renders)
 
 
 class LinkHeightSensor():
