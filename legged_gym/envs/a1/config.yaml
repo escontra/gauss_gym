@@ -381,7 +381,7 @@ rewards:
     scale: 0.25
   stumble:
     scale: -3.0
-    multiplier: 5.0
+    multiplier: 2.0
 
 commands:
   still_proportion: 0.05
@@ -455,7 +455,11 @@ sim:
 
 image_encoder:
   enabled: True
+  freeze_encoder: False
   num_steps_per_env: 24
+  num_learning_epochs: 2
+  num_mini_batches: 3
+  max_batch_size: 48
   mirror_latents_during_inference: False
   class_name: RecurrentCNNModel
   learning_rate: 1.e-3
@@ -463,7 +467,6 @@ image_encoder:
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  max_batch_size: 48
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
     warmup_steps: 2000

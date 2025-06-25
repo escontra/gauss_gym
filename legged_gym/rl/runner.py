@@ -164,8 +164,11 @@ class Runner:
       # assert set(self.image_encoder.parameters()) == set().union(*[group['params'] for group in self.image_encoder_optimizer.param_groups])
 
       self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
+      image_encoder_parameters = list(self.image_encoder.recurrent_model.parameters())
+      if not self.cfg["image_encoder"]["freeze_encoder"]:
+        image_encoder_parameters.extend(list(self.image_encoder.image_feature_model.parameters()))
       self.image_encoder_optimizer = torch.optim.Adam(
-        self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
+        image_encoder_parameters, lr=self.image_encoder_learning_rate
       )
       if self.cfg["image_encoder"]["learning_rate_scheduler"] is not None:
         self.image_encoder_learning_rate_scheduler = getattr(
@@ -368,7 +371,6 @@ class Runner:
     for it in range(num_learning_iterations):
       start = time.time()
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
-        print(f'Image encoder obs available? {image_encoder_obs_available}')
         if self.cfg["runner"]["record_video"]:
           for k in policy_cnn_keys:
             potential_images[k] = obs_dict[self.policy_key][k]
@@ -543,8 +545,8 @@ class Runner:
   def _learn_image_encoder(self):
     learn_step_agg = agg.Agg()
     for batch in self.image_encoder_buffer.reccurent_mini_batch_generator(
-      self.cfg["algorithm"]["num_learning_epochs"],
-      self.cfg["algorithm"]["num_mini_batches"],
+      self.cfg["image_encoder"]["num_learning_epochs"],
+      self.cfg["image_encoder"]["num_mini_batches"],
       last_value_items=None,
       obs_groups=[self.image_encoder_key, self.value_key],
       hidden_states_keys=[self.image_encoder_key],
