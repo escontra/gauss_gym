@@ -172,7 +172,8 @@ class ImageFeature(torch.nn.Module):
       obs_space: Dict[str, space.Space],
       model_type: str = 'cnn_simple',
       embedding_dim: int = 256,
-      dino_pretrained: bool = True):
+      dino_pretrained: bool = True,
+      torchaug_transforms: bool = True):
     super().__init__()
     self._obs_space = obs_space
     self.embedding_dim = embedding_dim
@@ -214,15 +215,48 @@ class ImageFeature(torch.nn.Module):
     else:
       self.encoder = None
 
+    if torchaug_transforms:
+      import torchaug
+      self.perturbation = torchaug.transforms.SequentialTransform(
+        [
+          torchaug.transforms.RandomPhotometricDistort(
+              brightness=(0.6, 1.4), 
+              contrast=(0.6, 1.4),
+              saturation=(0.6, 1.4),
+              hue=(-0.05, 0.05),
+              p_transform=0.5,
+              p=0.5,
+              batch_transform=True,
+          ),
+          torchaug.transforms.RandomAutocontrast(
+            p=0.5,
+            batch_transform=True,
+          ),
+          torchaug.transforms.RandomGaussianBlur(
+            kernel_size=(3, 3),
+            sigma=(0.2, 1.0),
+            p=0.5,
+            batch_transform=True,
+          ),
+        ],
+        inplace=False,
+        batch_inplace=False,
+        batch_transform=True,
+        permute_chunks=False,
+      )
+    else:
+      self.perturbation = transforms.ColorJitter(
+        brightness=(0.6, 1.4), 
+        contrast=(0.6, 1.4),
+        saturation=(0.6, 1.4),
+        hue=0
+      )
+    print(f'Perturbations: \n {self.perturbation}')
+
   @torch.jit.ignore
   def apply_perturbations(self, cnn_obs: torch.Tensor) -> torch.Tensor:
     if self.training:
-      return transforms.ColorJitter(
-          brightness=(0.6, 1.4), 
-          contrast=(0.6, 1.4),
-          saturation=(0.6, 1.4),
-          hue=0
-      )(cnn_obs)
+      return self.perturbation(cnn_obs)
     else:
       return cnn_obs
 
