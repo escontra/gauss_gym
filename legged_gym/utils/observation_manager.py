@@ -33,7 +33,7 @@ class ObsManager:
                 example_obs = function(env, obs)
                 obs_shape = example_obs.shape
                 obs_dtype = example_obs.dtype
-                self.obs_dims_per_group_obs[obs_group.name][obs.name] = space.Space(shape=obs_shape[1:], dtype=example_obs.cpu().numpy().dtype)
+                self.obs_dims_per_group_obs[obs_group.name][obs.name] = space.Space(shape=obs_shape[1:], dtype=obs_dtype)
 
                 buffer_length = int(latency_range[1] / env.dt) + 1
                 buffer_length += int(obs.refresh_duration / env.dt)

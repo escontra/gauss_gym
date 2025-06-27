@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Tuple, Union, Dict, List, Optional
 import functools
 import numpy as np
 import torch.utils._pytree as pytree
@@ -7,38 +7,51 @@ import torch.nn as nn
 
 from legged_gym.utils import math, space
 from legged_gym.rl.modules import decoder
+from legged_gym.rl import utils
 
 i32 = torch.int32
 f32 = torch.float32
 
 
-class Output:
+@torch.jit.script
+class Output(object):
 
+  @torch.jit.unused
   def __repr__(self):
     name = type(self).__name__
     pred = self.pred()
     return f'{name}({pred.dtype}, shape={pred.shape})'
 
+  @torch.jit.ignore
   def pred(self) -> torch.Tensor:
     raise NotImplementedError
 
+  @torch.jit.ignore
   def loss(self, target: torch.Tensor) -> torch.Tensor:
     return -self.logp(target.detach())
 
+  @torch.jit.ignore
   def sample(self, shape: Union[Tuple[int], Tuple[()]]=()) -> torch.Tensor:
     raise NotImplementedError
 
+  @torch.jit.ignore
   def logp(self, event: torch.Tensor) -> torch.Tensor:
     raise NotImplementedError
 
+  @torch.jit.ignore
   def prob(self, event: torch.Tensor) -> torch.Tensor:
     return torch.exp(self.logp(event))
 
+  @torch.jit.ignore
   def entropy(self) -> torch.Tensor:
     raise NotImplementedError
 
+  @torch.jit.ignore
   def kl(self, other: 'Output') -> torch.Tensor:
     raise NotImplementedError
+
+  def forward(self):
+    return self.pred()
 
 
 class Agg(Output):
@@ -130,19 +143,24 @@ class Concat:
     return pytree.tree_map(lambda *xs: torch.cat(xs, self.dim), *results)
 
 
-class MSE(Output):
+@torch.jit.script
+class MSE:
 
-  def __init__(self, mean, squash=None):
-    self.mean = mean.to(f32)
-    self.squash = squash or (lambda x: x)
+  def __init__(self, mean: torch.Tensor):
+    self.mean = mean.to(torch.float32)
 
-  def pred(self):
+  def pred(self) -> torch.Tensor:
     return self.mean
 
-  def loss(self, target):
+  @torch.jit.unused
+  def loss(self, target: torch.Tensor) -> torch.Tensor:
     assert target.dtype == torch.float32, target.dtype
     assert self.mean.shape == target.shape, (self.mean.shape, target.shape)
-    return torch.square(self.mean - (self.squash(target.to(f32))).detach())
+    return torch.square(self.mean - target.to(f32).detach())
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'MSE(mean={self.mean.shape})'
 
 
 class Huber(Output):
@@ -162,50 +180,98 @@ class Huber(Output):
     return torch.sqrt(torch.square(dist) + torch.square(self.eps)) - self.eps
 
 
-class Normal(Output):
+@torch.jit.script
+class Normal:
 
-  def __init__(self, mean, stddev=1.0):
-    self.mean = mean.to(f32)
-    self.stddev = torch.broadcast_to(stddev.to(f32), self.mean.shape)
+  def __init__(self, mean: torch.Tensor, stddev: torch.Tensor):
+    self.mean = mean.to(torch.float32)
+    self.stddev = torch.broadcast_to(stddev.to(torch.float32), self.mean.shape)
 
-  def pred(self):
+  def pred(self) -> torch.Tensor:
     return self.mean
 
-  def sample(self, shape=()):
+  @torch.jit.unused
+  def sample(self, shape: Tuple[int, ...]=()):
     sample = torch.randn(shape + self.mean.shape, dtype=f32, device=self.mean.device)
     return sample * self.stddev + self.mean
 
-  def logp(self, event):
+  @torch.jit.unused
+  def logp(self, event: torch.Tensor) -> torch.Tensor:
     assert event.dtype == torch.float32, event.dtype
     return torch.distributions.Normal(self.mean, self.stddev).log_prob(event)
 
-  def entropy(self):
+  @torch.jit.unused
+  def entropy(self) -> torch.Tensor:
     return 0.5 * torch.log(2 * torch.pi * torch.square(self.stddev)) + 0.5
 
-  def kl(self, other):
-    assert isinstance(other, type(self)), (self, other)
+  @torch.jit.unused
+  def kl(self, other: 'Normal') -> torch.Tensor:
+    # assert isinstance(other, type(self)), (self, other)
     return 0.5 * (
         torch.square(self.stddev / other.stddev) +
         torch.square(other.mean - self.mean) / torch.square(other.stddev) +
         2 * torch.log(other.stddev) - 2 * torch.log(self.stddev) - 1)
 
-class Binary(Output):
+  @torch.jit.unused
+  def loss(self, target: torch.Tensor) -> torch.Tensor:
+    return -self.logp(target.detach())
 
-  def __init__(self, logit):
-    self.logit = logit.to(f32)
+  @torch.jit.export
+  def __repr__(self):
+    return f'Normal(mean={self.mean.shape}, stddev={self.stddev.shape})'
 
-  def pred(self):
+
+@torch.jit.script
+class Binary:
+
+  def __init__(self, logit: torch.Tensor):
+    self.logit = logit.to(torch.float32)
+
+  def pred(self) -> torch.Tensor:
     return (self.logit > 0)
 
-  def logp(self, event):
-    event = event.to(f32)
+  @torch.jit.unused
+  def logp(self, event: torch.Tensor) -> torch.Tensor:
+    event = event.to(torch.float32)
     logp = torch.nn.functional.logsigmoid(self.logit)
     lognotp = torch.nn.functional.logsigmoid(-self.logit)
     return event * logp + (1 - event) * lognotp
 
-  def sample(self, shape=()):
+  @torch.jit.unused
+  def sample(self, shape: Optional[List[int]]=None) -> torch.Tensor:
     prob = torch.nn.functional.sigmoid(self.logit)
+    shape = shape or ()
     return torch.bernoulli(prob, -1, shape + self.logit.shape)
+
+  @torch.jit.unused
+  def loss(self, target: torch.Tensor) -> torch.Tensor:
+    return -self.logp(target.detach())
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'Binary(logit={self.logit.shape})'
+
+
+@torch.jit.script
+class VoxelDist:
+  def __init__(self, occupancy_logit_grid: torch.Tensor, centroid_grid: torch.Tensor):
+    self.occupancy_dist = Binary(occupancy_logit_grid)
+    self.centroid_dist = MSE(centroid_grid)
+
+  def pred(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    return (self.occupancy_dist.pred(), self.centroid_dist.pred())
+
+  @torch.jit.unused
+  def occupancy_grid_loss(self, event: torch.Tensor) -> torch.Tensor:
+    return self.occupancy_dist.loss(event)
+
+  @torch.jit.unused
+  def centroid_grid_loss(self, event: torch.Tensor) -> torch.Tensor:
+    return self.centroid_dist.loss(event)
+
+  @torch.jit.export
+  def __repr__(self):
+    return f'VoxelDist(occupancy_grid={self.occupancy_dist.logit.shape}, centroid_grid={self.centroid_dist.mean.shape})'
 
 
 class Categorical(Output):
@@ -346,12 +412,13 @@ class Head(torch.nn.Module):
       unimix: float = 0.0,
       bins: int = 255,
       outscale: float = 1.0,
-      **kw):
+    ):
+      # **kw):
     super().__init__()
     self.input_size = input_size
     self.output_size = output_space.shape
     self.impl = output_type
-    self.kw = kw
+    # self.kw = kw
     self.init_std = init_std
     self.minstd = minstd
     self.maxstd = maxstd
@@ -381,38 +448,42 @@ class Head(torch.nn.Module):
         ),
         nn.Sigmoid()
       )
+      self._forward_method = self.voxel_grid_decoder
     elif self.impl == 'mse':
-      self.projection_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
+      self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
       self._init_layer(self.projection_net)
-    elif self.impl == 'symexp_twohot':
-      self.projection_net = nn.Linear(input_size, np.prod(self.output_size) * self.bins, **self.kw)
-      self._init_layer(self.projection_net)
-    elif self.impl == 'bounded_normal':
-      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
-      self.stddev_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
-      self._init_layer(self.mean_net)
-      self._init_layer(self.stddev_net)
-    elif self.impl == 'normal_logstd':
-      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
-      self.stddev_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
-      self._init_layer(self.mean_net)
-      self._init_layer(self.stddev_net)
-    elif self.impl == 'normal_logstdparam':
-      self.mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
-      self.logstd = torch.nn.parameter.Parameter(
-        torch.full((1, np.prod(self.output_size)), fill_value=np.log(self.init_std)), requires_grad=True
-      )
+      self._forward_method = self.mse
+    # elif self.impl == 'symexp_twohot':
+    #   self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size) * self.bins)) #, **self.kw)
+    #   self._init_layer(self.projection_net)
+    # elif self.impl == 'bounded_normal':
+    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    #   self.stddev_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    #   self._init_layer(self.mean_net)
+    #   self._init_layer(self.stddev_net)
+    # elif self.impl == 'normal_logstd':
+    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    #   self.stddev_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    #   self._init_layer(self.mean_net)
+    #   self._init_layer(self.stddev_net)
+    # elif self.impl == 'normal_logstdparam':
+    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+    #   self.logstd = torch.nn.parameter.Parameter(
+    #     torch.full((1, int(np.prod(self.output_size))), fill_value=np.log(self.init_std)), requires_grad=True
+    #   )
     elif self.impl in ('normal_logstdparam_unclipped', 'bounded_normal_logstdparam_unclipped'):
-      mean_net = nn.Linear(input_size, np.prod(self.output_size), **self.kw)
+      mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
+      self._forward_method = self.normal_logstdparam_unclipped
       if self.impl == 'bounded_normal_logstdparam_unclipped':
         mean_net = nn.Sequential(
           mean_net,
           nn.Tanh()
         )
+        self._forward_method = self.bounded_normal_logstdparam_unclipped
       self.mean_net = mean_net
       self.logstd = torch.nn.parameter.Parameter(
         torch.full(
-          (1, np.prod(self.output_size)),
+          (1, int(np.prod(self.output_size))),
           fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
           dtype=torch.float32),
         requires_grad=True
@@ -420,15 +491,17 @@ class Head(torch.nn.Module):
     else:
       raise NotImplementedError(self.impl)
 
+  @torch.jit.unused
   def _init_layer(self, layer):
     torch.nn.init.trunc_normal_(layer.weight)
     layer.weight.data *= self.outscale
     torch.nn.init.zeros_(layer.bias)
 
-  def __call__(self, x: torch.Tensor) -> Output:
-    if not hasattr(self, self.impl):
-      raise NotImplementedError(self.impl)
-    output = getattr(self, self.impl)(x)
+  def forward(self, x: torch.Tensor) -> Normal:
+    # if not hasattr(self, self.impl):
+    #   raise NotImplementedError(self.impl)
+    # output = getattr(self, self.impl)(x)
+    output = self._forward_method(x)
     return output
 
   def voxel_grid_decoder(self, x):
@@ -448,60 +521,60 @@ class Head(torch.nn.Module):
     pred = pred.reshape((*pred.shape[:-1], *self.output_size))
     return MSE(pred)
 
-  def symexp_twohot(self, x):
-    logits = self.projection_net(x)
-    logits = logits.reshape((*x.shape[:-1], self.output_size, self.bins))
-    if self.bins % 2 == 1:
-      half = torch.linspace(-20, 0, (self.bins - 1) // 2 + 1, dtype=torch.float32, device=x.device)
-      half = math.symexp(half)
-      bins = torch.cat([half, -half[:-1].flip(0)], 0)
-    else:
-      half = torch.linspace(-20, 0, self.bins // 2, dtype=torch.float32, device=x.device)
-      half = math.symexp(half)
-      bins = torch.cat([half, -half.flip(0)], 0)
-    return TwoHot(logits, bins)
+  # def symexp_twohot(self, x):
+  #   logits = self.projection_net(x)
+  #   logits = logits.reshape((*x.shape[:-1], self.output_size, self.bins))
+  #   if self.bins % 2 == 1:
+  #     half = torch.linspace(-20, 0, (self.bins - 1) // 2 + 1, dtype=torch.float32, device=x.device)
+  #     half = math.symexp(half)
+  #     bins = torch.cat([half, -half[:-1].flip(0)], 0)
+  #   else:
+  #     half = torch.linspace(-20, 0, self.bins // 2, dtype=torch.float32, device=x.device)
+  #     half = math.symexp(half)
+  #     bins = torch.cat([half, -half.flip(0)], 0)
+  #   return TwoHot(logits, bins)
 
-  def bounded_normal(self, x):
-    mean = self.mean_net(x)
-    stddev = self.stddev_net(x)
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-    lo, hi = self.minstd, self.maxstd
-    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-    output = Normal(torch.tanh(mean), stddev)
-    return output
+  # def bounded_normal(self, x):
+  #   mean = self.mean_net(x)
+  #   stddev = self.stddev_net(x)
+  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
+  #   lo, hi = self.minstd, self.maxstd
+  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+  #   output = Normal(torch.tanh(mean), stddev)
+  #   return output
 
-  def normal_logstd(self, x):
-    mean = self.mean_net(x)
-    stddev = torch.exp(self.stddev_net(x))
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-    lo, hi = self.minstd, self.maxstd
-    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-    output = Normal(mean, stddev)
-    return output
+  # def normal_logstd(self, x):
+  #   mean = self.mean_net(x)
+  #   stddev = torch.exp(self.stddev_net(x))
+  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
+  #   lo, hi = self.minstd, self.maxstd
+  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+  #   output = Normal(mean, stddev)
+  #   return output
 
-  def normal(self, x):
-    mean = self.mean_net(x)
-    stddev = self.stddev_net(x)
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-    lo, hi = self.minstd, self.maxstd
-    stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-    output = Normal(mean, stddev)
-    return output
+  # def normal(self, x):
+  #   mean = self.mean_net(x)
+  #   stddev = self.stddev_net(x)
+  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
+  #   lo, hi = self.minstd, self.maxstd
+  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
+  #   output = Normal(mean, stddev)
+  #   return output
 
-  def normal_logstdparam(self, x):
-    mean = self.mean_net(x)
-    with torch.no_grad():
-      log_min = np.log(self.minstd)
-      log_max = np.log(self.maxstd)
-      self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    std = torch.exp(self.logstd)
-    std = std.reshape((*std.shape[:-1], *self.output_size))
-    output = Normal(mean, std)
-    return output
+  # def normal_logstdparam(self, x):
+  #   mean = self.mean_net(x)
+  #   with torch.no_grad():
+  #     log_min = np.log(self.minstd)
+  #     log_max = np.log(self.maxstd)
+  #     self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
+  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
+  #   std = torch.exp(self.logstd)
+  #   std = std.reshape((*std.shape[:-1], *self.output_size))
+  #   output = Normal(mean, std)
+  #   return output
 
   def normal_logstdparam_unclipped(self, x):
     mean = self.mean_net(x)
@@ -519,16 +592,138 @@ class Head(torch.nn.Module):
     output = Normal(mean, std)
     return output
 
-  def stats(self):
-    if self.impl == 'normal_logstdparam':
-      return {
-        'logstd': self.logstd.detach().cpu().numpy(),
-        'std': torch.exp(self.logstd).detach().cpu().numpy()
-      }
-    elif self.impl == 'normal_logstdparam_unclipped':
-      return {
-        'logstd': self.logstd.detach().cpu().numpy(),
-        'std': math.logstd_to_std(self.logstd, self.minstd, self.maxstd).detach().cpu().numpy()
-      }
-    else:
-      return {}
+  # def stats(self):
+  #   if self.impl == 'normal_logstdparam':
+  #     return {
+  #       'logstd': self.logstd.detach().cpu().numpy(),
+  #       'std': torch.exp(self.logstd).detach().cpu().numpy()
+  #     }
+  #   elif self.impl == 'normal_logstdparam_unclipped':
+  #     return {
+  #       'logstd': self.logstd.detach().cpu().numpy(),
+  #       'std': math.logstd_to_std(self.logstd, self.minstd, self.maxstd).detach().cpu().numpy()
+  #     }
+  #   else:
+  #     return {}
+
+class NormalLogSTDHead(nn.Module):
+
+  def __init__(
+      self,
+      input_size: int,
+      output_space: space.Space,
+      init_std: float = 1.0,
+      minstd: float = 1.0,
+      maxstd: float = 1.0,
+      bounded: bool = False,
+    ):
+    super().__init__()
+
+    self.input_size = input_size
+    self.output_size = output_space.shape
+    self.init_std = init_std
+    self.minstd = minstd
+    self.maxstd = maxstd
+    mean_net = nn.Linear(input_size, int(np.prod(self.output_size)))
+    if bounded:
+      mean_net = nn.Sequential(
+        mean_net,
+        nn.Tanh()
+      )
+    self.mean_net = mean_net
+    self.logstd = torch.nn.parameter.Parameter(
+      torch.full(
+        (1, int(np.prod(self.output_size))),
+        fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
+        dtype=torch.float32),
+      requires_grad=True
+    )
+
+  @torch.jit.unused
+  def stats(self) -> Dict[str, torch.Tensor]:
+    return {
+      'logstd': self.logstd.detach(),
+      'std': math.logstd_to_std(self.logstd, self.minstd, self.maxstd).detach()
+    }
+
+  def forward(self, x: torch.Tensor) -> Normal:
+    mean = self.mean_net(x)
+    std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
+    mean = utils.reshape_output(mean, self.output_size)
+    std = utils.reshape_output(std, self.output_size)
+    output = Normal(mean, std)
+    return output
+
+
+
+class MSEHead(nn.Module):
+  def __init__(
+      self,
+      input_size: int,
+      output_space: space.Space,
+      outscale: float = 1.0,
+    ):
+    super().__init__()
+
+    self.input_size = input_size
+    self.output_size = output_space.shape
+    self.outscale = outscale
+
+    self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size)))
+    self._init_layer(self.projection_net)
+
+  @torch.jit.unused
+  def _init_layer(self, layer):
+    torch.nn.init.trunc_normal_(layer.weight)
+    layer.weight.data *= self.outscale
+    torch.nn.init.zeros_(layer.bias)
+
+  def forward(self, x: torch.Tensor) -> MSE:
+    pred = self.projection_net(x)
+    pred = utils.reshape_output(pred, self.output_size)
+    output = MSE(pred)
+    return output
+
+
+class VoxelGridDecoderHead(nn.Module):
+  def __init__(
+      self,
+      input_size: int,
+      output_space: space.Space,
+    ):
+    super().__init__()
+    self.input_size = input_size
+    self.output_size = output_space.shape
+
+    self.decoder = decoder.ConvDecoder3D(
+      in_channels=input_size,
+      out_resolution=self.output_size,
+      out_channels=input_size,
+      mults=(2, 3),
+      act_final=True
+    )
+    self.occupancy_grid_projection = nn.Conv3d(
+      in_channels=input_size,
+      out_channels=1,
+      kernel_size=1,
+      stride=1
+    )
+    self.centroid_grid_projection = nn.Sequential(
+      nn.Conv3d(
+        in_channels=input_size,
+        out_channels=1,
+        kernel_size=1,
+        stride=1
+      ),
+      nn.Sigmoid()
+    )
+
+  def forward(self, x: torch.Tensor) -> VoxelDist:
+    latent_grid = self.decoder(x)
+    batch_shape, obs_shape = latent_grid.shape[:-4], latent_grid.shape[-4:]
+    latent_grid = utils.flatten_batch(latent_grid, obs_shape)
+    occupancy_grid = self.occupancy_grid_projection(latent_grid).squeeze(1)
+    centroid_grid = self.centroid_grid_projection(latent_grid).squeeze(1)
+    occupancy_grid = utils.unflatten_batch(occupancy_grid, batch_shape)
+    centroid_grid = utils.unflatten_batch(centroid_grid, batch_shape)
+    return VoxelDist(occupancy_grid, centroid_grid)

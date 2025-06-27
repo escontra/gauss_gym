@@ -87,21 +87,21 @@ class LeggedRobot(base_task.BaseTask):
         act_space = {
             'actions': space.Space(
                 shape=(self.num_actions,),
-                dtype=np.float32
+                dtype=torch.float32
             )
         }
         if self.cfg["commands"]["command_gains"]:
             act_space['stiffness'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][0],
-                high=self.default_dof_stiffness[0].cpu().numpy() * self.cfg["commands"]["command_gains_stiffness_range"][1],
-                dtype=np.float32
+                low=self.default_dof_stiffness[0] * self.cfg["commands"]["command_gains_stiffness_range"][0],
+                high=self.default_dof_stiffness[0] * self.cfg["commands"]["command_gains_stiffness_range"][1],
+                dtype=torch.float32
             )
             act_space['damping'] = space.Space(
                 shape=(self.num_actions,),
-                low=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][0],
-                high=self.default_dof_damping[0].cpu().numpy() * self.cfg["commands"]["command_gains_damping_range"][1],
-                dtype=np.float32
+                low=self.default_dof_damping[0] * self.cfg["commands"]["command_gains_damping_range"][0],
+                high=self.default_dof_damping[0] * self.cfg["commands"]["command_gains_damping_range"][1],
+                dtype=torch.float32
             )
         return act_space
 
@@ -468,11 +468,17 @@ class LeggedRobot(base_task.BaseTask):
         for s in self.feet_shape_indices:
             if self.cfg["domain_rand"]["foot_friction"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].friction = foot_friction
+            else:
+              props[s].friction = np.mean(self.cfg["domain_rand"]["foot_friction"]["range"])
               # props[s].friction = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_friction"])
             if self.cfg["domain_rand"]["foot_compliance"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].compliance = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_compliance"])
+            else:
+              props[s].compliance = np.mean(self.cfg["domain_rand"]["foot_compliance"]["range"])
             if self.cfg["domain_rand"]["foot_restitution"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
               props[s].restitution = math.apply_randomization(0.0, self.cfg["domain_rand"]["foot_restitution"])
+            else:
+              props[s].restitution = np.mean(self.cfg["domain_rand"]["foot_restitution"]["range"])
 
         return props
 
@@ -509,9 +515,11 @@ class LeggedRobot(base_task.BaseTask):
             for i in range(len(props)):
                 props["friction"][i] = math.apply_randomization(props["friction"][i], self.cfg["domain_rand"]["dof_friction_ig_property"])
 
-        if self.cfg["domain_rand"]["dof_armature_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-            for i in range(len(props)):
+        for i in range(len(props)):
+            if self.cfg["domain_rand"]["dof_armature_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
                 props["armature"][i] = math.apply_randomization(0.0, self.cfg["domain_rand"]["dof_armature_ig_property"])
+            else:
+                props["armature"][i] = np.mean(self.cfg["domain_rand"]["dof_armature_ig_property"]["range"])
 
         return props
 
@@ -1197,35 +1205,23 @@ class LeggedRobot(base_task.BaseTask):
         # Tracking of linear velocity commands (y axes)
         return torch.exp(-torch.square(self.commands[:, 1] - self.filtered_lin_vel[:, 1]) / tracking_sigma)
 
-    def _reward_tracking_lin_vel_tolerance(self, gaussian_margin, linear_margin):
-        def _move_or_stand_reward(val, target, standing):
-            move_reward = math.tolerance(
-                val,
-                lower=torch.where(target > 0, target, target - linear_margin),
-                upper=torch.where(target > 0, target + linear_margin, target),
-                margin=torch.abs(target),
-                sigmoid='linear',
-                value_at_margin=torch.zeros_like(target)
-            )
-            stand_still_reward = math.tolerance(
-                val,
-                margin=torch.full_like(target, gaussian_margin),
-                sigmoid='gaussian',
-                value_at_margin=torch.full_like(target, 0.01)
-            )
-            return move_reward * ~standing + stand_still_reward * standing
-
-        stand_command = self.get_small_command_mask()
-        velocity = self.filtered_lin_vel
-        commands = self.commands
-        x_reward = _move_or_stand_reward(velocity[:, 0], commands[:, 0], stand_command)
-        y_reward = _move_or_stand_reward(velocity[:, 1], commands[:, 1], stand_command)
-        return x_reward + y_reward
-
     def _reward_tracking_ang_vel(self, tracking_sigma):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.filtered_ang_vel[:, 2])
         return torch.exp(-ang_vel_error / tracking_sigma)
+
+    def _reward_tracking_vel_tolerance(self, gaussian_margin, linear_margin):
+        stand_command = self.get_small_command_mask()
+        lin_vel = self.filtered_lin_vel
+        ang_vel = self.filtered_ang_vel
+        com_vel = self.commands
+        x_reward = math.linear_or_qaussian_tolerance(
+          lin_vel[:, 0], com_vel[:, 0], linear_margin, gaussian_margin, stand_command)
+        y_reward = math.linear_or_qaussian_tolerance(
+          lin_vel[:, 1], com_vel[:, 1], linear_margin, gaussian_margin, stand_command)
+        ang_reward = math.linear_or_qaussian_tolerance(
+          ang_vel[:, 2], com_vel[:, 2], linear_margin, gaussian_margin, stand_command)
+        return x_reward + y_reward + ang_reward
 
     def _reward_feet_air_time(self, min_air_time, max_air_time):
         # Reward long steps

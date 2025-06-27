@@ -70,7 +70,7 @@ class ExperienceBuffer:
           self.horizon_length,
           self.num_envs,
           *obs_group.shape,
-          dtype=getattr(torch, obs_group.dtype.name),
+          dtype=obs_group.dtype,
           device=self.device,
         )
 

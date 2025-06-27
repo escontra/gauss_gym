@@ -1,3 +1,4 @@
+from typing import List, Tuple, Optional
 import numpy as np
 import torch
 import torch.utils._pytree as pytree
@@ -87,6 +88,7 @@ def split_and_pad_trajectories(tensor, dones):
     return padded_trajectories, trajectory_masks
 
 
+@torch.jit.ignore
 def unpad_trajectories(trajectories, masks):
     """ Does the inverse operation of  split_and_pad_trajectories()."""
     # Need to transpose before and after the masking to have proper reshaping
@@ -99,18 +101,19 @@ def unpad_trajectories(trajectories, masks):
     return traj_viewed_transp
 
 
-def get_mlp_cnn_keys(obs, project_dims={}):
+def get_mlp_cnn_keys(obs, project_dims={}) -> Tuple[
+   Optional[List[str]], Optional[List[str]], Optional[List[str]], int]:
   # TODO: Add option to process 2D observations with CNN or MLP. Currently only supports MLP.
   mlp_keys, mlp_2d_reshape_keys, cnn_keys = [], [], []
   num_mlp_obs = 0
   for k, v in obs.items():
     if len(v.shape) == 1:
       mlp_keys.append(k)
-      curr_mlp_obs = np.prod(v.shape)
+      curr_mlp_obs = int(np.prod(v.shape))
     elif len(v.shape) == 2:
       mlp_keys.append(k)
       mlp_2d_reshape_keys.append(k)
-      curr_mlp_obs = np.prod(v.shape)
+      curr_mlp_obs = int(np.prod(v.shape))
     elif len(v.shape) == 3:
       cnn_keys.append(k)
       curr_mlp_obs = 0
@@ -122,4 +125,28 @@ def get_mlp_cnn_keys(obs, project_dims={}):
     else:
       num_mlp_obs += curr_mlp_obs
 
+  mlp_keys = mlp_keys if mlp_keys else None
+  mlp_2d_reshape_keys = mlp_2d_reshape_keys if mlp_2d_reshape_keys else None
+  cnn_keys = cnn_keys if cnn_keys else None
   return mlp_keys, mlp_2d_reshape_keys, cnn_keys, num_mlp_obs
+
+
+@torch.jit.ignore
+def reshape_output(tensor: torch.Tensor, output_size: List[int]) -> torch.Tensor:
+  return tensor.reshape((*tensor.shape[:-1], *output_size))
+
+@torch.jit.ignore
+def flatten_obs(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*tensor.shape[:-len(obs_size)], -1)
+
+@torch.jit.ignore
+def unflatten_obs(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*tensor.shape[:-1], *obs_size)
+
+@torch.jit.ignore
+def flatten_batch(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(-1, *obs_size)
+
+@torch.jit.ignore
+def unflatten_batch(tensor: torch.Tensor, batch_size: List[int]) -> torch.Tensor:
+  return tensor.reshape(*batch_size, *tensor.shape[1:])

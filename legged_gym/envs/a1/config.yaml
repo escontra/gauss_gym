@@ -300,7 +300,7 @@ domain_rand:
     distribution: "uniform"
   dof_armature_ig_property:
     apply: True
-    range: [0.01, 0.015]
+    range: [0.0, 0.015]
     operation: "additive"
     distribution: "uniform"
 
@@ -462,7 +462,7 @@ image_encoder:
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  max_batch_size: 64
+  max_batch_size: 48
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
     warmup_steps: 2000
@@ -500,9 +500,26 @@ policy:
     symlog_inputs: True
     normalize_obs: True
     head:
-      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.2, maxstd: 1.0, outscale: 1.0, init_std: 0.9}
-      stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
-      damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.05, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
+      actions:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.2
+          maxstd: 1.0
+          init_std: 0.9
+      stiffness:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.3
+          bounded: True
+      damping:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.3
+          bounded: True
 
 value:
   class_name: RecurrentMLPModel
@@ -517,8 +534,11 @@ value:
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: 
-      value: {output_type: mse, outscale: 1.0}
+    head:
+      value:
+        class_name: MSEHead
+        params:
+          outscale: 1.0
 
 algorithm:
   gamma: 0.97
