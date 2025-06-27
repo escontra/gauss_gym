@@ -1,8 +1,9 @@
+from typing import Dict, Any, Tuple, Callable
 import torch
 import torch.utils._pytree as pytree
 
 from legged_gym.rl import utils
-from legged_gym.utils import voxel
+from legged_gym.utils import voxel, agg, timer
 from legged_gym.rl import experience_buffer
 
 
@@ -223,3 +224,131 @@ def reconstruction_loss(
 
   total_loss = sum(losses)
   return total_loss, metrics
+
+@timer.section("learn_ppo")
+def learn_ppo(
+    buffer: experience_buffer.ExperienceBuffer,
+    policy: torch.nn.Module,
+    old_policy: torch.nn.Module,
+    value: torch.nn.Module,
+    policy_optimizer: torch.optim.Optimizer,
+    value_optimizer: torch.optim.Optimizer,
+    policy_learning_rate: float,
+    value_learning_rate: float,
+    policy_obs_key: str,
+    value_obs_key: str,
+    symm_obs_key: str,
+    symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
+    last_privileged_obs: Dict[str, Any],
+    last_value_hidden_states: Tuple[torch.Tensor, ...],
+    it: int,
+    ppo_cfg: Dict[str, Any],
+  ):
+  if it == 0:
+    # Skip the first gradient update to initialize the observation normalizers.
+    with torch.no_grad():
+      policy.update_normalizer(buffer[policy_obs_key])
+      value.update_normalizer(buffer[value_obs_key])
+    return {}
+
+  learn_step_agg = agg.Agg()
+  old_policy.load_state_dict(policy.state_dict())
+
+  obs_groups = [policy_obs_key, value_obs_key]
+  hidden_states_keys = [policy_obs_key, value_obs_key]
+  obs_sym_groups = [policy_obs_key]
+
+  for batch in buffer.reccurent_mini_batch_generator(
+    ppo_cfg["num_learning_epochs"],
+    ppo_cfg["num_mini_batches"],
+    last_value_items=[value, last_privileged_obs, last_value_hidden_states],
+    obs_groups=obs_groups,
+    hidden_states_keys=hidden_states_keys,
+    networks={
+      policy_obs_key: old_policy,
+    },
+    networks_sym={},
+    obs_sym_groups=obs_sym_groups,
+    symm_key=symm_obs_key,
+    symmetry_fn=symmetry_fn,
+    symmetry_flip_latents=ppo_cfg["symmetry_flip_latents"],
+    dones_key="dones",
+    rl_keys=[
+      "values", "time_outs", "rewards", "dones", "actions"
+    ],
+  ):
+    # Value loss.
+    val_loss, advantages, metrics = value_loss(
+      batch,
+      value,
+      value_obs_key,
+      ppo_cfg["gamma"],
+      ppo_cfg["lam"],
+      ppo_cfg["use_clipped_value_loss"],
+      ppo_cfg["clip_param"]
+    )
+    total_loss = ppo_cfg["value_loss_coef"] * val_loss
+    learn_step_agg.add(metrics)
+
+    # Actor loss.
+    act_loss, kls, metrics = actor_loss(
+      advantages,
+      batch,
+      policy,
+      policy_obs_key,
+      ppo_cfg["symmetry"],
+      symmetry_fn,
+      ppo_cfg["actor_loss_coefs"],
+      ppo_cfg["entropy_coefs"],
+      ppo_cfg["bound_coefs"],
+      ppo_cfg["symmetry_coefs"],
+      ppo_cfg["clip_param"],
+    )
+    total_loss += act_loss
+    learn_step_agg.add(metrics)
+
+    # SGD.
+    policy_optimizer.zero_grad()
+    value_optimizer.zero_grad()
+    total_loss.backward()
+    all_params = list(policy.parameters()) + list(value.parameters())
+    torch.nn.utils.clip_grad_norm_(
+      all_params,
+      1.0)
+    policy_optimizer.step()
+    value_optimizer.step()
+
+    del batch
+
+    # Learning rate scheduler.
+    if ppo_cfg["desired_kl"] > 0.0:
+      if kls[ppo_cfg["kl_key"]] > ppo_cfg["desired_kl"] * 2.0:
+        policy_learning_rate = max(1e-5, policy_learning_rate / 1.5)
+      elif kls[ppo_cfg["kl_key"]] < ppo_cfg["desired_kl"] / 2.0 and kls[ppo_cfg["kl_key"]] > 0.0:
+        policy_learning_rate = min(1e-2, policy_learning_rate * 1.5)
+      for param_group in policy_optimizer.param_groups:
+        param_group["lr"] = policy_learning_rate
+
+    policy_stats = {}
+    for k, v in policy.stats().items():
+      v = v.cpu().numpy()
+      policy_stats[f'policy/{k}_mean'] = v.mean()
+      policy_stats[f'policy/{k}_std'] = v.std()
+      policy_stats[f'policy/{k}_min'] = v.min()
+      policy_stats[f'policy/{k}_max'] = v.max()
+    learn_step_agg.add(policy_stats)
+
+  # Update the observation normalizers.
+  with torch.no_grad():
+    policy.update_normalizer(buffer[policy_obs_key])
+    value.update_normalizer(buffer[value_obs_key])
+
+  learning_rate_stats = {
+    f"{policy_obs_key}_lr": policy_learning_rate,
+    f"{value_obs_key}_lr": value_learning_rate,
+  }
+
+  return policy_learning_rate, value_learning_rate, {
+      **learn_step_agg.result(),
+      **learning_rate_stats,
+  }

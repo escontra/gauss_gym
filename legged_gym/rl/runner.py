@@ -17,6 +17,18 @@ from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, wh
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
+class SetpointScheduler:
+  def __init__(self, warmup_steps: int, val_warmup, val_after):
+    self.val_warmup = val_warmup
+    self.val_after = val_after
+    self.warmup_steps = warmup_steps
+
+  def __call__(self, step: int):
+    if step < self.warmup_steps:
+      return self.val_warmup
+    return self.val_after
+
+
 class TrainRateScheduler:
   def __init__(self, warmup_steps: int, train_every_warmup: int, train_every_after: int):
     self.every_warmup = when.Every(train_every_warmup)
@@ -124,8 +136,24 @@ class Runner:
 
     # Optimizers.
     if self.image_encoder_enabled:
-      self.train_image_encoder = TrainRateScheduler(
-        **self.cfg["image_encoder"]["train_rate_scheduler"]
+      # self.train_image_encoder = TrainRateScheduler(
+      #   **self.cfg["image_encoder"]["train_rate_scheduler"]
+      # )
+      self.train_image_encoder = SetpointScheduler(
+        warmup_steps=self.cfg["image_encoder"]["train_rate_scheduler"]["warmup_steps"],
+        val_warmup=when.Every(self.cfg["image_encoder"]["train_rate_scheduler"]["train_every_warmup"]),
+        val_after=when.Every(self.cfg["image_encoder"]["train_rate_scheduler"]["train_every_after"])
+      )
+      self.image_encoder_batch_scheduler = SetpointScheduler(
+        warmup_steps=self.cfg["image_encoder"]["batch_scheduler"]["warmup_steps"],
+        val_warmup={
+          "num_learning_epochs": self.cfg["image_encoder"]["batch_scheduler"]["num_learning_epochs_warmup"],
+          "num_mini_batches": self.cfg["image_encoder"]["batch_scheduler"]["num_mini_batches_warmup"]
+        },
+        val_after={
+          "num_learning_epochs": self.cfg["image_encoder"]["batch_scheduler"]["num_learning_epochs_after"],
+          "num_mini_batches": self.cfg["image_encoder"]["batch_scheduler"]["num_mini_batches_after"]
+        }
       )
       self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
       image_encoder_parameters = list(self.image_encoder.recurrent_model.parameters())
@@ -367,13 +395,12 @@ class Runner:
               image_encoder_step += 1
               if image_encoder_step == num_image_encoder_steps:
                 image_encoder_step = 0
-                if self.train_image_encoder(it):
+                if self.train_image_encoder(it)(it):
+                  batch_params = self.image_encoder_batch_scheduler(it)
                   self._set_train_mode()
-                  image_encoder_metrics = self._learn_image_encoder()
+                  image_encoder_metrics = self._learn_image_encoder(**batch_params)
                   self.learn_agg.add(image_encoder_metrics)
                   self._set_eval_mode()
-                if self.image_encoder_learning_rate_scheduler is not None:
-                  self.image_encoder_learning_rate_scheduler.step()
               with torch.no_grad():
                 _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
                   obs_dict[self.image_encoder_key],
@@ -461,8 +488,28 @@ class Runner:
       elif self.image_encoder_enabled:
         last_privileged_obs[self.image_encoder_key] = image_encoder_rnn_state
 
-      # We skip the first gradient update to initialize the observation normalizers.
+      if self.image_encoder_learning_rate_scheduler is not None:
+        self.image_encoder_learning_rate_scheduler.step()
+
       self._set_train_mode()
+      # self.policy_learning_rate, self.value_learning_rate, learn_stats = loss.learn_ppo(
+      #   self.buffer,
+      #   self.policy,
+      #   self.old_policy,
+      #   self.value,
+      #   self.policy_optimizer,
+      #   self.value_optimizer,
+      #   self.policy_learning_rate,
+      #   self.value_learning_rate,
+      #   self.policy_key,
+      #   self.value_key,
+      #   self.symm_key,
+      #   self._get_symmetry_fn,
+      #   last_privileged_obs,
+      #   value_hidden_states,
+      #   it,
+      #   self.cfg["algorithm"],
+      # )
       learn_stats = self._learn(last_privileged_obs, last_value_hidden_states=value_hidden_states, is_first=it == 0)
       self.learn_agg.add(learn_stats)
       self._set_eval_mode()
@@ -509,11 +556,11 @@ class Runner:
       start = time.time()
 
   @timer.section("learn_image_encoder")
-  def _learn_image_encoder(self):
+  def _learn_image_encoder(self, num_learning_epochs, num_mini_batches):
     learn_step_agg = agg.Agg()
     for batch in self.image_encoder_buffer.reccurent_mini_batch_generator(
-      self.cfg["image_encoder"]["num_learning_epochs"],
-      self.cfg["image_encoder"]["num_mini_batches"],
+      num_learning_epochs,
+      num_mini_batches,
       last_value_items=None,
       obs_groups=[self.image_encoder_key, self.value_key],
       hidden_states_keys=[self.image_encoder_key],

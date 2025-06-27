@@ -40,8 +40,8 @@ env:
 
 observations:
   image_encoder:
-    add_noise: True
-    add_latency: True
+    add_noise: False
+    add_latency: False
     latency_resampling_interval_s: 3.0
     observations: [
       CAMERA_IMAGE, PROJECTED_GRAVITY #, DOF_POS, DOF_VEL, ACTIONS
@@ -470,8 +470,6 @@ image_encoder:
   enabled: True
   freeze_encoder: False
   num_steps_per_env: 24
-  num_learning_epochs: 2
-  num_mini_batches: 3
   max_batch_size: 48
   mirror_latents_during_inference: False
   class_name: RecurrentCNNModel
@@ -482,13 +480,20 @@ image_encoder:
   ]
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
-    warmup_steps: 400
+    warmup_steps: 100
     train_every_warmup: -1
-    train_every_after: 3
+    train_every_after: -1 # 10 before
+  batch_scheduler:
+    warmup_steps: 100
+    num_learning_epochs_warmup: 5 # 5 before
+    num_mini_batches_warmup: 14 # 4 before
+    num_learning_epochs_after: 2 # 5 before
+    num_mini_batches_after: 4 # 4 before
+  
   learning_rate_scheduler:
     class_name: MultiStepLR
     params:
-      milestones: [400]
+      milestones: [100]
       gamma: 0.1
   params:
     layer_activation: silu
@@ -499,7 +504,7 @@ image_encoder:
     normalize_obs: True
     model_type: timm_test_convnext
     embedding_dim: 128
-    torchaug_transforms: True
+    torchaug_transforms: False
 
 policy:
   class_name: RecurrentMLPModel
