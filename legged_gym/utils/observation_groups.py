@@ -13,6 +13,7 @@ class Observation:
   scale: Union[float, None] = None
   latency_range: Tuple[float, float] = (0., 0.)
   refresh_duration: float = 0.
+  ignore_in_observation_manager: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -177,4 +178,5 @@ FEET_CONTACT = Observation(
 IMAGE_ENCODER_LATENT = Observation(
   name="image_encoder",
   func=None,
+  ignore_in_observation_manager=True,
 )

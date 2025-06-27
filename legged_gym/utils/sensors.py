@@ -207,11 +207,16 @@ class GaussianSplattingRenderer():
         self.camera_refresh_interval_s = self.env.cfg["domain_rand"]["camera_refresh_interval_s"]
         self.fl_rand_params = self.env.cfg["domain_rand"]["focal_length"]
         self.pp_rand_params = self.env.cfg["domain_rand"]["principal_point"]
+        self.camera_pos_rand_params = self.env.cfg["domain_rand"]["camera_pos"]
+        self.camera_rot_rand_params = self.env.cfg["domain_rand"]["camera_rot"]
         self.refresh_duration_rand_params = self.env.cfg["domain_rand"]["refresh_duration"]
         self.fl_x_sample = torch.full((self.num_envs,), self.fl_x, device=self.device, dtype=torch.float32)
         self.fl_y_sample = torch.full((self.num_envs,), self.fl_y, device=self.device, dtype=torch.float32)
         self.pp_x_sample = torch.full((self.num_envs,), self.pp_x, device=self.device, dtype=torch.float32)
         self.pp_y_sample = torch.full((self.num_envs,), self.pp_y, device=self.device, dtype=torch.float32)
+        self.camera_pos_delta_sample = torch.zeros(self.num_envs, 3, device=self.device, dtype=torch.float32)
+        self.camera_quat_delta_sample = torch.zeros(self.num_envs, 4, device=self.device, dtype=torch.float32)
+        self.camera_quat_delta_sample[:, 3] = 1.0
         self.refresh_duration_s_sample = np.mean(self.refresh_duration_rand_params["range"])
         self._maybe_sample_camera_params()
 
@@ -246,6 +251,23 @@ class GaussianSplattingRenderer():
                 self.pp_rand_params
             )
 
+        if self.apply_domain_rand and self.camera_pos_rand_params["apply"]:
+            self.camera_pos_delta_sample[:] = math.apply_randomization(
+                torch.zeros(self.num_envs, 3, device=self.device),
+                self.camera_pos_rand_params
+            )
+
+        if self.apply_domain_rand and self.camera_rot_rand_params["apply"]:
+            camera_eulerxyz_delta_sample = math.apply_randomization(
+                torch.zeros(self.num_envs, 3, device=self.device),
+                self.camera_rot_rand_params
+            )
+            self.camera_quat_delta_sample[:] = math.quat_from_euler_xyz(
+              camera_eulerxyz_delta_sample[..., 0],
+              camera_eulerxyz_delta_sample[..., 1],
+              camera_eulerxyz_delta_sample[..., 2]
+            )
+
         if self.apply_domain_rand and self.refresh_duration_rand_params["apply"]:
             self.refresh_duration_s_sample = math.apply_randomization(
                 0.0, self.refresh_duration_rand_params
@@ -257,15 +279,21 @@ class GaussianSplattingRenderer():
         Args:
             env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
         """
-        cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
-        self.camera_positions[:] = cam_trans
-        self.camera_quats_xyzw[:] = cam_quat
 
         if self.apply_domain_rand and self.env.common_step_counter % int(self.camera_refresh_interval_s / self.env.dt) == 0:
           print('Resampling refresh duration...')
           self._maybe_sample_camera_params()
           print(f'New refresh duration: {self.refresh_duration_s_sample}')
 
+        cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
+        cam_trans += self.camera_pos_delta_sample
+        cam_quat = math.quat_mul(
+            cam_quat,
+            self.camera_quat_delta_sample
+        )
+        self.camera_positions[:] = cam_trans
+        self.camera_quats_xyzw[:] = cam_quat
+        
         # Refresh rate is determined by the refresh_duration_s.
         if int(self.refresh_duration_s_sample / self.env.dt) == 0:
           should_refresh = True

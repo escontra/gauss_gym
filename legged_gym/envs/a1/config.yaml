@@ -207,20 +207,30 @@ domain_rand:
   # Not to be confused with the sythetic refresh_duration used in
   # observation_manager.
   refresh_duration:
-    apply: True
-    range: [0.05, 0.12]
+    apply: False
+    range: [0.05, 0.15]
     operation: "additive"
     distribution: "uniform"
   focal_length:
-    apply: True
-    range: [0.0, 3.0]
+    apply: False
+    range: [0.0, 8.0]
     operation: "additive"
     distribution: "gaussian"
   principal_point:
-    apply: True
-    range: [0.0, 1.5]
+    apply: False
+    range: [0.0, 2.0]
     operation: "additive"
     distribution: "gaussian"
+  camera_pos:
+    apply: False
+    range: [-0.04, 0.04]
+    operation: "additive"
+    distribution: "uniform"
+  camera_rot:
+    apply: False
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
 
   init_dof_pos:
     apply: True
@@ -472,13 +482,13 @@ image_encoder:
   ]
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
-    warmup_steps: 2000
+    warmup_steps: 400
     train_every_warmup: -1
-    train_every_after: 10
+    train_every_after: 3
   learning_rate_scheduler:
     class_name: MultiStepLR
     params:
-      milestones: [2000]
+      milestones: [400]
       gamma: 0.1
   params:
     layer_activation: silu

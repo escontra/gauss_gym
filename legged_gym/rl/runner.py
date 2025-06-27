@@ -122,47 +122,11 @@ class Runner:
       **self.cfg["value"]["params"]
     ).to(self.device)
 
-    self.global_num_updates = 0
-
     # Optimizers.
     if self.image_encoder_enabled:
       self.train_image_encoder = TrainRateScheduler(
         **self.cfg["image_encoder"]["train_rate_scheduler"]
       )
-
-      # if isinstance(self.cfg["image_encoder"]["learning_rate"], float):
-      #   param_groups = [
-      #     {
-      #       'params': self.image_encoder.parameters(),
-      #       'lr': self.cfg["image_encoder"]["learning_rate"],
-      #       'name': 'all'
-      #     }
-      #   ]
-      # else:
-      #   param_groups = [
-      #     {
-      #       'params': self.image_encoder.image_feature_model.parameters(),
-      #       'lr': self.cfg["image_encoder"]["learning_rate"]["encoder"],
-      #       'name': 'encoder'
-      #     },
-      #     {
-      #       'params': self.image_encoder.recurrent_model.parameters(),
-      #       'lr': self.cfg["image_encoder"]["learning_rate"]["rnn"],
-      #       'name': 'rnn'
-      #     },
-      #     # {
-      #     #   'params': self.image_encoder.decoder_parameters(),
-      #     #   'lr': self.cfg["image_encoder"]["learning_rate"]["decoder"],
-      #     #   'name': 'decoder'
-      #     # },
-      #   ]
-
-      # self.image_encoder_optimizer = torch.optim.Adam(
-      #   param_groups
-      # )
-
-      # assert set(self.image_encoder.parameters()) == set().union(*[group['params'] for group in self.image_encoder_optimizer.param_groups])
-
       self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
       image_encoder_parameters = list(self.image_encoder.recurrent_model.parameters())
       if not self.cfg["image_encoder"]["freeze_encoder"]:
@@ -402,11 +366,14 @@ class Runner:
               image_encoder_dones[:] = False
               image_encoder_step += 1
               if image_encoder_step == num_image_encoder_steps:
-                self._set_train_mode()
                 image_encoder_step = 0
-                image_encoder_metrics = self._learn_image_encoder()
-                self.learn_agg.add(image_encoder_metrics)
-                self._set_eval_mode()
+                if self.train_image_encoder(it):
+                  self._set_train_mode()
+                  image_encoder_metrics = self._learn_image_encoder()
+                  self.learn_agg.add(image_encoder_metrics)
+                  self._set_eval_mode()
+                if self.image_encoder_learning_rate_scheduler is not None:
+                  self.image_encoder_learning_rate_scheduler.step()
               with torch.no_grad():
                 _, image_encoder_rnn_state, image_encoder_hidden_states = self.image_encoder(
                   obs_dict[self.image_encoder_key],
@@ -560,9 +527,6 @@ class Runner:
       rl_keys=[],
     ):
       # Reconstruction loss.
-      # if self.image_encoder_enabled and self.train_image_encoder(self.global_num_updates):
-      if self.image_encoder_learning_rate_scheduler is not None:
-        self.image_encoder_learning_rate_scheduler.step()
       recon_loss, metrics = loss.reconstruction_loss(
         batch,
         self.image_encoder,
@@ -578,8 +542,6 @@ class Runner:
         self.image_encoder.parameters(),
         1.0)
       self.image_encoder_optimizer.step()
-      if self.image_encoder_learning_rate_scheduler is not None:
-        self.image_encoder_learning_rate_scheduler.step()
   
     learning_rate_stats = {}
     if self.image_encoder_enabled:
@@ -713,7 +675,6 @@ class Runner:
           policy_stats[f'policy/{k}_min'] = v.min()
           policy_stats[f'policy/{k}_max'] = v.max()
         learn_step_agg.add(policy_stats)
-        self.global_num_updates += 1
 
       # Update the observation normalizers.
       with torch.no_grad():
