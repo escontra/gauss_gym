@@ -2,13 +2,13 @@ import os
 import numpy as np
 from typing import Any, Dict
 import random
+import itertools
 import time
 import torch
 import torch.utils._pytree as pytree
 import pathlib
 import copy
 import torch.distributed as torch_distributed
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from legged_gym.rl import experience_buffer, loss, recorder
 from legged_gym.rl.env import vec_env
@@ -120,11 +120,6 @@ class Runner:
       project_dims=policy_project_dims,
       **self.cfg["policy"]["params"]
     ).to(self.device)
-    if self.multi_gpu:
-      self.policy_ddp = DDP(self.policy, device_ids=[self.multi_gpu_local_rank])
-      policy_params = self.policy_ddp.parameters()
-    else:
-      policy_params = self.policy.parameters()
     # For KL.
     self.old_policy: models.RecurrentModel = copy.deepcopy(self.policy)
     for param in self.old_policy.parameters():
@@ -139,11 +134,6 @@ class Runner:
       project_dims=value_project_dims,
       **self.cfg["value"]["params"]
     ).to(self.device)
-    if self.multi_gpu:
-      self.value_ddp = DDP(self.value, device_ids=[self.multi_gpu_local_rank])
-      value_params = self.value_ddp.parameters()
-    else:
-      value_params = self.value.parameters()
 
     self.global_num_updates = 0
 
@@ -187,13 +177,8 @@ class Runner:
       # assert set(self.image_encoder.parameters()) == set().union(*[group['params'] for group in self.image_encoder_optimizer.param_groups])
 
       self.image_encoder_learning_rate = self.cfg["image_encoder"]["learning_rate"]
-      if self.multi_gpu:
-        self.image_encoder_ddp = DDP(self.image_encoder, device_ids=[self.multi_gpu_local_rank])
-        image_encoder_params = self.image_encoder_ddp.parameters()
-      else:
-        image_encoder_params = self.image_encoder.parameters()
       self.image_encoder_optimizer = torch.optim.Adam(
-        image_encoder_params, lr=self.image_encoder_learning_rate
+        self.image_encoder.parameters(), lr=self.image_encoder_learning_rate
       )
       if self.cfg["image_encoder"]["learning_rate_scheduler"] is not None:
         self.image_encoder_learning_rate_scheduler = getattr(
@@ -204,10 +189,10 @@ class Runner:
         self.image_encoder_learning_rate_scheduler = None
 
     self.policy_optimizer = torch.optim.Adam(
-      policy_params, lr=self.policy_learning_rate
+      self.policy.parameters(), lr=self.policy_learning_rate
     )
     self.value_optimizer = torch.optim.Adam(
-      value_params, lr=self.value_learning_rate
+      self.value.parameters(), lr=self.value_learning_rate
     )
 
     self._flatten_parameters()
@@ -613,6 +598,28 @@ class Runner:
         self.policy_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
         total_loss.backward()
+
+        if self.multi_gpu:
+          # from RL-Games
+          # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
+          all_grads_list = []
+          all_params_chain = itertools.chain(self.policy.parameters(), self.value.parameters())
+          if self.image_encoder_enabled:
+            all_params_chain = itertools.chain(all_params_chain, self.image_encoder.parameters())
+          for param in all_params_chain:
+            if param.grad is not None:
+              all_grads_list.append(param.grad.view(-1))
+          all_grads = torch.cat(all_grads_list)
+          # sum grads on each gpu
+          torch_distributed.all_reduce(all_grads, op=torch_distributed.ReduceOp.SUM)
+          offset = 0
+          for param in all_params_chain:
+            if param.grad is not None:
+              # copy data back from shared buffer
+              param.grad.data.copy_(
+                all_grads[offset : offset + param.numel()].view_as(param.grad.data) / self.multi_gpu_world_size
+              )
+              offset += param.numel()
         all_params = list(self.policy.parameters()) + list(self.value.parameters())
         if self.image_encoder_enabled:
           all_params += list(self.image_encoder.parameters())
