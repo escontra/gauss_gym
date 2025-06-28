@@ -470,7 +470,7 @@ class GaussianSceneManager:
     # v = v_link + ω × r, where r is the offset vector in world frame
     # Using cross product of angular velocity with position offset
     offset_world = math.quat_apply(cam_link_quat, self.local_offset)
-    velocity_from_rotation = torch.cross(cam_link_ang_vel, offset_world)
+    velocity_from_rotation = torch.cross(cam_link_ang_vel, offset_world, dim=-1)
     cam_lin_vel = cam_link_lin_vel + velocity_from_rotation
     return cam_lin_vel, cam_ang_vel
 
