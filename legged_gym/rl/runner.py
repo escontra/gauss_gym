@@ -292,7 +292,8 @@ class Runner:
             potential_images[k] = obs_dict[self.policy_key][k]
           if self.image_encoder_enabled: # and image_encoder_obs_available:
             for k in image_encoder_cnn_keys:
-              potential_images[k] = obs_dict[self.image_encoder_key][k]
+              if k in obs_dict[self.image_encoder_key]:
+                potential_images[k] = obs_dict[self.image_encoder_key][k]
           self.recorder.record_statistics(
             self.recorder.maybe_record(self.env, image_features=potential_images),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
