@@ -13,10 +13,7 @@ class Wrapper:
     self.env = env
 
   def __len__(self):
-    return len(self.env)
-
-  def __bool__(self):
-    return bool(self.env)
+    return self.env.num_envs
 
   def __getattr__(self, name):
     if name.startswith('__'):
@@ -62,12 +59,6 @@ class ImageEncoderWrapper(Wrapper):
       self.buffer.add_buffer(
         f"{self.image_encoder_key}_hidden_states", (self.image_encoder_hidden_states,), is_hidden_state=True)
 
-  def check_image_encoder_buffer_full(self) -> Optional[experience_buffer.ExperienceBuffer]:
-    if self.curr_buffer_idx == self.buffer.horizon_length:
-      self.curr_buffer_idx = 0
-      return self.buffer
-    return None
-
   def obs_space(self):
     new_obs_space = copy.deepcopy(self.env.obs_space())
     for obs_group in self.env.obs_groups:
@@ -77,10 +68,10 @@ class ImageEncoderWrapper(Wrapper):
         ] = self.image_encoder_space
     return new_obs_space
 
-  def add_latent_to_obs_dict(self, obs_dict: Dict[str, Dict[str, torch.Tensor]]):
+  def add_latent_to_obs_dict(self, obs_dict: Dict[str, Dict[str, torch.Tensor]], latent: torch.Tensor):
     for obs_group in self.env.obs_groups:
       if observation_groups.IMAGE_ENCODER_LATENT in obs_group.observations:
-        obs_dict[obs_group.name][observation_groups.IMAGE_ENCODER_LATENT.name] = self.image_encoder_rnn_state
+        obs_dict[obs_group.name][observation_groups.IMAGE_ENCODER_LATENT.name] = latent
     return obs_dict
 
   def reset(self):
@@ -104,8 +95,7 @@ class ImageEncoderWrapper(Wrapper):
         self.image_encoder_hidden_states,
         rnn_only=True
       )
-    obs_dict = self.add_latent_to_obs_dict(obs_dict)
-    return obs_dict
+    return self.add_latent_to_obs_dict(obs_dict, self.image_encoder_rnn_state)
 
   def _check_observation_available(self, obs_dict, key: str, obs_space: Dict[str, Dict[str, space.Space]]):
     if key not in obs_dict:
@@ -114,7 +104,6 @@ class ImageEncoderWrapper(Wrapper):
       if obs_name not in obs_dict[key]:
         return False
     return True
-
 
   def step(self, actions: Dict[str, torch.tensor]):
     obs_dict, rew, done, infos = self.env.step(actions)
@@ -151,16 +140,4 @@ class ImageEncoderWrapper(Wrapper):
           infos[f'{self.image_encoder_key}_buffer'] = self.buffer
           self.curr_buffer_idx = 0
 
-    obs_dict = self.add_latent_to_obs_dict(obs_dict)
-    return obs_dict, rew, done, infos
-
-  def __len__(self):
-    return len(self.env)
-
-  def __getattr__(self, name):
-    if name.startswith('__'):
-      raise AttributeError(name)
-    try:
-      return getattr(self.env, name)
-    except AttributeError:
-      raise ValueError(name)
+    return self.add_latent_to_obs_dict(obs_dict, self.image_encoder_rnn_state), rew, done, infos
