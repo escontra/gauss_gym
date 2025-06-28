@@ -242,14 +242,14 @@ def learn_ppo(
     last_privileged_obs: Dict[str, Any],
     last_value_hidden_states: Tuple[torch.Tensor, ...],
     it: int,
-    ppo_cfg: Dict[str, Any],
+    algorithm_cfg: Dict[str, Any],
   ):
   if it == 0:
     # Skip the first gradient update to initialize the observation normalizers.
     with torch.no_grad():
       policy.update_normalizer(buffer[policy_obs_key])
       value.update_normalizer(buffer[value_obs_key])
-    return {}
+    return policy_learning_rate, value_learning_rate, {}
 
   learn_step_agg = agg.Agg()
   old_policy.load_state_dict(policy.state_dict())
@@ -259,8 +259,8 @@ def learn_ppo(
   obs_sym_groups = [policy_obs_key]
 
   for batch in buffer.reccurent_mini_batch_generator(
-    ppo_cfg["num_learning_epochs"],
-    ppo_cfg["num_mini_batches"],
+    algorithm_cfg["num_learning_epochs"],
+    algorithm_cfg["num_mini_batches"],
     last_value_items=[value, last_privileged_obs, last_value_hidden_states],
     obs_groups=obs_groups,
     hidden_states_keys=hidden_states_keys,
@@ -271,7 +271,7 @@ def learn_ppo(
     obs_sym_groups=obs_sym_groups,
     symm_key=symm_obs_key,
     symmetry_fn=symmetry_fn,
-    symmetry_flip_latents=ppo_cfg["symmetry_flip_latents"],
+    symmetry_flip_latents=algorithm_cfg["symmetry_flip_latents"],
     dones_key="dones",
     rl_keys=[
       "values", "time_outs", "rewards", "dones", "actions"
@@ -282,12 +282,12 @@ def learn_ppo(
       batch,
       value,
       value_obs_key,
-      ppo_cfg["gamma"],
-      ppo_cfg["lam"],
-      ppo_cfg["use_clipped_value_loss"],
-      ppo_cfg["clip_param"]
+      algorithm_cfg["gamma"],
+      algorithm_cfg["lam"],
+      algorithm_cfg["use_clipped_value_loss"],
+      algorithm_cfg["clip_param"]
     )
-    total_loss = ppo_cfg["value_loss_coef"] * val_loss
+    total_loss = algorithm_cfg["value_loss_coef"] * val_loss
     learn_step_agg.add(metrics)
 
     # Actor loss.
@@ -296,13 +296,13 @@ def learn_ppo(
       batch,
       policy,
       policy_obs_key,
-      ppo_cfg["symmetry"],
+      algorithm_cfg["symmetry"],
       symmetry_fn,
-      ppo_cfg["actor_loss_coefs"],
-      ppo_cfg["entropy_coefs"],
-      ppo_cfg["bound_coefs"],
-      ppo_cfg["symmetry_coefs"],
-      ppo_cfg["clip_param"],
+      algorithm_cfg["actor_loss_coefs"],
+      algorithm_cfg["entropy_coefs"],
+      algorithm_cfg["bound_coefs"],
+      algorithm_cfg["symmetry_coefs"],
+      algorithm_cfg["clip_param"],
     )
     total_loss += act_loss
     learn_step_agg.add(metrics)
@@ -318,13 +318,11 @@ def learn_ppo(
     policy_optimizer.step()
     value_optimizer.step()
 
-    del batch
-
     # Learning rate scheduler.
-    if ppo_cfg["desired_kl"] > 0.0:
-      if kls[ppo_cfg["kl_key"]] > ppo_cfg["desired_kl"] * 2.0:
+    if algorithm_cfg["desired_kl"] > 0.0:
+      if kls[algorithm_cfg["kl_key"]] > algorithm_cfg["desired_kl"] * 2.0:
         policy_learning_rate = max(1e-5, policy_learning_rate / 1.5)
-      elif kls[ppo_cfg["kl_key"]] < ppo_cfg["desired_kl"] / 2.0 and kls[ppo_cfg["kl_key"]] > 0.0:
+      elif kls[algorithm_cfg["kl_key"]] < algorithm_cfg["desired_kl"] / 2.0 and kls[algorithm_cfg["kl_key"]] > 0.0:
         policy_learning_rate = min(1e-2, policy_learning_rate * 1.5)
       for param_group in policy_optimizer.param_groups:
         param_group["lr"] = policy_learning_rate
@@ -343,12 +341,64 @@ def learn_ppo(
     policy.update_normalizer(buffer[policy_obs_key])
     value.update_normalizer(buffer[value_obs_key])
 
-  learning_rate_stats = {
-    f"{policy_obs_key}_lr": policy_learning_rate,
-    f"{value_obs_key}_lr": value_learning_rate,
-  }
+  for i, param_group in enumerate(policy_optimizer.param_groups):
+    assert isinstance(param_group["lr"], float)
+    learn_step_agg.add({f"policy/param_group_{i}_lr": param_group["lr"]})
+  for i, param_group in enumerate(value_optimizer.param_groups):
+    assert isinstance(param_group["lr"], float)
+    learn_step_agg.add({f"value/param_group_{i}_lr": param_group["lr"]})
 
-  return policy_learning_rate, value_learning_rate, {
-      **learn_step_agg.result(),
-      **learning_rate_stats,
-  }
+  return policy_learning_rate, value_learning_rate, learn_step_agg.result()
+
+
+@timer.section("learn_image_encoder")
+def learn_image_encoder(
+    buffer: experience_buffer.ExperienceBuffer,
+    image_encoder: torch.nn.Module,
+    image_encoder_optimizer: torch.optim.Optimizer,
+    image_encoder_obs_key: str,
+    value_obs_key: str,
+    symm_key: str,
+    symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
+    num_learning_epochs: int,
+    num_mini_batches: int,
+    algorithm_cfg: Dict[str, Any],
+  ):
+  learn_step_agg = agg.Agg()
+  for batch in buffer.reccurent_mini_batch_generator(
+    num_learning_epochs,
+    num_mini_batches,
+    last_value_items=None,
+    obs_groups=[image_encoder_obs_key, value_obs_key],
+    hidden_states_keys=[image_encoder_obs_key],
+    networks={},
+    networks_sym={},
+    obs_sym_groups=[image_encoder_obs_key],
+    symm_key=symm_key,
+    symmetry_fn=symmetry_fn,
+    symmetry_flip_latents=algorithm_cfg["symmetry_flip_latents"],
+    dones_key="dones",
+    rl_keys=[],
+  ):
+    # Reconstruction loss.
+    recon_loss, metrics = reconstruction_loss(
+      batch,
+      image_encoder,
+      image_encoder_obs_key,
+      algorithm_cfg["image_encoder_batch_size"],
+      algorithm_cfg["symmetry"],
+      symmetry_fn,
+    )
+    learn_step_agg.add(metrics)
+    image_encoder_optimizer.zero_grad()
+    recon_loss.backward()
+    torch.nn.utils.clip_grad_norm_(
+      image_encoder.parameters(),
+      1.0)
+    image_encoder_optimizer.step()
+
+  for i, param_group in enumerate(image_encoder_optimizer.param_groups):
+    assert isinstance(param_group["lr"], float)
+    learn_step_agg.add({f"image_encoder/param_group_{i}_lr": param_group["lr"]})
+
+  return learn_step_agg.result()

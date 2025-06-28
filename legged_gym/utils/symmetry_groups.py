@@ -1,3 +1,4 @@
+from typing import List, Dict
 import torch
 from typing import Callable
 import dataclasses
@@ -13,11 +14,42 @@ class SymmetryModifier:
   def __call__(self, env, obs):
     return self.symmetry_fn(env, obs)
 
+
+@dataclasses.dataclass(frozen=True)
+class SymmetryGroup:
+  name: str
+  symmetries: List[SymmetryModifier]
+
+
+def symmetry_groups_from_config(config: Dict) -> List[SymmetryGroup]:
+  symmetry_groups = []
+  for name, cfg in config.items():
+    symmetries = [eval(obs_name) for obs_name in cfg["symmetries"]]
+    symmetry_groups.append(
+      SymmetryGroup(
+        name=name,
+        symmetries=symmetries
+      )
+    )
+  return symmetry_groups
+
+
+def symmetry_dict_from_config(config: Dict) -> Dict[str, Dict[str, SymmetryModifier]]:
+  symmetry_dict = {}
+  for name, cfg in config.items():
+    symmetry_dict[name] = {}
+    for symmetry_cls in cfg["symmetries"]:
+      symmetry = eval(symmetry_cls)
+      symmetry_dict[name][symmetry.observation.name] = symmetry
+  return symmetry_dict
+
+
 def base_lin_vel_symmetry(env, obs):
   x_vel = obs[..., 0]
   y_vel = obs[..., 1]
   z_vel = obs[..., 2]
   return torch.stack([x_vel, -y_vel, z_vel], dim=-1)
+
 
 def base_ang_vel_symmetry(env, obs):
   roll_rate = obs[..., 0]
@@ -88,6 +120,7 @@ def t1_dof_vel_symmetry(env, obs):
 
 def t1_actions_symmetry(env, obs):
   return t1_joint_symmetry(env, obs)
+
 
 def t1_stiffness_symmetry(env, obs):
   return t1_joint_symmetry(env, obs, use_multipliers=False)

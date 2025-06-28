@@ -281,9 +281,7 @@ class GaussianSplattingRenderer():
         """
 
         if self.apply_domain_rand and self.env.common_step_counter % int(self.camera_refresh_interval_s / self.env.dt) == 0:
-          print('Resampling refresh duration...')
           self._maybe_sample_camera_params()
-          print(f'New refresh duration: {self.refresh_duration_s_sample}')
 
         cam_trans, cam_quat = self.scene_manager.get_cam_pose_world_frame()
         cam_trans += self.camera_pos_delta_sample

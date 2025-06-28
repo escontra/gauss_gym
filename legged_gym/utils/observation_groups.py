@@ -31,7 +31,7 @@ class ObservationGroup:
   sync_latency: Union[List[Observation], None] = None
 
 
-def observation_groups_from_dict(config: Dict) -> List[ObservationGroup]:
+def observation_groups_from_config(config: Dict) -> List[ObservationGroup]:
   observation_groups = []
   for name, cfg in config.items():
     observations = [eval(obs_name) for obs_name in cfg['observations']]

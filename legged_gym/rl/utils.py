@@ -1,7 +1,35 @@
+import os
+import random
 from typing import List, Tuple, Optional
 import numpy as np
 import torch
 import torch.utils._pytree as pytree
+
+from legged_gym import utils
+
+
+class SetpointScheduler:
+  def __init__(self, warmup_steps: int, val_warmup, val_after):
+    self.val_warmup = val_warmup
+    self.val_after = val_after
+    self.warmup_steps = warmup_steps
+
+  def __call__(self, step: int):
+    if step < self.warmup_steps:
+      return self.val_warmup
+    return self.val_after
+
+def set_seed(seed):
+  if seed == -1:
+    seed = np.random.randint(0, 10000)
+  utils.print("Setting RL seed: {}".format(seed))
+
+  random.seed(seed)
+  np.random.seed(seed)
+  torch.manual_seed(seed)
+  os.environ["PYTHONHASHSEED"] = str(seed)
+  torch.cuda.manual_seed(seed)
+  torch.cuda.manual_seed_all(seed)
 
 
 def broadcast_right(y: torch.Tensor, x: torch.Tensor):

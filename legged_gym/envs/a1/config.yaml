@@ -52,7 +52,7 @@ observations:
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
-      STIFFNESS, DAMPING, MOTOR_STRENGTH
+      STIFFNESS, DAMPING, MOTOR_STRENGTH, IMAGE_ENCODER_LATENT
     ]
   policy:
     add_noise: True
@@ -60,7 +60,7 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS #, RAY_CAST
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS, IMAGE_ENCODER_LATENT
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -467,34 +467,27 @@ sim:
 
 
 image_encoder:
-  enabled: True
-  freeze_encoder: False
-  num_steps_per_env: 24
-  max_batch_size: 48
-  mirror_latents_during_inference: False
   class_name: RecurrentCNNModel
-  learning_rate: 1.e-3
+  freeze_encoder: False
   obs_key: image_encoder
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  voxel_height_levels: 24 # TODO: cleanup
+  voxel_height_levels: 24
   train_rate_scheduler:
     warmup_steps: 100
     train_every_warmup: -1
-    train_every_after: -1 # 10 before
+    train_every_after: -1
   batch_scheduler:
     warmup_steps: 100
-    num_learning_epochs_warmup: 5 # 5 before
-    num_mini_batches_warmup: 14 # 4 before
-    num_learning_epochs_after: 2 # 5 before
-    num_mini_batches_after: 4 # 4 before
-  
+    num_learning_epochs_warmup: 5
+    num_mini_batches_warmup: 14
+    num_learning_epochs_after: 2
+    num_mini_batches_after: 4
   learning_rate_scheduler:
-    class_name: MultiStepLR
-    params:
-      milestones: [100]
-      gamma: 0.1
+    warmup_steps: 100
+    learning_rate_warmup: 1.e-3
+    learning_rate_after: 1.e-4
   params:
     layer_activation: silu
     recurrent_state_size: 512
@@ -511,8 +504,6 @@ policy:
   project_image_encoder_latent: True
   project_image_encoder_latent_dim: 32
   learning_rate: 1.e-5
-  desired_kl: 0.01
-  kl_key: actions
   obs_key: policy
   params:
     layer_activation: "silu"
@@ -573,6 +564,8 @@ algorithm:
     actions: -0.01
     stiffness: -0.01
     damping: -0.01
+  desired_kl: 0.01
+  kl_key: actions
   symmetry: True
   symmetry_flip_latents: True
   symmetry_coefs:
@@ -586,6 +579,8 @@ algorithm:
   clip_param: 0.2
   bound_coefs:
     actions: 1.0
+  train_image_encoder: True
+  image_encoder_batch_size: 48
 
 runner:
   record_video: True

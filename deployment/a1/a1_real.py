@@ -210,7 +210,7 @@ class UnitreeA1Real:
         self.gravity_vec = np.zeros((self.num_envs, 3), dtype=np.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
 
-        self.observation_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
+        self.observation_groups = observation_groups.observation_groups_from_config(self.cfg["observations"])
 
         if not isinstance(self.cfg["control"]["damping"]["joint"], (list, tuple)):
             self.cfg["control"]["damping"]["joint"] = [self.cfg["control"]["damping"]["joint"]] * 12

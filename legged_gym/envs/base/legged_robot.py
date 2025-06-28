@@ -56,15 +56,15 @@ class LeggedRobot(base_task.BaseTask):
             "base_height_raycaster": sensors.LinkHeightSensor(self, [self.cfg["asset"]["base_link_name"]], color=(0.5, 0.0, 0.5)),
             "hip_height_raycaster": sensors.LinkHeightSensor(self, self.cfg["asset"]["hip_link_names"], color=(1.0, 0.41, 0.71)),
             "foot_contact_sensor": sensors.FootContactSensor(self)}
-        obs_groups = observation_groups.observation_groups_from_dict(self.cfg["observations"])
+        self.obs_groups = observation_groups.observation_groups_from_config(self.cfg["observations"])
 
         # Maybe add renderer to sensors.
-        all_observations = list(chain.from_iterable(obs_group.observations for obs_group in obs_groups))
+        all_observations = list(chain.from_iterable(obs_group.observations for obs_group in self.obs_groups))
         need_renderer = self.cfg["env"]["force_renderer"] or observation_groups.CAMERA_IMAGE in all_observations
         if need_renderer:
             self.sensors["gs_renderer"] = self.scene_manager.renderer
 
-        self.obs_manager = observation_manager.ObsManager(self, obs_groups)
+        self.obs_manager = observation_manager.ObsManager(self, self.obs_groups)
 
 
     def clip_position_action_by_torque_limit(self, actions_scaled, dof_stiffness, dof_damping):
@@ -105,12 +105,33 @@ class LeggedRobot(base_task.BaseTask):
             )
         return act_space
 
+    def scale_actions(self, actions):
+      # Assume actions that need scaling are in the range [-1, 1].
+      actions_env = {}
+      for k, v in self.action_space().items():
+        action = actions[k]
+        low = v.low.clone().detach().to(self.device)[None]
+        high = v.high.clone().detach().to(self.device)[None]
+        needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
+        if needs_scaling:
+          scaled_action = (action + 1) / 2 * (high - low) + low
+          scaled_action = torch.clamp(scaled_action, low, high)
+          actions_env[k] = scaled_action
+        else:
+          actions_env[k] = action
+      return actions_env
+
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
 
         Args:
             actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
         """
+        if isinstance(actions, torch.Tensor):
+          actions = {'actions': actions}
+
+        actions = self.scale_actions(actions)
+
         if isinstance(actions, dict):
             act = actions['actions']
             if 'stiffness' in actions:

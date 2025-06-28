@@ -153,7 +153,7 @@ def main(argv=None):
 
     runner = DeploymentRunner(deploy_cfg, cfg)
     runner.load(log_root)
-    obs_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
+    obs_groups = observation_groups.observation_groups_from_config(cfg["observations"])
     use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"][cfg["policy"]["obs_key"]]["observations"]
 
     print("Starting MuJoCo viewer...")

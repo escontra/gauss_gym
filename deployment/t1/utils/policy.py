@@ -66,7 +66,7 @@ class Policy:
             if cfg["runner"]["resume"]:
                 assert cfg["runner"]["load_run"] != "", "Must specify load_run when resuming."
                 self.runner.load(log_root)
-            self.observation_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
+            self.observation_groups = observation_groups.observation_groups_from_config(cfg["observations"])
         except Exception as e:
             print(f"Failed to start runner: {e}")
             raise

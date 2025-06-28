@@ -151,7 +151,7 @@ class ExperienceBuffer:
       networks: Dict[str, torch.nn.Module],
       networks_sym: Dict[str, torch.nn.Module],
       obs_sym_groups: List[str],
-      symm_key: str,
+      symm_key: Optional[str],
       symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
       symmetry_flip_latents: bool,
       dones_key: str,
@@ -160,7 +160,7 @@ class ExperienceBuffer:
 
     # Symmetry-augmented observations computed during the environment step.
     symms = {}
-    if symm_key in self.tensor_dict and self.tensor_dict[symm_key]:
+    if symm_key is not None and symm_key in self.tensor_dict and self.tensor_dict[symm_key]:
       symms, _, _, _ = self._split_and_pad_obs(symm_key, dones_key)
 
     obs, obs_sym, hidden_states, last_was_done = {}, {}, {}, None
