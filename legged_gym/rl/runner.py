@@ -606,14 +606,16 @@ class Runner:
           all_params_chain = itertools.chain(self.policy.parameters(), self.value.parameters())
           if self.image_encoder_enabled:
             all_params_chain = itertools.chain(all_params_chain, self.image_encoder.parameters())
-          for param in all_params_chain:
+          
+          all_params_list = list(all_params_chain)
+          for param in all_params_list:
             if param.grad is not None:
               all_grads_list.append(param.grad.view(-1))
           all_grads = torch.cat(all_grads_list)
           # sum grads on each gpu
           torch_distributed.all_reduce(all_grads, op=torch_distributed.ReduceOp.SUM)
           offset = 0
-          for param in all_params_chain:
+          for param in all_params_list:
             if param.grad is not None:
               # copy data back from shared buffer
               param.grad.data.copy_(
