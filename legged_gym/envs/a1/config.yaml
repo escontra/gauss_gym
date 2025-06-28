@@ -474,16 +474,13 @@ image_encoder:
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
   voxel_height_levels: 24
-  train_rate_scheduler:
+  num_updates_range: [1, 100]
+  init_num_updates: 20
+  num_steps_per_env: 10
+  train_ratio_scheduler:
     warmup_steps: 100
-    train_every_warmup: -1
-    train_every_after: -1
-  batch_scheduler:
-    warmup_steps: 100
-    num_learning_epochs_warmup: 5
-    num_mini_batches_warmup: 14
-    num_learning_epochs_after: 2
-    num_mini_batches_after: 4
+    train_ratio_warmup: 1.0
+    train_ratio_after: 0.1
   learning_rate_scheduler:
     warmup_steps: 100
     learning_rate_warmup: 1.e-3

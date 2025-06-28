@@ -1,18 +1,34 @@
 from typing import Any, Dict
+import collections
 import time
 import torch
 import torch.utils._pytree as pytree
 import pathlib
 import copy
+import numpy as np
 
 from legged_gym.rl import experience_buffer, loss, recorder
 import legged_gym.rl.utils as rl_utils
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym import utils
-from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space, visualization, wrappers
+from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space, visualization, wrappers, math
 
 torch.backends.cuda.matmul.allow_tf32 = True
+
+
+class RunningSumWindow:
+    def __init__(self, k):
+        self.k = k
+        self.window = collections.deque(maxlen=k)
+        self.running_sum = 0
+
+    def add(self, num):
+        self.window.append(num)
+
+    @property
+    def sum(self):
+        return np.sum(self.window)
 
 
 class Runner:
@@ -113,21 +129,10 @@ class Runner:
 
     # Optimizers.
     if self.image_encoder_enabled:
-      self.train_image_encoder = rl_utils.SetpointScheduler(
-        warmup_steps=self.cfg["image_encoder"]["train_rate_scheduler"]["warmup_steps"],
-        val_warmup=when.Every(self.cfg["image_encoder"]["train_rate_scheduler"]["train_every_warmup"]),
-        val_after=when.Every(self.cfg["image_encoder"]["train_rate_scheduler"]["train_every_after"])
-      )
-      self.image_encoder_batch_scheduler = rl_utils.SetpointScheduler(
-        warmup_steps=self.cfg["image_encoder"]["batch_scheduler"]["warmup_steps"],
-        val_warmup={
-          "num_learning_epochs": self.cfg["image_encoder"]["batch_scheduler"]["num_learning_epochs_warmup"],
-          "num_mini_batches": self.cfg["image_encoder"]["batch_scheduler"]["num_mini_batches_warmup"]
-        },
-        val_after={
-          "num_learning_epochs": self.cfg["image_encoder"]["batch_scheduler"]["num_learning_epochs_after"],
-          "num_mini_batches": self.cfg["image_encoder"]["batch_scheduler"]["num_mini_batches_after"]
-        }
+      self.train_ratio_scheduler = rl_utils.SetpointScheduler(
+        warmup_steps=self.cfg["image_encoder"]["train_ratio_scheduler"]["warmup_steps"],
+        val_warmup=self.cfg["image_encoder"]["train_ratio_scheduler"]["train_ratio_warmup"],
+        val_after=self.cfg["image_encoder"]["train_ratio_scheduler"]["train_ratio_after"]
       )
       self.image_encoder_learning_rate_scheduler = rl_utils.SetpointScheduler(
         warmup_steps=self.cfg["image_encoder"]["learning_rate_scheduler"]["warmup_steps"],
@@ -242,7 +247,7 @@ class Runner:
     }
     if self.image_encoder_enabled:
       save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
-      self.env.init_image_encoder_replay_buffer(self.cfg["runner"]["num_steps_per_env"])
+      self.env.init_image_encoder_replay_buffer(self.cfg["image_encoder"]["num_steps_per_env"])
     self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
@@ -284,8 +289,12 @@ class Runner:
       image_encoder_cnn_keys = self.image_encoder.cnn_keys or []
       potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in image_encoder_cnn_keys})
 
+    num_policy_updates = RunningSumWindow(2 * self.cfg["runner"]["num_steps_per_env"])
+    num_encoder_updates = RunningSumWindow(2 * self.cfg["runner"]["num_steps_per_env"])
+    curr_num_updates = self.cfg["image_encoder"]["init_num_updates"]
     for it in range(num_learning_iterations):
       start = time.time()
+      updated_encoder = False
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
           for k in policy_cnn_keys:
@@ -332,10 +341,10 @@ class Runner:
 
         if self.image_encoder_enabled:
           image_encoder_buffer = infos.pop(f'{self.image_encoder_key}_buffer', None)
-          if image_encoder_buffer is not None and self.train_image_encoder(it)(it):
+          if image_encoder_buffer:
             for param_group in self.image_encoder_optimizer.param_groups:
               param_group['lr'] = self.image_encoder_learning_rate_scheduler(it)
-            batch_params = self.image_encoder_batch_scheduler(it)
+            num_learning_epochs, num_mini_batches = math.nearest_factors(curr_num_updates)
             self._set_train_mode()
             image_encoder_metrics = loss.learn_image_encoder(
               image_encoder_buffer,
@@ -345,11 +354,14 @@ class Runner:
               self.value_key,
               None,
               self._get_symmetry_fn,
-              **batch_params,
+              num_learning_epochs=num_learning_epochs,
+              num_mini_batches=num_mini_batches,
               algorithm_cfg=self.cfg["algorithm"],
             )
             self.learn_agg.add(image_encoder_metrics)
             self._set_eval_mode()
+            num_encoder_updates.add(num_learning_epochs * num_mini_batches)
+            updated_encoder = True
 
         policy_hidden_states = self.policy.reset(done, policy_hidden_states)
         value_hidden_states = self.value.reset(done, value_hidden_states)
@@ -372,6 +384,9 @@ class Runner:
             discount_factor_dict={"return": self.cfg["algorithm"]["gamma"]},
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
+      if not updated_encoder:
+        num_encoder_updates.add(0)
+      updated_encoder = False
 
       self._set_train_mode()
       self.policy_learning_rate, self.value_learning_rate, learn_stats = loss.learn_ppo(
@@ -392,8 +407,27 @@ class Runner:
         it,
         self.cfg["algorithm"],
       )
+      num_policy_updates.add(
+        self.cfg["algorithm"]["num_learning_epochs"] * self.cfg["algorithm"]["num_mini_batches"]
+      )
       self.learn_agg.add(learn_stats)
       self._set_eval_mode()
+
+      curr_train_ratio = num_encoder_updates.sum / num_policy_updates.sum
+      desired_train_ratio = self.train_ratio_scheduler(it)
+      error = desired_train_ratio - curr_train_ratio
+      k = 0.05  # proportional gain — tune this!
+      delta = curr_num_updates * k * error
+      curr_num_updates = curr_num_updates + delta
+      curr_num_updates = max(
+        self.cfg["image_encoder"]["num_updates_range"][0],
+        curr_num_updates
+      )
+      curr_num_updates = min(
+        self.cfg["image_encoder"]["num_updates_range"][1],
+        curr_num_updates)
+
+      self.learn_agg.add({'train_ratio': curr_train_ratio})
 
       if self.should_log(it):
         with timer.section("logger_save"):

@@ -4,6 +4,17 @@ import numpy as np
 from typing import Union, Optional, Dict, Any, Tuple
 
 
+def nearest_factors(n):
+    n = int(n)
+    a = int(np.sqrt(n))
+    for i in range(a, 0, -1):
+        if n % i == 0:
+            larger = max(i, n // i)
+            smaller = min(i, n // i)
+            return (int(smaller), int(larger))
+    return (1, int(n))  # Fallback (n is prime)
+
+
 @torch.jit.script
 def quat_conjugate(a):
     shape = a.shape
