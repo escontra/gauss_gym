@@ -40,8 +40,8 @@ env:
 
 observations:
   image_encoder:
-    add_noise: False
-    add_latency: False
+    add_noise: True
+    add_latency: True
     latency_resampling_interval_s: 3.0
     observations: [
       CAMERA_IMAGE, PROJECTED_GRAVITY #, DOF_POS, DOF_VEL, ACTIONS
@@ -207,27 +207,27 @@ domain_rand:
   # Not to be confused with the sythetic refresh_duration used in
   # observation_manager.
   refresh_duration:
-    apply: False
+    apply: True
     range: [0.05, 0.15]
     operation: "additive"
     distribution: "uniform"
   focal_length:
-    apply: False
+    apply: True
     range: [0.0, 8.0]
     operation: "additive"
     distribution: "gaussian"
   principal_point:
-    apply: False
+    apply: True
     range: [0.0, 2.0]
     operation: "additive"
     distribution: "gaussian"
   camera_pos:
-    apply: False
+    apply: True
     range: [-0.04, 0.04]
     operation: "additive"
     distribution: "uniform"
   camera_rot:
-    apply: False
+    apply: True
     range: [-0.1, 0.1]
     operation: "additive"
     distribution: "uniform"
