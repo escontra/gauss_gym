@@ -2,34 +2,64 @@ from typing import Dict, Any, Tuple, Callable
 import torch
 import torch.utils._pytree as pytree
 
-from legged_gym.rl import utils
+from legged_gym.rl import experience_buffer, utils
 from legged_gym.utils import voxel, agg, timer
-from legged_gym.rl import experience_buffer
+
+
+_SYMMETRY_FN = Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]]
 
 
 def value_loss(
     batch: experience_buffer.MiniBatch,
-    value_network,
-    value_obs_key,
-    gamma,
-    lam,
-    use_clipped_value_loss,
-    clip_param): 
+    value_network: torch.nn.Module,
+    value_obs_key: str,
+    symmetry_augmentation: bool,
+    gamma: float,
+    lam: float,
+    use_clipped_value_loss: bool,
+    clip_param: float) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+
+  if symmetry_augmentation:
+    batch_value_obs = utils.tree_cat(
+      batch.obs[value_obs_key],
+      batch.obs_sym[value_obs_key],
+      dim=1)
+    batch_hidden_states = utils.tree_cat(
+      batch.hidden_states[value_obs_key],
+      batch.hidden_states_sym[value_obs_key],
+      dim=1
+    )
+    batch_masks = batch.rl_values["masks"].repeat(1, 2)
+    batch_time_outs = batch.rl_values["time_outs"].repeat(1, 2)
+    batch_dones = batch.rl_values["dones"].repeat(1, 2)
+    batch_last_values = batch.rl_values["last_value"].squeeze(-1).repeat(1, 2)
+    batch_rewards = batch.rl_values["rewards"].repeat(1, 2)
+    num_augs = 2
+  else:
+    batch_value_obs = batch.obs[value_obs_key]
+    batch_hidden_states = batch.hidden_states[value_obs_key]
+    batch_masks = batch.rl_values["masks"]
+    batch_time_outs = batch.rl_values["time_outs"]
+    batch_dones = batch.rl_values["dones"]
+    batch_last_values = batch.rl_values["last_value"].squeeze(-1)
+    batch_rewards = batch.rl_values["rewards"]
+    num_augs = 1
+
   values, _, _ = value_network(
-    batch.obs[value_obs_key],
-    masks=batch.rl_values["masks"],
-    hidden_states=batch.hidden_states[value_obs_key]
+    batch_value_obs,
+    masks=batch_masks,
+    hidden_states=batch_hidden_states
   )
   # Compute returns and advantages.
   with torch.no_grad():
-    rewards = batch.rl_values["rewards"].clone()
+    rewards = batch_rewards.clone()
     value_preds = values['value'].pred().squeeze(-1)
-    rewards[batch.rl_values["time_outs"]] = value_preds[batch.rl_values["time_outs"]]
+    rewards[batch_time_outs] = value_preds[batch_time_outs]
     advantages = utils.discount_values(
       rewards,
-      batch.rl_values["dones"] | batch.rl_values["time_outs"],
+      batch_dones | batch_time_outs,
       value_preds,
-      batch.rl_values["last_value"].squeeze(-1),
+      batch_last_values,
       gamma,
       lam,
     )
@@ -48,41 +78,73 @@ def value_loss(
   else:
     value_loss = torch.mean(values['value'].loss(returns.unsqueeze(-1)))
   metrics = {'value_loss': value_loss.item()}
-  return value_loss, advantages, metrics
+  unpadded_batch_size = advantages.shape[1]
+  unpadded_batch_size_orig = unpadded_batch_size // num_augs
+  return value_loss, advantages[:, :unpadded_batch_size_orig], metrics
 
 
 def surrogate_loss(
-  old_actions_log_prob, actions_log_prob, advantages, e_clip=0.2
-):
+  old_actions_log_prob: torch.Tensor,
+  actions_log_prob: torch.Tensor,
+  advantages: torch.Tensor,
+  e_clip: float = 0.2
+) -> torch.Tensor:
   ratio = torch.exp(actions_log_prob - old_actions_log_prob)
   surrogate = -advantages * ratio
   surrogate_clipped = -advantages * torch.clamp(
     ratio, 1.0 - e_clip, 1.0 + e_clip
   )
-  surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
+  surrogate_loss = torch.max(surrogate, surrogate_clipped)
   return surrogate_loss
 
 
 def actor_loss(
-    advantages,
+    advantages: torch.Tensor,
     batch: experience_buffer.MiniBatch,
-    policy_network,
-    policy_obs_key,
-    symmetry,
-    symmetry_fn,
-    actor_loss_coefs,
-    entropy_coefs,
-    bound_coefs,
-    symmetry_coefs,
-    clip_param,
-):
+    policy_network: torch.nn.Module,
+    policy_obs_key: str,
+    symmetry_loss: bool,
+    symmetry_augmentation: bool,
+    symmetry_fn: _SYMMETRY_FN,
+    actor_loss_coefs: Dict[str, float],
+    entropy_coefs: Dict[str, float],
+    bound_coefs: Dict[str, float],
+    symmetry_coefs: Dict[str, float],
+    clip_param: float,
+) -> Tuple[torch.Tensor, Dict[str, float], Dict[str, float]]:
+
+  if symmetry_augmentation:
+    num_augs = 2
+    batch_policy_obs = utils.tree_cat(
+      batch.obs[policy_obs_key],
+      batch.obs_sym[policy_obs_key],
+      dim=1)
+    batch_hidden_states = utils.tree_cat(
+      batch.hidden_states[policy_obs_key],
+      batch.hidden_states_sym[policy_obs_key],
+      dim=1)
+    batch_actions = utils.tree_cat(
+      batch.rl_values["actions"],
+      {k: symmetry_fn("actions", k)(v)
+       for k, v in batch.rl_values["actions"].items()},
+      dim=1)
+    batch_masks = batch.rl_values["masks"].repeat(1, 2)
+    batch_advantages = advantages.repeat(1, 2)
+  else:
+    num_augs = 1
+    batch_policy_obs = batch.obs[policy_obs_key]
+    batch_hidden_states = batch.hidden_states[policy_obs_key]
+    batch_actions = batch.rl_values["actions"]
+    batch_masks = batch.rl_values["masks"]
+    batch_advantages = advantages
+
   # Actor loss.
   dists, _, _ = policy_network(
-    batch.obs[policy_obs_key],
-    masks=batch.rl_values["masks"],
-    hidden_states=batch.hidden_states[policy_obs_key]
+    batch_policy_obs,
+    masks=batch_masks,
+    hidden_states=batch_hidden_states
   )
-  if symmetry:
+  if symmetry_loss and not symmetry_augmentation:
     dists_sym, _, _ = policy_network(
       batch.obs_sym[policy_obs_key],
       masks=batch.rl_values["masks"],
@@ -94,22 +156,32 @@ def actor_loss(
   losses = []
   for name, dist in dists.items():
     actor_loss_coef = actor_loss_coefs[name]
-    actions_log_prob = dist.logp(batch.rl_values["actions"][name].detach()).sum(dim=-1)
+    actions_log_prob = dist.logp(batch_actions[name].detach()).sum(dim=-1)
+    unpadded_batch_size_orig = actions_log_prob.shape[1] // num_augs
     with torch.no_grad():
-      old_actions_log_prob_batch = batch.network_batch[policy_obs_key][name].logp(
-        batch.rl_values["actions"][name]).sum(dim=-1)
+      # Compute old actions log prob for original batch.
+      old_dist = batch.network_batch[policy_obs_key][name].repeat(num_augs, dim=1)
+      old_actions_log_prob_batch = old_dist.logp(batch_actions[name].detach()).sum(dim=-1)
+      old_actions_log_prob_batch = old_actions_log_prob_batch[:, :unpadded_batch_size_orig]
+      old_actions_log_prob_batch = old_actions_log_prob_batch.repeat(1, num_augs)
+
     actor_loss = surrogate_loss(
-      old_actions_log_prob_batch, actions_log_prob, advantages,
+      old_actions_log_prob_batch, actions_log_prob, batch_advantages,
       e_clip=clip_param
-    )
+    ).mean()
     losses.append(actor_loss_coef * actor_loss)
     metrics[f'actor_loss_{name}'] = actor_loss.item()
-    klm = torch.mean(torch.sum(dist.kl(batch.network_batch[policy_obs_key][name]), axis=-1)).item()
+
+    # Compute KL for original batch.
+    kl = torch.sum(dist.kl(old_dist), axis=-1)
+    kl = kl[:, :unpadded_batch_size_orig] # TODO: this matters.
+    klm = torch.mean(kl).item()
     kl_means[name] = klm
     metrics[f'kl_mean_{name}'] = klm
 
-    # Entropy loss.
+    # Entropy loss. We only compute entropy for the original batch.
     entropy = dist.entropy().sum(dim=-1)
+    entropy = entropy[:, :unpadded_batch_size_orig]
     metrics[f'entropy_{name}'] = entropy.mean().item()
     if name in entropy_coefs:
       losses.append(actor_loss_coef * entropy_coefs[name] * entropy.mean())
@@ -118,18 +190,21 @@ def actor_loss(
     # Bound loss.
     if name in bound_coefs:
       bound_loss = (
-        torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
-        + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
+        torch.clip(dist.pred()[:, :unpadded_batch_size_orig] - 1.0, min=0.0).square().mean()
+        + torch.clip(dist.pred()[:, :unpadded_batch_size_orig] + 1.0, max=0.0).square().mean()
       )
       losses.append(actor_loss_coef * bound_coefs[name] * bound_loss)
       metrics[f'bound_loss_{name}'] = bound_loss.item()
 
-
-    if symmetry and name in symmetry_coefs:
+    if symmetry_loss and name in symmetry_coefs:
       # Symmetry loss.
-      dist_act_sym = symmetry_fn("actions", name)(dist.pred())
-      symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
-      # symmetry_loss = torch.mean(dists_sym[name].loss(dist_act_sym.detach()))
+      if symmetry_augmentation:
+        dist_act_sym = symmetry_fn("actions", name)(dist.pred()[:, :unpadded_batch_size_orig])
+        dist_sym_act = dist.pred()[:, unpadded_batch_size_orig:]
+      else:
+        dist_act_sym = symmetry_fn("actions", name)(dist.pred())
+        dist_sym_act = dists_sym[name].pred()
+      symmetry_loss = torch.nn.MSELoss()(dist_sym_act, dist_act_sym.detach())
       metrics[f'symmetry_loss_{name}'] = symmetry_loss.item()
 
       losses.append(actor_loss_coef * symmetry_coefs[name] * symmetry_loss.mean())
@@ -139,11 +214,11 @@ def actor_loss(
 
 def reconstruction_loss(
   batch: experience_buffer.MiniBatch,
-  image_encoder_network,
-  image_encoder_obs_key,
-  max_batch_size,
-  symmetry,
-  symmetry_fn,
+  image_encoder_network: torch.nn.Module,
+  image_encoder_obs_key: str,
+  max_batch_size: int,
+  symmetry_augmentation: bool,
+  symmetry_fn: _SYMMETRY_FN,
 ):
   orig_batch_size = batch.rl_values["masks"].shape[1]
   if max_batch_size < orig_batch_size:
@@ -238,7 +313,7 @@ def learn_ppo(
     policy_obs_key: str,
     value_obs_key: str,
     symm_obs_key: str,
-    symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
+    symmetry_fn: _SYMMETRY_FN,
     last_privileged_obs: Dict[str, Any],
     last_value_hidden_states: Tuple[torch.Tensor, ...],
     it: int,
@@ -256,7 +331,12 @@ def learn_ppo(
 
   obs_groups = [policy_obs_key, value_obs_key]
   hidden_states_keys = [policy_obs_key, value_obs_key]
-  obs_sym_groups = [policy_obs_key]
+  obs_sym_groups = []
+  if algorithm_cfg["symmetry_augmentation"]:
+    obs_sym_groups.append(policy_obs_key)
+    obs_sym_groups.append(value_obs_key)
+  elif algorithm_cfg["symmetry_loss"]:
+    obs_sym_groups.append(policy_obs_key)
 
   for batch in buffer.reccurent_mini_batch_generator(
     algorithm_cfg["num_learning_epochs"],
@@ -282,6 +362,7 @@ def learn_ppo(
       batch,
       value,
       value_obs_key,
+      algorithm_cfg["symmetry_augmentation"],
       algorithm_cfg["gamma"],
       algorithm_cfg["lam"],
       algorithm_cfg["use_clipped_value_loss"],
@@ -296,7 +377,8 @@ def learn_ppo(
       batch,
       policy,
       policy_obs_key,
-      algorithm_cfg["symmetry"],
+      algorithm_cfg["symmetry_loss"],
+      algorithm_cfg["symmetry_augmentation"],
       symmetry_fn,
       algorithm_cfg["actor_loss_coefs"],
       algorithm_cfg["entropy_coefs"],
@@ -359,7 +441,7 @@ def learn_image_encoder(
     image_encoder_obs_key: str,
     value_obs_key: str,
     symm_key: str,
-    symmetry_fn: Callable[[str, str], Callable[[torch.Tensor], torch.Tensor]],
+    symmetry_fn: _SYMMETRY_FN,
     num_learning_epochs: int,
     num_mini_batches: int,
     algorithm_cfg: Dict[str, Any],
@@ -386,7 +468,7 @@ def learn_image_encoder(
       image_encoder,
       image_encoder_obs_key,
       algorithm_cfg["image_encoder_batch_size"],
-      algorithm_cfg["symmetry"],
+      algorithm_cfg["symmetry_augmentation"],
       symmetry_fn,
     )
     learn_step_agg.add(metrics)

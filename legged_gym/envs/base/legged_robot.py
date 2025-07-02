@@ -548,20 +548,20 @@ class LeggedRobot(base_task.BaseTask):
         for j in range(self.num_bodies):
             if j == self.base_link_index:
                 if self.cfg["domain_rand"]["base_com_x"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-                    props[j].com.x, self.base_mass_scaled[env_id, 0] = math.apply_randomization(
-                        props[j].com.x, self.cfg["domain_rand"]["base_com_x"], return_noise=True
+                    props[j].com.x = self.base_mass_scaled[env_id, 0] = math.apply_randomization(
+                        props[j].com.x, self.cfg["domain_rand"]["base_com_x"]
                     )
                 if self.cfg["domain_rand"]["base_com_y"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-                    props[j].com.y, self.base_mass_scaled[env_id, 1] = math.apply_randomization(
-                        props[j].com.y, self.cfg["domain_rand"]["base_com_y"], return_noise=True
+                    props[j].com.y = self.base_mass_scaled[env_id, 1] = math.apply_randomization(
+                        props[j].com.y, self.cfg["domain_rand"]["base_com_y"]
                     )
                 if self.cfg["domain_rand"]["base_com_z"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-                    props[j].com.z, self.base_mass_scaled[env_id, 2] = math.apply_randomization(
-                        props[j].com.z, self.cfg["domain_rand"]["base_com_z"], return_noise=True
+                    props[j].com.z = self.base_mass_scaled[env_id, 2] = math.apply_randomization(
+                        props[j].com.z, self.cfg["domain_rand"]["base_com_z"]
                     )
                 if self.cfg["domain_rand"]["base_mass"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
-                    props[j].mass, self.base_mass_scaled[env_id, 3] = math.apply_randomization(
-                        props[j].mass, self.cfg["domain_rand"]["base_mass"], return_noise=True
+                    props[j].mass = self.base_mass_scaled[env_id, 3] = math.apply_randomization(
+                        props[j].mass, self.cfg["domain_rand"]["base_mass"]
                     )
                     props[j].invMass = 1.0 / props[j].mass
             else:
@@ -873,6 +873,8 @@ class LeggedRobot(base_task.BaseTask):
         # reward episode sums
         self.episode_sums = {name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
                              for name in self.reward_names}
+        if "termination" in reward_dict:
+          self.episode_sums["termination"] = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
 
     def deploy_config(self):
         """Useful information for deployment scripts."""
@@ -950,10 +952,10 @@ class LeggedRobot(base_task.BaseTask):
 
         self.num_actions = self.num_dofs
 
-        hip_names = front_hip_names + rear_hip_names
-        if len(hip_names) > 0:
-            self.hip_indices = torch.zeros(len(hip_names), dtype=torch.long, device=self.device, requires_grad=False)
-            for i, name in enumerate(hip_names):
+        self.hip_names = front_hip_names + rear_hip_names
+        if len(self.hip_names) > 0:
+            self.hip_indices = torch.zeros(len(self.hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+            for i, name in enumerate(self.hip_names):
                 self.hip_indices[i] = self.gym.find_asset_dof_index(self.robot_asset, name)
 
         self.feet_indices = torch.zeros(len(self.feet_names), dtype=torch.long, device=self.device, requires_grad=False)
@@ -1169,8 +1171,10 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_torques(self):
         # Penalize torques
         return torch.norm(self.torques, p=2, dim=-1) + self.torques.abs().sum(dim=-1)
-        # return torch.sqrt(torch.sum(torch.square(self.torques), dim=-1)) + torch.sum(torch.abs(self.torques), dim=-1)
-        # return torch.sum(torch.square(self.torques), dim=-1)
+        # torque_reward = torch.sum(torch.square(self.torques), dim=-1)
+        # if include_abs:
+        #   torque_reward += self.torques.abs().sum(dim=-1)
+        # return torque_reward
 
     def _reward_dof_vel(self):
         # Penalize dof velocities
@@ -1184,6 +1188,12 @@ class LeggedRobot(base_task.BaseTask):
         # Penalize changes in actions
         action_diff = self.last_actions - self.actions
         return torch.norm(action_diff, p=2, dim=-1) + action_diff.abs().sum(dim=-1)
+        # # Penalize changes in actions
+        # action_diff = self.last_actions - self.actions
+        # action_rate_reward = torch.sum(torch.square(action_diff), dim=-1)
+        # if include_abs:
+        #   action_rate_reward += action_diff.abs().sum(dim=-1)
+        # return action_rate_reward
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies
@@ -1207,7 +1217,7 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_dof_vel_limits(self, soft_dof_vel_limit):
         # Penalize dof velocities too close to the limit
         # clip to max error = 1 rad/s per joint to avoid huge penalties
-        return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits * soft_dof_vel_limit).clip(min=0., max=1.), dim=-1)
+        return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits * soft_dof_vel_limit).clip(min=0.), dim=-1)
 
     def _reward_torque_limits(self, soft_torque_limit):
         # penalize torques too close to the limit
@@ -1275,14 +1285,15 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_feet_contact_forces(self, max_contact_force):
         # penalize high contact forces
-        return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  max_contact_force).clip(min=0.), dim=-1)
+        feet_contact_forces = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1)
+        return torch.sum((feet_contact_forces -  max_contact_force).clip(min=0.), dim=-1)
 
     def _reward_feet_slip(self):
         # Penalize feet velocities when contact
         _, _, feet_vel, _ = self.get_feet_state()
         vel_xy = feet_vel[..., :2]
-        vel_xy_norm_sq = torch.sum(torch.square(vel_xy), dim=-1)
-        return torch.sum(vel_xy_norm_sq * self.feet_contact, dim=-1) # * ~self.get_small_command_mask()
+        vel_xy_norm = torch.linalg.norm(vel_xy, dim=-1)
+        return torch.sum(vel_xy_norm * self.feet_contact, dim=-1) # * ~self.get_small_command_mask()
 
     def _reward_root_acc(self):
         # Penalize root accelerations

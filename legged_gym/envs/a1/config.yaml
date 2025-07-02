@@ -75,7 +75,11 @@ symmetries:
   critic:
     symmetries: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, CAMERA_IMAGE, RAY_CAST, IMAGE_ENCODER_LATENT
+      A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, RAY_CAST, BASE_MASS_SCALED,
+      A1_DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
+      HIP_HEIGHTS, BASE_HEIGHT, A1_FEET_AIR_TIME, A1_FEET_CONTACT_TIME, A1_FEET_CONTACT,
+      A1_STIFFNESS, A1_DAMPING, A1_MOTOR_STRENGTH,
+      CAMERA_IMAGE, IMAGE_ENCODER_LATENT
     ]
   policy:
     symmetries: [
@@ -563,7 +567,8 @@ algorithm:
     damping: -0.01
   desired_kl: 0.01
   kl_key: actions
-  symmetry: True
+  symmetry_loss: True
+  symmetry_augmentation: False
   symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0

@@ -220,6 +220,14 @@ class Normal:
   def __repr__(self):
     return f'Normal(mean={self.mean.shape}, stddev={self.stddev.shape})'
 
+  @torch.jit.unused
+  def repeat(self, num_augs: int, dim: int=1) -> 'Normal':
+    repeats = [1] * self.mean.ndim
+    repeats[dim] = num_augs
+    mean = self.mean.repeat(*repeats)
+    stddev = self.stddev.repeat(*repeats)
+    return Normal(mean, stddev)
+
 
 @torch.jit.script
 class Binary:
@@ -250,6 +258,70 @@ class Binary:
   @torch.jit.export
   def __repr__(self):
     return f'Binary(logit={self.logit.shape})'
+
+
+@torch.jit.script
+class TwoHot:
+
+  def __init__(
+      self,
+      logits: torch.Tensor,
+      bins: torch.Tensor,
+    ):
+    logits = logits.to(torch.float32)
+    assert logits.shape[-1] == len(bins), (logits.shape, len(bins))
+    assert bins.dtype == torch.float32, bins.dtype
+    self.logits = logits
+    self.probs = torch.nn.functional.softmax(logits, dim=-1)
+    self.bins = bins.clone().detach().requires_grad_(False)
+
+  def pred(self):
+    # The naive implementation results in a non-zero result even if the bins
+    # are symmetric and the probabilities uniform, because the sum operation
+    # goes left to right, accumulating numerical errors. Instead, we use a
+    # symmetric sum to ensure that the predicted rewards and values are
+    # actually zero at initialization.
+    # return self.unsquash((self.probs * self.bins).sum(-1))
+    n = self.logits.shape[-1]
+    if n % 2 == 1:
+      m = (n - 1) // 2
+      p1 = self.probs[..., :m]
+      p2 = self.probs[..., m: m + 1]
+      p3 = self.probs[..., m + 1:]
+      b1 = self.bins[..., :m]
+      b2 = self.bins[..., m: m + 1]
+      b3 = self.bins[..., m + 1:]
+      wavg = (p2 * b2).sum(-1) + ((p1 * b1).flip(dims=[-1]) + (p3 * b3)).sum(-1)
+      return wavg
+    else:
+      p1 = self.probs[..., :n // 2]
+      p2 = self.probs[..., n // 2:]
+      b1 = self.bins[..., :n // 2]
+      b2 = self.bins[..., n // 2:]
+      wavg = ((p1 * b1).flip(dims=[-1]) + (p2 * b2)).sum(-1)
+      return wavg
+
+  @torch.jit.unused
+  def loss(self, target):
+    assert target.dtype == torch.float32, target.dtype
+    target = target.detach()
+    below = (self.bins <= target[..., None]).to(torch.int32).sum(-1) - 1
+    above = len(self.bins) - (
+        self.bins > target[..., None]).to(torch.int32).sum(-1)
+    below = torch.clip(below, 0, len(self.bins) - 1)
+    above = torch.clip(above, 0, len(self.bins) - 1)
+    equal = (below == above)
+    dist_to_below = torch.where(equal, 1, torch.abs(self.bins[below] - target))
+    dist_to_above = torch.where(equal, 1, torch.abs(self.bins[above] - target))
+    total = dist_to_below + dist_to_above
+    weight_below = dist_to_above / total
+    weight_above = dist_to_below / total
+    target = (
+        torch.nn.functional.one_hot(below, len(self.bins)) * weight_below[..., None] +
+        torch.nn.functional.one_hot(above, len(self.bins)) * weight_above[..., None])
+    log_pred = self.logits - torch.logsumexp(
+        self.logits, dim=-1, keepdims=True)
+    return -(target * log_pred).sum(-1)
 
 
 @torch.jit.script
@@ -336,67 +408,6 @@ class OneHot(Output):
     probs = torch.nn.functional.softmax(self.dist.logits, -1)
     value = value + (probs - value)
     return value
-
-
-class TwoHot(Output):
-
-  def __init__(self, logits, bins, squash=None, unsquash=None):
-    logits = logits.to(f32)
-    assert logits.shape[-1] == len(bins), (logits.shape, len(bins))
-    assert bins.dtype == f32, bins.dtype
-    self.logits = logits
-    self.probs = torch.nn.functional.softmax(logits, dim=-1)
-    self.bins = bins.clone().detach().requires_grad_(False)
-
-    self.squash = squash or (lambda x: x)
-    self.unsquash = unsquash or (lambda x: x)
-
-  def pred(self):
-    # The naive implementation results in a non-zero result even if the bins
-    # are symmetric and the probabilities uniform, because the sum operation
-    # goes left to right, accumulating numerical errors. Instead, we use a
-    # symmetric sum to ensure that the predicted rewards and values are
-    # actually zero at initialization.
-    # return self.unsquash((self.probs * self.bins).sum(-1))
-    n = self.logits.shape[-1]
-    if n % 2 == 1:
-      m = (n - 1) // 2
-      p1 = self.probs[..., :m]
-      p2 = self.probs[..., m: m + 1]
-      p3 = self.probs[..., m + 1:]
-      b1 = self.bins[..., :m]
-      b2 = self.bins[..., m: m + 1]
-      b3 = self.bins[..., m + 1:]
-      wavg = (p2 * b2).sum(-1) + ((p1 * b1).flip(dims=[-1]) + (p3 * b3)).sum(-1)
-      return self.unsquash(wavg)
-    else:
-      p1 = self.probs[..., :n // 2]
-      p2 = self.probs[..., n // 2:]
-      b1 = self.bins[..., :n // 2]
-      b2 = self.bins[..., n // 2:]
-      wavg = ((p1 * b1).flip(dims=[-1]) + (p2 * b2)).sum(-1)
-      return self.unsquash(wavg)
-
-  def loss(self, target):
-    assert target.dtype == f32, target.dtype
-    target = self.squash(target).detach()
-    below = (self.bins <= target[..., None]).to(i32).sum(-1) - 1
-    above = len(self.bins) - (
-        self.bins > target[..., None]).to(i32).sum(-1)
-    below = torch.clip(below, 0, len(self.bins) - 1)
-    above = torch.clip(above, 0, len(self.bins) - 1)
-    equal = (below == above)
-    dist_to_below = torch.where(equal, 1, torch.abs(self.bins[below] - target))
-    dist_to_above = torch.where(equal, 1, torch.abs(self.bins[above] - target))
-    total = dist_to_below + dist_to_above
-    weight_below = dist_to_above / total
-    weight_above = dist_to_below / total
-    target = (
-        torch.nn.functional.one_hot(below, len(self.bins)) * weight_below[..., None] +
-        torch.nn.functional.one_hot(above, len(self.bins)) * weight_above[..., None])
-    log_pred = self.logits - torch.logsumexp(
-        self.logits, -1, keepdims=True)
-    return -(target * log_pred).sum(-1)
 
 
 class Head(torch.nn.Module):
@@ -655,6 +666,36 @@ class NormalLogSTDHead(nn.Module):
     return output
 
 
+class TwoHotHead(nn.Module):
+  def __init__(
+      self,
+      input_size: int,
+      output_space: space.Space,
+      bins: int,
+      outscale: float = 1.0,
+    ):
+    super().__init__()
+    self.output_space = output_space
+    self.output_size = output_space.shape
+    self.num_bins = bins
+    self.outscale = outscale
+    self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size) * self.num_bins)) #, **self.kw)
+    utils.init_layer(self.projection_net, self.outscale)
+
+    if self.num_bins % 2 == 1:
+      half = torch.linspace(-20, 0, (self.num_bins - 1) // 2 + 1, dtype=torch.float32)
+      half = math.symexp(half)
+      self.bins = torch.cat([half, -half[:-1].flip(0)], 0)
+    else:
+      half = torch.linspace(-20, 0, self.num_bins // 2, dtype=torch.float32)
+      half = math.symexp(half)
+      self.bins = torch.cat([half, -half.flip(0)], 0)
+
+  def forward(self, x: torch.Tensor) -> TwoHot:
+    logits = self.projection_net(x)
+    logits = utils.reshape_output(logits, (int(np.prod(self.output_size)), self.num_bins))
+    return TwoHot(logits, self.bins)
+
 
 class MSEHead(nn.Module):
   def __init__(
@@ -670,13 +711,7 @@ class MSEHead(nn.Module):
     self.outscale = outscale
 
     self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size)))
-    self._init_layer(self.projection_net)
-
-  @torch.jit.unused
-  def _init_layer(self, layer):
-    torch.nn.init.trunc_normal_(layer.weight)
-    layer.weight.data *= self.outscale
-    torch.nn.init.zeros_(layer.bias)
+    utils.init_layer(self.projection_net, self.outscale)
 
   def forward(self, x: torch.Tensor) -> MSE:
     pred = self.projection_net(x)

@@ -156,7 +156,7 @@ class Runner:
     self._flatten_parameters()
     self._set_eval_mode()
 
-    if self.cfg["algorithm"]["symmetry"]:
+    if self.cfg["algorithm"]["symmetry_loss"] or self.cfg["algorithm"]["symmetry_augmentation"]:
       assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
       self.symmetry_lookup = symmetry_groups.symmetry_dict_from_config(self.cfg["symmetries"])
       assert self.policy_key in self.symmetry_lookup
@@ -413,21 +413,21 @@ class Runner:
       self.learn_agg.add(learn_stats)
       self._set_eval_mode()
 
-      curr_train_ratio = num_encoder_updates.sum / num_policy_updates.sum
-      desired_train_ratio = self.train_ratio_scheduler(it)
-      error = desired_train_ratio - curr_train_ratio
-      k = 0.05  # proportional gain — tune this!
-      delta = curr_num_updates * k * error
-      curr_num_updates = curr_num_updates + delta
-      curr_num_updates = max(
-        self.cfg["image_encoder"]["num_updates_range"][0],
-        curr_num_updates
-      )
-      curr_num_updates = min(
-        self.cfg["image_encoder"]["num_updates_range"][1],
-        curr_num_updates)
-
-      self.learn_agg.add({'train_ratio': curr_train_ratio})
+      if self.image_encoder_enabled:
+        curr_train_ratio = num_encoder_updates.sum / num_policy_updates.sum
+        desired_train_ratio = self.train_ratio_scheduler(it)
+        error = desired_train_ratio - curr_train_ratio
+        k = 0.05  # proportional gain — tune this!
+        delta = curr_num_updates * k * error
+        curr_num_updates = curr_num_updates + delta
+        curr_num_updates = max(
+          self.cfg["image_encoder"]["num_updates_range"][0],
+          curr_num_updates
+        )
+        curr_num_updates = min(
+          self.cfg["image_encoder"]["num_updates_range"][1],
+          curr_num_updates)
+        self.learn_agg.add({'train_ratio': curr_train_ratio})
 
       if self.should_log(it):
         with timer.section("logger_save"):

@@ -8,6 +8,17 @@ import torch.utils._pytree as pytree
 from legged_gym import utils
 
 
+def tree_cat(x, y, dim: int):
+  return pytree.tree_map(lambda x, y: torch.cat([x, y], dim=dim), x, y)
+
+
+@torch.jit.unused
+def init_layer(layer: torch.nn.Module, scale: float):
+  torch.nn.init.trunc_normal_(layer.weight)
+  layer.weight.data *= scale
+  torch.nn.init.zeros_(layer.bias)
+
+
 class SetpointScheduler:
   def __init__(self, warmup_steps: int, val_warmup, val_after):
     self.val_warmup = val_warmup
