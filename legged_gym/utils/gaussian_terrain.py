@@ -263,7 +263,7 @@ class GaussianSceneManager:
       self._env.num_envs, 2, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.heading_command = torch.zeros(
-      self._env.num_envs, 1, device=self._env.device, dtype=torch.float32, requires_grad=False
+      self._env.num_envs, device=self._env.device, dtype=torch.float32, requires_grad=False
     )
     self.axis_geom = None
     self.closest_axis_geom = None
@@ -294,6 +294,10 @@ class GaussianSceneManager:
       math.quat_from_z_rot(np.pi / 2, 1, self._env.device),
       math.quat_from_y_rot(-np.pi / 2, 1, self._env.device)
     ).detach()
+
+    self.started_queue = defaultdict(lambda: [])
+    self.ended_queue = defaultdict(lambda: [])
+    self.success_queue = defaultdict(lambda: [])
 
   def spawn_meshes(self):
     # Add meshes to the environment.
@@ -572,13 +576,38 @@ class GaussianSceneManager:
     past_end = nearest_idx >= (
       self.cam_trans.shape[1] - 4
     )  # Past end of trajectory.
-
-    completion_counter = defaultdict(lambda: 0)
+  
+    curr_completion_stats = {}
     for env_id in env_ids:
-      mesh_id = self.mesh_id_for_env_id(int(env_id))
+      env_id = int(env_id)
+      mesh_id = self.mesh_id_for_env_id(env_id)
       mesh_name = self.mesh_name_from_id(mesh_id)
-      completion_counter[mesh_name] += int(past_end[int(env_id)])
-    return completion_counter
+
+      num_envs_in_mesh = len(self.env_ids_for_mesh_id(mesh_id))
+
+      if num_envs_in_mesh == 0:
+        continue
+
+      env_started = env_id in self.started_queue[mesh_name]
+      env_ended = env_id in self.ended_queue[mesh_name]
+      env_completed = env_id in self.success_queue[mesh_name]
+
+      if env_started and not env_ended:
+        # Env has started started and not ended yet for this logging period.
+        self.ended_queue[mesh_name].append(env_id)
+        if past_end[int(env_id)] and not env_completed:
+          self.success_queue[mesh_name].append(env_id)
+      elif not env_started and not env_ended:
+        self.started_queue[mesh_name].append(env_id)
+
+      if len(self.started_queue[mesh_name]) == len(self.ended_queue[mesh_name]) == num_envs_in_mesh:
+        # Clear the queue and log the completion stats.
+        curr_completion_stats[mesh_name] = len(self.success_queue[mesh_name]) / len(self.started_queue[mesh_name])
+        self.started_queue[mesh_name] = []
+        self.ended_queue[mesh_name] = []
+        self.success_queue[mesh_name] = []
+
+    return curr_completion_stats
 
   def check_termination(self):
     # Check if robot is too far from camera trajectory (Indicative of poor rendering).
@@ -602,6 +631,14 @@ class GaussianSceneManager:
     yaw_exceeded |= yaw_distance > self._env.cfg["terrain"]["max_traj_yaw_distance_rad"]
     return distance_exceeded, yaw_exceeded
 
+  def reset_command_state(self, env_ids):
+    self.command_scale[env_ids] = math.torch_rand_float(
+      self._env.command_ranges["lin_vel"][0],
+      self._env.command_ranges["lin_vel"][1],
+      (len(env_ids), 1),
+      device=self._env.device,
+    )
+
   def sample_commands(self, env_ids, still_env_mask=None):
     """Randommly select commands of some environments
 
@@ -610,7 +647,7 @@ class GaussianSceneManager:
     """
     _, _, nearest_idx = self._get_nearest_traj_pose(monotonic=True)
     # Update the state index to the nearest camera trajectory.
-    self.state_idx[:] = nearest_idx
+    self.state_idx[env_ids] = nearest_idx[env_ids]
 
     # Choose a target pose moderately far away. If nearest_idx + 1 is chosen, target
     # velocities fall to 0 as the robot approaches this target.
@@ -627,12 +664,6 @@ class GaussianSceneManager:
     )[:, :2]
     pos_delta_norm = pos_delta_local / torch.norm(
       pos_delta_local, dim=-1, keepdim=True
-    )
-    self.command_scale[env_ids] = math.torch_rand_float(
-      self._env.command_ranges["lin_vel"][0],
-      self._env.command_ranges["lin_vel"][1],
-      (len(env_ids), 1),
-      device=self._env.device,
     )
     pos_delta_norm *= self.command_scale
     # pos_delta_norm *= (

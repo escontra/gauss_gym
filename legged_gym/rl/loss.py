@@ -206,10 +206,10 @@ def actor_loss(
         dist_sym_act = dists_sym[name].pred()
       symmetry_loss = torch.nn.MSELoss()(dist_sym_act, dist_act_sym.detach())
       metrics[f'symmetry_loss_{name}'] = symmetry_loss.item()
-
       losses.append(actor_loss_coef * symmetry_coefs[name] * symmetry_loss.mean())
-    total_loss = sum(losses)
-    return total_loss, kl_means, metrics
+
+  total_loss = sum(losses)
+  return total_loss, kl_means, metrics
 
 
 def reconstruction_loss(

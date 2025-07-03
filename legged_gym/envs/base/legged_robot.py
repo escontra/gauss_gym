@@ -114,7 +114,9 @@ class LeggedRobot(base_task.BaseTask):
         high = v.high.clone().detach().to(self.device)[None]
         needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
         if needs_scaling:
-          scaled_action = (action + 1) / 2 * (high - low) + low
+          offset, scale = low, high - low
+          action_normalized = (action + 1) / 2
+          scaled_action = action_normalized * scale + offset
           scaled_action = torch.clamp(scaled_action, low, high)
           actions_env[k] = scaled_action
         else:
@@ -129,6 +131,9 @@ class LeggedRobot(base_task.BaseTask):
         """
         if isinstance(actions, torch.Tensor):
           actions = {'actions': actions}
+          if self.cfg["commands"]["command_gains"]:
+            actions['stiffness'] = torch.zeros_like(actions['actions'])
+            actions['damping'] = torch.zeros_like(actions['actions'])
 
         actions = self.scale_actions(actions)
 
@@ -264,15 +269,16 @@ class LeggedRobot(base_task.BaseTask):
         self.last_torques[:] = self.torques[:]
         self.last_contact_forces[:] = self.contact_forces
 
-        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
-        self.prev_reset = env_ids
+        reset_env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        self.reset_idx(reset_env_ids)
+        self.prev_reset = reset_env_ids
 
         # Resample command scales. Commands are updated every timestep to guide
         # the robot along the camera trajectory. Call after `reset_idx` to
         # sample a new command at the start of each episode.
         resample_command_env_ids = (self.episode_length_buf % int(self.cfg["commands"]["resampling_time"] / self.dt)==0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(resample_command_env_ids)
+        reset_command_state_env_ids = torch.unique(torch.cat([reset_env_ids, resample_command_env_ids]))
+        self._resample_commands(reset_command_state_env_ids)
 
         # Resample sensor latency.
         self.obs_manager.resample_sensor_latency()
@@ -322,8 +328,8 @@ class LeggedRobot(base_task.BaseTask):
         self.distance_exceeded_buf = distance_exceeded
         self.yaw_exceeded_buf = yaw_exceeded
 
-        self.reset_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
-        self.time_out_buf |= (self.distance_exceeded_buf | self.yaw_exceeded_buf)
+        self.reset_buf |= (distance_exceeded | yaw_exceeded)
+        self.time_out_buf |= (distance_exceeded | yaw_exceeded)
 
     @timer.section("reset_idx")
     def reset_idx(self, env_ids):
@@ -347,7 +353,7 @@ class LeggedRobot(base_task.BaseTask):
 
         # Sample commands to track camera trajectory.
         self._reset_buffers(env_ids)
-        self._resample_commands(env_ids)
+        self.scene_manager.reset_command_state(env_ids)
 
     def _fill_extras(self, env_ids):
         # fill extras
@@ -579,14 +585,19 @@ class LeggedRobot(base_task.BaseTask):
         small_ang_vel_mask = torch.norm(self.commands[:, 2:3], dim=-1) < self.cfg["commands"]["small_ang_vel_threshold"]
         return torch.logical_and(small_lin_vel_mask, small_ang_vel_mask)
 
-    def _resample_commands(self, env_ids):
+    def _resample_commands(self, reset_env_ids):
         """ Randommly select commands of some environments
 
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
         """
-        self.still_envs[env_ids] = torch.rand(len(env_ids), device=self.device) < self.cfg["commands"]["still_proportion"]
-        heading_command, velocity_command = self.scene_manager.sample_commands(env_ids, still_env_mask=self.still_envs)
+        self.still_envs[reset_env_ids] = torch.rand(len(reset_env_ids), device=self.device) < self.cfg["commands"]["still_proportion"]
+
+        all_env_ids = torch.arange(self.num_envs, device=self.device)
+        update_command_env_ids = all_env_ids[~torch.isin(all_env_ids, reset_env_ids)]
+
+        self.scene_manager.reset_command_state(reset_env_ids)
+        heading_command, velocity_command = self.scene_manager.sample_commands(update_command_env_ids, still_env_mask=self.still_envs)
         self.commands[:, :2] = velocity_command
         if self.cfg["commands"]["heading_command"]:
             self.commands[:, 3] = heading_command
@@ -646,7 +657,10 @@ class LeggedRobot(base_task.BaseTask):
         self.feet_contact_time[env_ids] = 0.
         self.last_contacts[env_ids] = False
         self.episode_length_buf[env_ids] = 0
-        self.reset_buf[env_ids] = 1
+        # self.reset_buf[env_ids] = 1
+        # self.time_out_buf[env_ids] = 0
+        # self.distance_exceeded_buf[env_ids] = 0
+        # self.yaw_exceeded_buf[env_ids] = 0
         self.last_torques[env_ids] = 0.
         self.max_power_per_timestep[env_ids] = 0.
         self.filtered_lin_vel[env_ids] = 0.0
