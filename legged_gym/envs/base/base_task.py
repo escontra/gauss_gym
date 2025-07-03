@@ -53,9 +53,7 @@ class BaseTask():
         self.create_sim()
 
         self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
-        self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
 
         self.gym.prepare_sim(self.sim)
 
@@ -94,9 +92,7 @@ class BaseTask():
 
     def reset(self):
         """ Reset all robots"""
-        self.reset_idx(torch.arange(self.num_envs, device=self.device))
-        obs_dict, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
-        return obs_dict
+        raise NotImplementedError
 
     def step(self, actions):
         raise NotImplementedError

@@ -41,8 +41,6 @@ class LeggedRobot(base_task.BaseTask):
         self.command_ranges = dict(self.cfg["commands"]["ranges"])
         self.max_episode_length_s = self.cfg["env"]["episode_length_s"]
         self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
-        self.distance_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
-        self.yaw_exceeded_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
 
         self.initial_camera_set = False
         self._init_buffers()
@@ -179,8 +177,8 @@ class LeggedRobot(base_task.BaseTask):
                         self.gym.fetch_results(self.sim, True)
                     self.gym.refresh_dof_state_tensor(self.sim)
                 self.post_decimation_step(dec_i)
-        self.post_physics_step()
-        return self.obs_dict, self.rew_buf, self.reset_buf, self.extras
+        reset_buf = self.post_physics_step()
+        return self.obs_dict, self.rew_buf, reset_buf, self.extras
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
@@ -256,8 +254,8 @@ class LeggedRobot(base_task.BaseTask):
             self.sensors["foot_height_raycaster"].get_data())
 
         # compute observations, rewards, resets, ...
-        self.check_termination()
-        self.compute_reward()
+        reset_buf, time_out_buf = self.check_termination()
+        self.compute_reward(reset_buf, time_out_buf)
 
         self.swing_peak *= ~contact_filt
         self.feet_air_time *= ~contact_filt
@@ -269,8 +267,8 @@ class LeggedRobot(base_task.BaseTask):
         self.last_torques[:] = self.torques[:]
         self.last_contact_forces[:] = self.contact_forces
 
-        reset_env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(reset_env_ids)
+        reset_env_ids = reset_buf.nonzero(as_tuple=False).flatten()
+        self.reset_idx(reset_env_ids, time_out_buf)
         self.prev_reset = reset_env_ids
 
         # Resample command scales. Commands are updated every timestep to guide
@@ -285,6 +283,7 @@ class LeggedRobot(base_task.BaseTask):
 
         # Compute observations.
         self.obs_dict = self.obs_manager.compute_obs(self)        
+        return reset_buf
 
     def _update_physics_curriculum(self):
 
@@ -318,21 +317,27 @@ class LeggedRobot(base_task.BaseTask):
     @timer.section("check_termination")
     def check_termination(self):
         """ Check if environments need to be reset."""
-        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
-        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
-        self.reset_buf |= self.time_out_buf
-        self.reset_buf |= self.sensors["base_height_raycaster"].get_data()[..., 0] < self.cfg["termination"]["base_height_threshold"]
-        self.reset_buf |= self.projected_gravity[:, -1] > self.cfg["termination"]["projected_gravity_z_threshold"]
+        reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
+        reset_buf = torch.logical_or(reset_buf, time_out_buf)
+        reset_buf |= self.sensors["base_height_raycaster"].get_data()[..., 0] < self.cfg["termination"]["base_height_threshold"]
+        reset_buf |= self.projected_gravity[:, -1] > self.cfg["termination"]["projected_gravity_z_threshold"]
 
         distance_exceeded, yaw_exceeded = self.scene_manager.check_termination()
-        self.distance_exceeded_buf = distance_exceeded
-        self.yaw_exceeded_buf = yaw_exceeded
 
-        self.reset_buf |= (distance_exceeded | yaw_exceeded)
-        self.time_out_buf |= (distance_exceeded | yaw_exceeded)
+        reset_buf |= (distance_exceeded | yaw_exceeded)
+        time_out_buf |= (distance_exceeded | yaw_exceeded)
+        return reset_buf, time_out_buf
+
+    def reset(self):
+        """ Reset all robots"""
+        time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.reset_idx(torch.arange(self.num_envs, device=self.device), time_out_buf)
+        obs_dict, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        return obs_dict
 
     @timer.section("reset_idx")
-    def reset_idx(self, env_ids):
+    def reset_idx(self, env_ids, time_out_buf):
         """ Reset some environments.
             Calls self._reset_dofs(env_ids), self._reset_root_states(env_ids), and self._resample_commands(env_ids)
             [Optional] calls self._update_terrain_curriculum(env_ids), self.update_command_curriculum(env_ids) and
@@ -345,7 +350,7 @@ class LeggedRobot(base_task.BaseTask):
         if len(env_ids) == 0:
             return
         
-        self._fill_extras(env_ids)
+        self._fill_extras(env_ids, time_out_buf)
 
         # reset robot states
         self._reset_dofs(env_ids)
@@ -355,7 +360,7 @@ class LeggedRobot(base_task.BaseTask):
         self._reset_buffers(env_ids)
         self.scene_manager.reset_command_state(env_ids)
 
-    def _fill_extras(self, env_ids):
+    def _fill_extras(self, env_ids, time_out_buf):
         # fill extras
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
@@ -367,10 +372,8 @@ class LeggedRobot(base_task.BaseTask):
         # log power related info
         self.extras["episode"]["max_power_throughout_episode"] = self.max_power_per_timestep[env_ids].max().cpu().item()
         # log whether the episode ends by timeout or dead, or by reaching the goal
-        self.extras["episode"]["timeout_ratio"] = (self.time_out_buf.float().sum() / self.reset_buf.float().sum()).cpu().item()
-        self.extras["episode"]["distance_exceeded_ratio"] = (self.distance_exceeded_buf.float().sum() / self.reset_buf.float().sum()).cpu().item()
-        self.extras["episode"]["yaw_exceeded_ratio"] = (self.yaw_exceeded_buf.float().sum() / self.reset_buf.float().sum()).cpu().item()
-        self.extras["episode"]["num_terminated"] = self.reset_buf.float().sum().cpu().item()
+        self.extras["episode"]["timeout_ratio"] = (time_out_buf.float().sum() / len(env_ids)).cpu().item()
+        self.extras["episode"]["num_terminated"] = len(env_ids)
         self.extras["episode"]["feet_swing_peak"] = torch.mean(self.swing_peak[env_ids]).cpu().item()
         self.extras["episode"]["feet_air_time"] = torch.mean(self.feet_air_time[env_ids]).cpu().item()
         self.extras["episode"]["feet_contact_time"] = torch.mean(self.feet_contact_time[env_ids]).cpu().item()
@@ -379,10 +382,10 @@ class LeggedRobot(base_task.BaseTask):
             self.extras["episode"][f"{self.feet_names[i]}_contact_force"] = (torch.mean(self.contact_forces[:, self.feet_indices[i], 2])).cpu().item()
         # send timeout info to the algorithm
         if self.cfg["env"]["send_timeouts"]:
-            self.extras["time_outs"] = self.time_out_buf | self.distance_exceeded_buf | self.yaw_exceeded_buf
+            self.extras["time_outs"] = time_out_buf
 
     @timer.section("compute_reward")
-    def compute_reward(self):
+    def compute_reward(self, reset_buf, time_out_buf):
         """ Compute rewards
             Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
             adds each terms to the episode sums and to the total reward
@@ -398,7 +401,7 @@ class LeggedRobot(base_task.BaseTask):
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
         # add termination reward after clipping
         if "termination" in self.cfg["rewards"]:
-            rew = self._reward_termination() * self.cfg["rewards"]["termination"]["scale"] * self.dt
+            rew = self._reward_termination(reset_buf, time_out_buf) * self.cfg["rewards"]["termination"]["scale"] * self.dt
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
 
@@ -657,10 +660,6 @@ class LeggedRobot(base_task.BaseTask):
         self.feet_contact_time[env_ids] = 0.
         self.last_contacts[env_ids] = False
         self.episode_length_buf[env_ids] = 0
-        # self.reset_buf[env_ids] = 1
-        # self.time_out_buf[env_ids] = 0
-        # self.distance_exceeded_buf[env_ids] = 0
-        # self.yaw_exceeded_buf[env_ids] = 0
         self.last_torques[env_ids] = 0.
         self.max_power_per_timestep[env_ids] = 0.
         self.filtered_lin_vel[env_ids] = 0.0
@@ -1213,9 +1212,9 @@ class LeggedRobot(base_task.BaseTask):
         # Penalize collisions on selected bodies
         return torch.sum(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 1.0, dim=-1).to(torch.float32)
 
-    def _reward_termination(self):
+    def _reward_termination(self, reset_buf, time_out_buf):
         # Terminal reward / penalty
-        return self.reset_buf * ~self.time_out_buf
+        return reset_buf * ~time_out_buf
 
     def _reward_dof_pos_limits(self, soft_dof_pos_limit):
         # Penalize dof positions too close to the limit
