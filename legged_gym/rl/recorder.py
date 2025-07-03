@@ -38,13 +38,15 @@ class Recorder:
       log_dir: pathlib.Path,
       cfg: Dict[str, Any],
       deploy_cfg: Dict[str, Any],
-      save_dicts: Dict[str, Any]):
+      save_dicts: Dict[str, Any],
+      rank_zero: bool = True):
     self.cfg = cfg
     self.deploy_cfg = deploy_cfg
     self.log_dir = log_dir
     self.save_dicts = save_dicts
     self.initialized = False
     self.fps = int(1. / (self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"]))
+    self.rank_zero = rank_zero
 
   def setup_recorder(self, env):
     from isaacgym import gymapi
@@ -126,32 +128,34 @@ class Recorder:
   def maybe_init(self):
     if self.initialized:
       return
-    utils.print(f"Recording to: {self.log_dir}", color='blue')
-    self.log_dir.mkdir(parents=True, exist_ok=True)
-    self.model_dir = self.log_dir / "nn"
-    self.model_dir.mkdir(parents=True, exist_ok=True)
-    self.writer = tf.summary.create_file_writer(str(self.log_dir / "summaries"), max_queue=int(1e9), flush_millis=int(1e9))
-    self.writer.set_as_default()
-    if self.cfg["runner"]["use_wandb"]:
-      wandb.init(
-        project=self.cfg["task"],
-        dir=self.log_dir,
-        name=self.log_dir.name,
-        notes=self.cfg["runner"]["description"],
-        config=dict(self.cfg),
-      )
+
+    if self.rank_zero:
+      utils.print(f"Recording to: {self.log_dir}", color='blue')
+      self.log_dir.mkdir(parents=True, exist_ok=True)
+      self.model_dir = self.log_dir / "nn"
+      self.model_dir.mkdir(parents=True, exist_ok=True)
+      self.writer = tf.summary.create_file_writer(str(self.log_dir / "summaries"), max_queue=int(1e9), flush_millis=int(1e9))
+      self.writer.set_as_default()
+      if self.cfg["runner"]["use_wandb"]:
+        wandb.init(
+          project=self.cfg["task"],
+          dir=self.log_dir,
+          name=self.log_dir.name,
+          notes=self.cfg["runner"]["description"],
+          config=dict(self.cfg),
+        )
+
+      config.Config(self.cfg).save(self.log_dir / "config.yaml")
+      config.Config({'deploy': self.deploy_cfg}).save(self.log_dir / "deploy_config.yaml")
+
+      for key, value in self.save_dicts.items():
+        with open(self.log_dir / f"{key}.pkl", "wb") as file:
+          pickle.dump(value, file)
 
     self.episode_statistics = {}
     self.last_episode = {}
     self.last_episode["steps"] = []
     self.episode_steps = None
-
-    config.Config(self.cfg).save(self.log_dir / "config.yaml")
-    config.Config({'deploy': self.deploy_cfg}).save(self.log_dir / "deploy_config.yaml")
-
-    for key, value in self.save_dicts.items():
-      with open(self.log_dir / f"{key}.pkl", "wb") as file:
-        pickle.dump(value, file)
     self.initialized = True
 
   @timer.section("record_episode_statistics")
@@ -187,29 +191,30 @@ class Recorder:
   @timer.section("record_statistics")
   def record_statistics(self, statistics, it):
     self.maybe_init()
-    for key, value in statistics.items():
-      if isinstance(value, str):
-        tf.summary.text(key, value, it)
-        if self.cfg["runner"]["use_wandb"]:
-          wandb.log({key: value}, step=it)
-      elif isinstance(value, (float, int)):
-        tf.summary.scalar(key, float(value), it)
-        if self.cfg["runner"]["use_wandb"]:
-          wandb.log({key: float(value)}, step=it)
-      elif isinstance(value, np.ndarray) and value.ndim == 1:
-        if len(value) > 1024:
-          value = value.copy()
-          np.random.shuffle(value)
-          value = value[:1024]
-        tf.summary.histogram(key, value, it)
-      elif isinstance(value, np.ndarray) and value.ndim == 4 and value.dtype == np.uint8:
-        gif_bytes = self._video_summary(key, value, it)
-        if self.cfg["runner"]["use_wandb"]:
-          import io
-          wandb.log({key: wandb.Video(io.BytesIO(gif_bytes), format='gif')}, step=it)
-      else:
-        raise ValueError(f"Unsupported type for {key}: {type(value)}")
-    self.writer.flush()
+    if self.rank_zero:
+      for key, value in statistics.items():
+        if isinstance(value, str):
+          tf.summary.text(key, value, it)
+          if self.cfg["runner"]["use_wandb"]:
+            wandb.log({key: value}, step=it)
+        elif isinstance(value, (float, int)):
+          tf.summary.scalar(key, float(value), it)
+          if self.cfg["runner"]["use_wandb"]:
+            wandb.log({key: float(value)}, step=it)
+        elif isinstance(value, np.ndarray) and value.ndim == 1:
+          if len(value) > 1024:
+            value = value.copy()
+            np.random.shuffle(value)
+            value = value[:1024]
+          tf.summary.histogram(key, value, it)
+        elif isinstance(value, np.ndarray) and value.ndim == 4 and value.dtype == np.uint8:
+          gif_bytes = self._video_summary(key, value, it)
+          if self.cfg["runner"]["use_wandb"]:
+            import io
+            wandb.log({key: wandb.Video(io.BytesIO(gif_bytes), format='gif')}, step=it)
+        else:
+          raise ValueError(f"Unsupported type for {key}: {type(value)}")
+      self.writer.flush()
 
   @timer.section('tensorboard_video')
   def _video_summary(self, name, video, step):
@@ -234,9 +239,10 @@ class Recorder:
   @timer.section("save")
   def save(self, model_dict, it):
     self.maybe_init()
-    path = self.model_dir / f"model_{it:06d}.pth"
-    utils.print(f"Saving model to {path}", color='blue')
-    torch.save(model_dict, path)
+    if self.rank_zero:
+      path = self.model_dir / f"model_{it:06d}.pth"
+      utils.print(f"Saving model to {path}", color='blue')
+      torch.save(model_dict, path)
 
   def _mean(self, data):
     if len(data) == 0:

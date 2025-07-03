@@ -6,6 +6,10 @@ sim_device: "cuda:0"
 graphics_device: "cuda:0"
 headless: False
 logdir: "default"
+multi_gpu: False
+multi_gpu_global_rank: 0
+multi_gpu_local_rank: 0
+multi_gpu_world_size: 1
 
 env:
   num_envs: 2048
@@ -458,7 +462,7 @@ image_encoder:
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  max_batch_size: 48
+  max_batch_size: 32
   voxel_height_levels: 24 # TODO: cleanup
   train_rate_scheduler:
     warmup_steps: 2000
@@ -476,7 +480,8 @@ image_encoder:
     hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
-    model_type: timm_test_convnext
+    # model_type: timm_test_convnext
+    model_type: cnn_simple
     embedding_dim: 128
 
 policy:

@@ -2,11 +2,13 @@ import os
 import numpy as np
 from typing import Any, Dict
 import random
+import itertools
 import time
 import torch
 import torch.utils._pytree as pytree
 import pathlib
 import copy
+import torch.distributed as torch_distributed
 
 from legged_gym.rl import experience_buffer, loss, recorder
 from legged_gym.rl.env import vec_env
@@ -33,12 +35,23 @@ class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
     self.env = env
     self.device = device
+    self.multi_gpu = cfg["multi_gpu"]
+    self.multi_gpu_global_rank = cfg["multi_gpu_global_rank"]
+    self.multi_gpu_local_rank = cfg["multi_gpu_local_rank"]
+    self.multi_gpu_world_size = cfg["multi_gpu_world_size"]
+
+    self.rank_zero = not self.multi_gpu or self.multi_gpu_global_rank == 0
+
     self.cfg = cfg
     self._set_seed()
     self.policy_key = self.cfg["policy"]["obs_key"]
     self.policy_obs_space = self.env.obs_space()[self.policy_key]
     self.value_key = self.cfg["value"]["obs_key"]
     self.value_obs_space = self.env.obs_space()[self.value_key]
+  
+    if self.multi_gpu:
+      torch_distributed.init_process_group("nccl", rank=self.multi_gpu_global_rank, world_size=self.multi_gpu_world_size)
+      assert self.device == 'cuda:' + str(self.multi_gpu_local_rank) # check it was set correctly
 
     # Symmetry-augmented observations to compute during the environment step, as opposed to
     # computing from the replay buffer.
@@ -294,7 +307,7 @@ class Runner:
     }
     if self.image_encoder_enabled:
       save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
-    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces)
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces, rank_zero=self.rank_zero)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
@@ -558,6 +571,8 @@ class Runner:
           self.cfg["algorithm"]["bound_coefs"],
           self.cfg["algorithm"]["symmetry_coefs"],
           self.cfg["algorithm"]["clip_param"],
+          multi_gpu=self.multi_gpu,
+          multi_gpu_world_size = self.multi_gpu_world_size,
         )
         total_loss += actor_loss
         learn_step_agg.add(metrics)
@@ -583,6 +598,30 @@ class Runner:
         self.policy_optimizer.zero_grad()
         self.value_optimizer.zero_grad()
         total_loss.backward()
+
+        if self.multi_gpu:
+          # from RL-Games
+          # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
+          all_grads_list = []
+          all_params_chain = itertools.chain(self.policy.parameters(), self.value.parameters())
+          if self.image_encoder_enabled:
+            all_params_chain = itertools.chain(all_params_chain, self.image_encoder.parameters())
+          
+          all_params_list = list(all_params_chain)
+          for param in all_params_list:
+            if param.grad is not None:
+              all_grads_list.append(param.grad.view(-1))
+          all_grads = torch.cat(all_grads_list)
+          # sum grads on each gpu
+          torch_distributed.all_reduce(all_grads, op=torch_distributed.ReduceOp.SUM)
+          offset = 0
+          for param in all_params_list:
+            if param.grad is not None:
+              # copy data back from shared buffer
+              param.grad.data.copy_(
+                all_grads[offset : offset + param.numel()].view_as(param.grad.data) / self.multi_gpu_world_size
+              )
+              offset += param.numel()
         all_params = list(self.policy.parameters()) + list(self.value.parameters())
         if self.image_encoder_enabled:
           all_params += list(self.image_encoder.parameters())
@@ -598,10 +637,17 @@ class Runner:
 
         # Learning rate scheduler.
         if self.cfg["policy"]["desired_kl"] > 0.0:
-          if kls[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
-            self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
-          elif kls[self.cfg["policy"]["kl_key"]] < self.cfg["policy"]["desired_kl"] / 2.0 and kls[self.cfg["policy"]["kl_key"]] > 0.0:
-            self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
+          if not self.multi_gpu or self.multi_gpu_global_rank == 0:
+            if kls[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
+              self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
+            elif kls[self.cfg["policy"]["kl_key"]] < self.cfg["policy"]["desired_kl"] / 2.0 and kls[self.cfg["policy"]["kl_key"]] > 0.0:
+              self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
+
+          if self.multi_gpu:
+            learning_rate_tensor = torch.tensor([self.policy_learning_rate], device=self.device)
+            torch_distributed.broadcast(learning_rate_tensor, 0)
+            self.policy_learning_rate = learning_rate_tensor.item()
+
           for param_group in self.policy_optimizer.param_groups:
             param_group["lr"] = self.policy_learning_rate
 
@@ -617,6 +663,7 @@ class Runner:
 
       # Update the observation normalizers.
       with torch.no_grad():
+        # TODO -- normalizers not yet distributed (will be computed on each GPU)
         self.policy.update_normalizer(self.buffer[self.policy_key])
         self.value.update_normalizer(self.buffer[self.value_key])
 

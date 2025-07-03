@@ -5,6 +5,8 @@ from legged_gym.rl import utils
 from legged_gym.utils import voxel
 from legged_gym.rl import experience_buffer
 
+import torch.distributed as torch_distributed
+
 
 def value_loss(
     batch: experience_buffer.MiniBatch,
@@ -74,6 +76,8 @@ def actor_loss(
     bound_coefs,
     symmetry_coefs,
     clip_param,
+    multi_gpu=False,
+    multi_gpu_world_size=1,
 ):
   # Actor loss.
   dists, _, _ = policy_network(
@@ -103,7 +107,12 @@ def actor_loss(
     )
     losses.append(actor_loss_coef * actor_loss)
     metrics[f'actor_loss_{name}'] = actor_loss.item()
-    klm = torch.mean(torch.sum(dist.kl(batch.network_batch[policy_obs_key][name]), axis=-1)).item()
+    klm = torch.mean(torch.sum(dist.kl(batch.network_batch[policy_obs_key][name]), axis=-1))
+    # TODO -- kinda ugly to have mgpu sync here :(
+    if multi_gpu:
+      torch_distributed.all_reduce(klm, op=torch_distributed.ReduceOp.SUM)
+      klm = klm / multi_gpu_world_size
+    klm = klm.item()
     kl_means[name] = klm
     metrics[f'kl_mean_{name}'] = klm
 
