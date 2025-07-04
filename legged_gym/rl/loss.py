@@ -1,6 +1,7 @@
 from typing import Dict, Any, Tuple, Callable
 import torch
 import torch.utils._pytree as pytree
+import torch.distributed as torch_distributed
 
 from legged_gym.rl import experience_buffer, utils
 from legged_gym.utils import voxel, agg, timer
@@ -111,6 +112,8 @@ def actor_loss(
     bound_coefs: Dict[str, float],
     symmetry_coefs: Dict[str, float],
     clip_param: float,
+    multi_gpu: bool = False,
+    multi_gpu_world_size: int = 1,
 ) -> Tuple[torch.Tensor, Dict[str, float], Dict[str, float]]:
 
   if symmetry_augmentation:
@@ -175,7 +178,12 @@ def actor_loss(
     # Compute KL for original batch.
     kl = torch.sum(dist.kl(old_dist), axis=-1)
     kl = kl[:, :unpadded_batch_size_orig] # TODO: this matters.
-    klm = torch.mean(kl).item()
+    klm = torch.mean(kl)
+    # TODO -- kinda ugly to have mgpu sync here :(
+    if multi_gpu:
+      torch_distributed.all_reduce(klm, op=torch_distributed.ReduceOp.SUM)
+      klm = klm / multi_gpu_world_size
+    klm = klm.item()
     kl_means[name] = klm
     metrics[f'kl_mean_{name}'] = klm
 
@@ -318,6 +326,9 @@ def learn_ppo(
     last_value_hidden_states: Tuple[torch.Tensor, ...],
     it: int,
     algorithm_cfg: Dict[str, Any],
+    multi_gpu: bool = False,
+    multi_gpu_global_rank: int = 0,
+    multi_gpu_world_size: int = 1,
   ):
   if it == 0:
     # Skip the first gradient update to initialize the observation normalizers.
@@ -394,6 +405,8 @@ def learn_ppo(
     value_optimizer.zero_grad()
     total_loss.backward()
     all_params = list(policy.parameters()) + list(value.parameters())
+    if multi_gpu:
+      utils.sync_grads_multi_gpu([all_params], multi_gpu_world_size)
     torch.nn.utils.clip_grad_norm_(
       all_params,
       1.0)
@@ -402,10 +415,19 @@ def learn_ppo(
 
     # Learning rate scheduler.
     if algorithm_cfg["desired_kl"] > 0.0:
-      if kls[algorithm_cfg["kl_key"]] > algorithm_cfg["desired_kl"] * 2.0:
-        policy_learning_rate = max(1e-5, policy_learning_rate / 1.5)
-      elif kls[algorithm_cfg["kl_key"]] < algorithm_cfg["desired_kl"] / 2.0 and kls[algorithm_cfg["kl_key"]] > 0.0:
-        policy_learning_rate = min(1e-2, policy_learning_rate * 1.5)
+      if not multi_gpu or multi_gpu_global_rank == 0:
+        if kls[algorithm_cfg["kl_key"]] > algorithm_cfg["desired_kl"] * 2.0:
+          policy_learning_rate = max(1e-5, policy_learning_rate / 1.5)
+        elif kls[algorithm_cfg["kl_key"]] < algorithm_cfg["desired_kl"] / 2.0 and kls[algorithm_cfg["kl_key"]] > 0.0:
+          policy_learning_rate = min(1e-2, policy_learning_rate * 1.5)
+
+      if multi_gpu:
+        policy_learning_rate = utils.broadcast_scalar(
+          policy_learning_rate,
+          0,
+          next(policy.parameters()).device
+        )
+
       for param_group in policy_optimizer.param_groups:
         param_group["lr"] = policy_learning_rate
 
@@ -445,6 +467,9 @@ def learn_image_encoder(
     num_learning_epochs: int,
     num_mini_batches: int,
     algorithm_cfg: Dict[str, Any],
+    multi_gpu: bool = False,
+    multi_gpu_global_rank: int = 0,
+    multi_gpu_world_size: int = 1,
   ):
   learn_step_agg = agg.Agg()
   for batch in buffer.reccurent_mini_batch_generator(
@@ -474,6 +499,8 @@ def learn_image_encoder(
     learn_step_agg.add(metrics)
     image_encoder_optimizer.zero_grad()
     recon_loss.backward()
+    if multi_gpu:
+      utils.sync_grads_multi_gpu([image_encoder.parameters()], multi_gpu_world_size)
     torch.nn.utils.clip_grad_norm_(
       image_encoder.parameters(),
       1.0)

@@ -1,9 +1,11 @@
 import os
 import random
+import itertools
 from typing import List, Tuple, Optional
 import numpy as np
 import torch
 import torch.utils._pytree as pytree
+import torch.distributed as torch_distributed
 
 from legged_gym import utils
 
@@ -17,6 +19,39 @@ def init_layer(layer: torch.nn.Module, scale: float):
   torch.nn.init.trunc_normal_(layer.weight)
   layer.weight.data *= scale
   torch.nn.init.zeros_(layer.bias)
+
+
+def sync_grads_multi_gpu(param_list, multi_gpu_world_size: int):
+  """
+  param_list is a list of parameters from different networks.
+  """
+  # from RL-Games
+  # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
+  all_grads_list = []
+  all_params_chain = itertools.chain(*param_list)
+
+  all_params_list = list(all_params_chain)
+  for param in all_params_list:
+    if param.grad is not None:
+      all_grads_list.append(param.grad.view(-1))
+  all_grads = torch.cat(all_grads_list)
+  # sum grads on each gpu
+  torch_distributed.all_reduce(all_grads, op=torch_distributed.ReduceOp.SUM)
+  offset = 0
+  for param in all_params_list:
+    if param.grad is not None:
+      # copy data back from shared buffer
+      param.grad.data.copy_(
+        all_grads[offset : offset + param.numel()].view_as(param.grad.data) / multi_gpu_world_size
+      )
+      offset += param.numel()
+
+
+def broadcast_scalar(scalar, src_rank: int, device):
+  scalar_tensor = torch.tensor([scalar], device=device)
+  torch_distributed.broadcast(scalar_tensor, src_rank)
+  scalar = scalar_tensor.item()
+  return scalar
 
 
 class SetpointScheduler:

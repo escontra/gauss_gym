@@ -2,10 +2,10 @@ from typing import Tuple
 import os
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 
 from rendering.batch_gs_renderer import MultiSceneRenderer
 from legged_gym.utils import visualization, visualization_geometries, math, warp_utils
+from legged_gym.rl import utils as rl_utils
 
 
 class RayCaster():
@@ -269,9 +269,17 @@ class GaussianSplattingRenderer():
             )
 
         if self.apply_domain_rand and self.refresh_duration_rand_params["apply"]:
-            self.refresh_duration_s_sample = math.apply_randomization(
-                0.0, self.refresh_duration_rand_params
-            )
+            if not self.env.cfg["multi_gpu"] or self.env.cfg["multi_gpu_global_rank"] == 0:
+                self.refresh_duration_s_sample = math.apply_randomization(
+                    0.0, self.refresh_duration_rand_params
+                )
+
+            if self.env.cfg["multi_gpu"]:
+                self.refresh_duration_s_sample = rl_utils.broadcast_scalar(
+                    float(self.refresh_duration_s_sample),
+                    0,
+                    self.device
+                )
 
     def update(self, dt, env_ids=...):
         """Render images with Gaussian splatting.

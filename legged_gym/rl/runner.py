@@ -35,6 +35,16 @@ class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
     self.env = env
     self.device = device
+    self.multi_gpu = cfg["multi_gpu"]
+    self.multi_gpu_global_rank = cfg["multi_gpu_global_rank"]
+    self.multi_gpu_local_rank = cfg["multi_gpu_local_rank"]
+    self.multi_gpu_world_size = cfg["multi_gpu_world_size"]
+
+    if self.multi_gpu:
+      assert self.device == 'cuda:' + str(self.multi_gpu_local_rank) # check it was set correctly
+
+    self.rank_zero = not self.multi_gpu or self.multi_gpu_global_rank == 0
+
     self.cfg = cfg
     rl_utils.set_seed(self.cfg["seed"])
 
@@ -98,9 +108,10 @@ class Runner:
     self.value_obs_space = self.env.obs_space()[self.value_key]
 
     policy_project_dims, value_project_dims = {}, {}
-    if self.image_encoder_enabled:
+    if self.image_encoder_enabled and self.image_encoder_key in self.policy_obs_space:
       if self.cfg["policy"]["project_image_encoder_latent"]:
         policy_project_dims[self.image_encoder_key] = self.cfg["policy"]["project_image_encoder_latent_dim"]
+    if self.image_encoder_enabled and self.image_encoder_key in self.value_obs_space:
       if self.cfg["value"]["project_image_encoder_latent"]:
         value_project_dims[self.image_encoder_key] = self.cfg["value"]["project_image_encoder_latent_dim"]
 
@@ -248,7 +259,7 @@ class Runner:
     if self.image_encoder_enabled:
       save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
       self.env.init_image_encoder_replay_buffer(self.cfg["image_encoder"]["num_steps_per_env"])
-    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces)
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces, rank_zero=self.rank_zero)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
@@ -289,8 +300,9 @@ class Runner:
       image_encoder_cnn_keys = self.image_encoder.cnn_keys or []
       potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in image_encoder_cnn_keys})
 
-    num_policy_updates = RunningSumWindow(2 * self.cfg["runner"]["num_steps_per_env"])
-    num_encoder_updates = RunningSumWindow(2 * self.cfg["runner"]["num_steps_per_env"])
+    # TODO: Choose a correct value here.
+    num_policy_updates = RunningSumWindow(self.cfg["runner"]["num_steps_per_env"])
+    num_encoder_updates = RunningSumWindow(self.cfg["runner"]["num_steps_per_env"])
     curr_num_updates = self.cfg["image_encoder"]["init_num_updates"]
     for it in range(num_learning_iterations):
       start = time.time()
@@ -357,6 +369,9 @@ class Runner:
               num_learning_epochs=num_learning_epochs,
               num_mini_batches=num_mini_batches,
               algorithm_cfg=self.cfg["algorithm"],
+              multi_gpu=self.multi_gpu,
+              multi_gpu_global_rank=self.multi_gpu_global_rank,
+              multi_gpu_world_size=self.multi_gpu_world_size,
             )
             self.learn_agg.add(image_encoder_metrics)
             self._set_eval_mode()
@@ -406,6 +421,9 @@ class Runner:
         value_hidden_states,
         it,
         self.cfg["algorithm"],
+        multi_gpu=self.multi_gpu,
+        multi_gpu_global_rank=self.multi_gpu_global_rank,
+        multi_gpu_world_size=self.multi_gpu_world_size,
       )
       num_policy_updates.add(
         self.cfg["algorithm"]["num_learning_epochs"] * self.cfg["algorithm"]["num_mini_batches"]
@@ -414,20 +432,29 @@ class Runner:
       self._set_eval_mode()
 
       if self.image_encoder_enabled:
-        curr_train_ratio = num_encoder_updates.sum / num_policy_updates.sum
-        desired_train_ratio = self.train_ratio_scheduler(it)
-        error = desired_train_ratio - curr_train_ratio
-        k = 0.05  # proportional gain — tune this!
-        delta = curr_num_updates * k * error
-        curr_num_updates = curr_num_updates + delta
-        curr_num_updates = max(
-          self.cfg["image_encoder"]["num_updates_range"][0],
-          curr_num_updates
-        )
-        curr_num_updates = min(
-          self.cfg["image_encoder"]["num_updates_range"][1],
-          curr_num_updates)
-        self.learn_agg.add({'train_ratio': curr_train_ratio})
+        if not self.multi_gpu or self.multi_gpu_global_rank == 0:
+          curr_train_ratio = num_encoder_updates.sum / num_policy_updates.sum
+          desired_train_ratio = self.train_ratio_scheduler(it)
+          error = desired_train_ratio - curr_train_ratio
+          # Proportional gain — tune this!
+          delta = curr_num_updates * 0.05 * error
+          curr_num_updates = curr_num_updates + delta
+          curr_num_updates = max(
+            self.cfg["image_encoder"]["num_updates_range"][0],
+            curr_num_updates
+          )
+          curr_num_updates = min(
+            self.cfg["image_encoder"]["num_updates_range"][1],
+            curr_num_updates)
+          self.learn_agg.add({'train_ratio': curr_train_ratio})
+          self.learn_agg.add({'curr_num_updates': curr_num_updates})
+
+        if self.multi_gpu:
+          curr_num_updates = rl_utils.broadcast_scalar(
+            float(curr_num_updates),
+            0,
+            self.device
+          )
 
       if self.should_log(it):
         with timer.section("logger_save"):

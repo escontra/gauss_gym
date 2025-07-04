@@ -27,6 +27,7 @@ def main(argv = None):
     cfg = config.Config.load(load_run_path / 'config.yaml')
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'multi_gpu': False})
     cfg = cfg.update({'headless': False})
     cfg = cfg.update({'env.num_envs': 50})
     cfg = cfg.update({'domain_rand.apply_domain_rand': False})
