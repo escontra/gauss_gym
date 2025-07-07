@@ -410,213 +410,6 @@ class OneHot(Output):
     return value
 
 
-class Head(torch.nn.Module):
-
-  def __init__(
-      self,
-      input_size: int,
-      output_space: space.Space,
-      output_type: str,
-      init_std: float = 1.0,
-      minstd: float = 1.0,
-      maxstd: float = 1.0,
-      unimix: float = 0.0,
-      bins: int = 255,
-      outscale: float = 1.0,
-    ):
-      # **kw):
-    super().__init__()
-    self.input_size = input_size
-    self.output_size = output_space.shape
-    self.impl = output_type
-    # self.kw = kw
-    self.init_std = init_std
-    self.minstd = minstd
-    self.maxstd = maxstd
-    self.unimix = unimix
-    self.bins = bins
-    self.outscale = outscale
-    if self.impl == 'voxel_grid_decoder':
-      self.decoder = decoder.ConvDecoder3D(
-        in_channels=input_size,
-        out_resolution=self.output_size,
-        out_channels=input_size,
-        mults=(2, 3),
-        act_final=True
-      )
-      self.occupancy_grid_projection = nn.Conv3d(
-        in_channels=input_size,
-        out_channels=1,
-        kernel_size=1,
-        stride=1
-      )
-      self.centroid_grid_projection = nn.Sequential(
-        nn.Conv3d(
-          in_channels=input_size,
-          out_channels=1,
-          kernel_size=1,
-          stride=1
-        ),
-        nn.Sigmoid()
-      )
-      self._forward_method = self.voxel_grid_decoder
-    elif self.impl == 'mse':
-      self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-      self._init_layer(self.projection_net)
-      self._forward_method = self.mse
-    # elif self.impl == 'symexp_twohot':
-    #   self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size) * self.bins)) #, **self.kw)
-    #   self._init_layer(self.projection_net)
-    # elif self.impl == 'bounded_normal':
-    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-    #   self.stddev_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-    #   self._init_layer(self.mean_net)
-    #   self._init_layer(self.stddev_net)
-    # elif self.impl == 'normal_logstd':
-    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-    #   self.stddev_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-    #   self._init_layer(self.mean_net)
-    #   self._init_layer(self.stddev_net)
-    # elif self.impl == 'normal_logstdparam':
-    #   self.mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-    #   self.logstd = torch.nn.parameter.Parameter(
-    #     torch.full((1, int(np.prod(self.output_size))), fill_value=np.log(self.init_std)), requires_grad=True
-    #   )
-    elif self.impl in ('normal_logstdparam_unclipped', 'bounded_normal_logstdparam_unclipped'):
-      mean_net = nn.Linear(input_size, int(np.prod(self.output_size))) #, **self.kw)
-      self._forward_method = self.normal_logstdparam_unclipped
-      if self.impl == 'bounded_normal_logstdparam_unclipped':
-        mean_net = nn.Sequential(
-          mean_net,
-          nn.Tanh()
-        )
-        self._forward_method = self.bounded_normal_logstdparam_unclipped
-      self.mean_net = mean_net
-      self.logstd = torch.nn.parameter.Parameter(
-        torch.full(
-          (1, int(np.prod(self.output_size))),
-          fill_value=math.std_to_logstd(torch.tensor(self.init_std), self.minstd, self.maxstd),
-          dtype=torch.float32),
-        requires_grad=True
-      )
-    else:
-      raise NotImplementedError(self.impl)
-
-  @torch.jit.unused
-  def _init_layer(self, layer):
-    torch.nn.init.trunc_normal_(layer.weight)
-    layer.weight.data *= self.outscale
-    torch.nn.init.zeros_(layer.bias)
-
-  def forward(self, x: torch.Tensor) -> Normal:
-    # if not hasattr(self, self.impl):
-    #   raise NotImplementedError(self.impl)
-    # output = getattr(self, self.impl)(x)
-    output = self._forward_method(x)
-    return output
-
-  def voxel_grid_decoder(self, x):
-    latent_grid = self.decoder(x)
-    bshape = latent_grid.shape[:-4]
-    latent_grid = latent_grid.reshape((-1, *latent_grid.shape[-4:]))
-    occupancy_grid = self.occupancy_grid_projection(latent_grid).squeeze(-1)
-    centroid_grid = self.centroid_grid_projection(latent_grid).squeeze(-1)
-    occupancy_grid = occupancy_grid.reshape((*bshape, *occupancy_grid.shape[-3:]))
-    centroid_grid = centroid_grid.reshape((*bshape, *centroid_grid.shape[-3:]))
-    occupancy_dist = Binary(occupancy_grid)
-    centroid_dist = MSE(centroid_grid)
-    return occupancy_dist, centroid_dist
-
-  def mse(self, x):
-    pred = self.projection_net(x)
-    pred = pred.reshape((*pred.shape[:-1], *self.output_size))
-    return MSE(pred)
-
-  # def symexp_twohot(self, x):
-  #   logits = self.projection_net(x)
-  #   logits = logits.reshape((*x.shape[:-1], self.output_size, self.bins))
-  #   if self.bins % 2 == 1:
-  #     half = torch.linspace(-20, 0, (self.bins - 1) // 2 + 1, dtype=torch.float32, device=x.device)
-  #     half = math.symexp(half)
-  #     bins = torch.cat([half, -half[:-1].flip(0)], 0)
-  #   else:
-  #     half = torch.linspace(-20, 0, self.bins // 2, dtype=torch.float32, device=x.device)
-  #     half = math.symexp(half)
-  #     bins = torch.cat([half, -half.flip(0)], 0)
-  #   return TwoHot(logits, bins)
-
-  # def bounded_normal(self, x):
-  #   mean = self.mean_net(x)
-  #   stddev = self.stddev_net(x)
-  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-  #   lo, hi = self.minstd, self.maxstd
-  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-  #   output = Normal(torch.tanh(mean), stddev)
-  #   return output
-
-  # def normal_logstd(self, x):
-  #   mean = self.mean_net(x)
-  #   stddev = torch.exp(self.stddev_net(x))
-  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-  #   lo, hi = self.minstd, self.maxstd
-  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-  #   output = Normal(mean, stddev)
-  #   return output
-
-  # def normal(self, x):
-  #   mean = self.mean_net(x)
-  #   stddev = self.stddev_net(x)
-  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-  #   stddev = stddev.reshape((*stddev.shape[:-1], *self.output_size))
-  #   lo, hi = self.minstd, self.maxstd
-  #   stddev = (hi - lo) * torch.sigmoid(stddev + 2.0) + lo
-  #   output = Normal(mean, stddev)
-  #   return output
-
-  # def normal_logstdparam(self, x):
-  #   mean = self.mean_net(x)
-  #   with torch.no_grad():
-  #     log_min = np.log(self.minstd)
-  #     log_max = np.log(self.maxstd)
-  #     self.logstd.copy_(self.logstd.clip(min=log_min, max=log_max))
-  #   mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-  #   std = torch.exp(self.logstd)
-  #   std = std.reshape((*std.shape[:-1], *self.output_size))
-  #   output = Normal(mean, std)
-  #   return output
-
-  def normal_logstdparam_unclipped(self, x):
-    mean = self.mean_net(x)
-    std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    std = std.reshape((*std.shape[:-1], *self.output_size))
-    output = Normal(mean, std)
-    return output
-
-  def bounded_normal_logstdparam_unclipped(self, x):
-    mean = self.mean_net(x)
-    std = math.logstd_to_std(self.logstd, self.minstd, self.maxstd)
-    mean = mean.reshape((*mean.shape[:-1], *self.output_size))
-    std = std.reshape((*std.shape[:-1], *self.output_size))
-    output = Normal(mean, std)
-    return output
-
-  # def stats(self):
-  #   if self.impl == 'normal_logstdparam':
-  #     return {
-  #       'logstd': self.logstd.detach().cpu().numpy(),
-  #       'std': torch.exp(self.logstd).detach().cpu().numpy()
-  #     }
-  #   elif self.impl == 'normal_logstdparam_unclipped':
-  #     return {
-  #       'logstd': self.logstd.detach().cpu().numpy(),
-  #       'std': math.logstd_to_std(self.logstd, self.minstd, self.maxstd).detach().cpu().numpy()
-  #     }
-  #   else:
-  #     return {}
-
 class NormalLogSTDHead(nn.Module):
 
   def __init__(
@@ -627,6 +420,7 @@ class NormalLogSTDHead(nn.Module):
       minstd: float = 1.0,
       maxstd: float = 1.0,
       bounded: bool = False,
+      outscale: Optional[float] = None,
     ):
     super().__init__()
 
@@ -636,6 +430,8 @@ class NormalLogSTDHead(nn.Module):
     self.minstd = minstd
     self.maxstd = maxstd
     mean_net = nn.Linear(input_size, int(np.prod(self.output_size)))
+    if outscale is not None:
+      utils.init_linear(mean_net, scale=outscale)
     if bounded:
       mean_net = nn.Sequential(
         mean_net,
@@ -680,7 +476,7 @@ class TwoHotHead(nn.Module):
     self.num_bins = bins
     self.outscale = outscale
     self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size) * self.num_bins)) #, **self.kw)
-    utils.init_layer(self.projection_net, self.outscale)
+    utils.init_linear(self.projection_net, scale=self.outscale)
 
     if self.num_bins % 2 == 1:
       half = torch.linspace(-20, 0, (self.num_bins - 1) // 2 + 1, dtype=torch.float32)
@@ -711,7 +507,7 @@ class MSEHead(nn.Module):
     self.outscale = outscale
 
     self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size)))
-    utils.init_layer(self.projection_net, self.outscale)
+    utils.init_linear(self.projection_net, scale=self.outscale)
 
   def forward(self, x: torch.Tensor) -> MSE:
     pred = self.projection_net(x)

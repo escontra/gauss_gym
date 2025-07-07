@@ -103,7 +103,7 @@ class LeggedRobot(base_task.BaseTask):
             )
         return act_space
 
-    def scale_actions(self, actions):
+    def unnormalize_actions(self, actions):
       # Assume actions that need scaling are in the range [-1, 1].
       actions_env = {}
       for k, v in self.action_space().items():
@@ -121,6 +121,22 @@ class LeggedRobot(base_task.BaseTask):
           actions_env[k] = action
       return actions_env
 
+    def normalize_actions(self, actions):
+      actions_normalized = {}
+      for k, v in self.action_space().items():
+        action = actions[k]
+        low = v.low.clone().detach().to(self.device)[None]
+        high = v.high.clone().detach().to(self.device)[None]
+        needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
+        if needs_scaling:
+          offset, scale = low, high - low
+          normalized = (action - offset) / scale
+          action_normalized = (normalized * 2) - 1
+          actions_normalized[k] = action_normalized
+        else:
+          actions_normalized[k] = action
+      return actions_normalized
+
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
 
@@ -133,7 +149,7 @@ class LeggedRobot(base_task.BaseTask):
             actions['stiffness'] = torch.zeros_like(actions['actions'])
             actions['damping'] = torch.zeros_like(actions['actions'])
 
-        actions = self.scale_actions(actions)
+        actions = self.unnormalize_actions(actions)
 
         if isinstance(actions, dict):
             act = actions['actions']
@@ -261,6 +277,8 @@ class LeggedRobot(base_task.BaseTask):
         self.feet_air_time *= ~contact_filt
         self.feet_contact_time *= contact_filt
         self.last_actions[:] = self.actions[:]
+        self.last_stiffness[:] = self.stiffness[:]
+        self.last_damping[:] = self.damping[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_contacts[:] = self.feet_contact[:]
@@ -654,6 +672,8 @@ class LeggedRobot(base_task.BaseTask):
         # reset buffers
         self.last_root_vel[env_ids] = 0.
         self.last_actions[env_ids] = 0.
+        self.last_stiffness[env_ids] = 0.
+        self.last_damping[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
         self.swing_peak[env_ids] = 0.
@@ -675,6 +695,8 @@ class LeggedRobot(base_task.BaseTask):
           return
         self.last_root_vel[env_ids] = self.root_states[env_ids, 7:13]
         self.last_actions[env_ids] = self.actions[env_ids]
+        self.last_stiffness[env_ids] = self.stiffness[env_ids]
+        self.last_damping[env_ids] = self.damping[env_ids]
         self.last_dof_vel[env_ids] = self.dof_vel[env_ids]
         self.last_contacts[env_ids] = self.feet_contact[env_ids]
         self.last_torques[env_ids] = self.torques[env_ids]
@@ -830,6 +852,8 @@ class LeggedRobot(base_task.BaseTask):
         self.stiffness = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.damping = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.last_stiffness = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.last_damping = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
         self.last_torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
@@ -1207,6 +1231,26 @@ class LeggedRobot(base_task.BaseTask):
         # if include_abs:
         #   action_rate_reward += action_diff.abs().sum(dim=-1)
         # return action_rate_reward
+
+    def _reward_action_rate_gains(self):
+
+        # Re-normalize the actions to the range [-1, 1]
+        normalized_last_actions = self.normalize_actions({
+            "stiffness": self.last_stiffness,
+            "damping": self.last_damping,
+            "actions": self.last_actions,
+        })
+        normalized_actions = self.normalize_actions({
+            "stiffness": self.stiffness,
+            "damping": self.damping,
+            "actions": self.actions,
+        })
+
+        action_diff_stiffness = normalized_last_actions["stiffness"] - normalized_actions["stiffness"]
+        action_diff_damping = normalized_last_actions["damping"] - normalized_actions["damping"]
+        return (
+            torch.norm(action_diff_stiffness, p=2, dim=-1) + action_diff_stiffness.abs().sum(dim=-1)
+            + torch.norm(action_diff_damping, p=2, dim=-1) + action_diff_damping.abs().sum(dim=-1)) / 2.
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies

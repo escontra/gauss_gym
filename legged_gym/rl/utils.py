@@ -15,10 +15,34 @@ def tree_cat(x, y, dim: int):
 
 
 @torch.jit.unused
-def init_layer(layer: torch.nn.Module, scale: float):
-  torch.nn.init.trunc_normal_(layer.weight)
-  layer.weight.data *= scale
+def init_linear(
+    layer: torch.nn.Linear,
+    dist: str = 'trunc_normal',
+    fan: str = 'in',
+    scale: float = 1.0):
+  fanin, fanout = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
+  fan_value = {
+    'avg': (fanin + fanout) / 2, 'in': fanin, 'out': fanout, 'none': 1,
+  }[fan]
   torch.nn.init.zeros_(layer.bias)
+  if dist == 'trunc_normal':
+    torch.nn.init.trunc_normal_(layer.weight, a=-2., b=2.)
+    layer.weight.data *= 1.1368 * np.sqrt(1 / fan_value)
+  elif dist == 'uniform':
+    limit = np.sqrt(1 / fan)
+    torch.nn.init.uniform_(layer.weight, a=-limit, b=limit)
+  elif dist == 'normal':
+    torch.nn.init.normal_(layer.weight, mean=0.0, std=1.0)
+    layer.weight.data *= np.sqrt(1 / fan_value)
+  elif dist == 'zeros':
+    torch.nn.init.zeros_(layer.weight)
+  elif dist == 'normed':
+    torch.nn.init.uniform_(layer.weight, a=-1.0, b=1.0)
+    layer.weight.data *= (1 / torch.linalg.norm(layer.weight.data.reshape((-1, layer.weight.data.shape[-1])), 2, 0))
+  else:
+    raise NotImplementedError(dist)
+
+  layer.weight.data *= scale
 
 
 def sync_grads_multi_gpu(param_list, multi_gpu_world_size: int):

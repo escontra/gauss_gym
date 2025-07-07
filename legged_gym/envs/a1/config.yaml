@@ -525,20 +525,23 @@ policy:
           minstd: 0.2
           maxstd: 1.0
           init_std: 0.9
+          outscale: 0.01
       stiffness:
         class_name: NormalLogSTDHead
         params:
           minstd: 0.05
           maxstd: 1.0
-          init_std: 0.3
+          init_std: 0.1
           bounded: True
+          outscale: 0.01
       damping:
         class_name: NormalLogSTDHead
         params:
           minstd: 0.05
           maxstd: 1.0
-          init_std: 0.3
+          init_std: 0.1
           bounded: True
+          outscale: 0.01
 
 value:
   class_name: RecurrentMLPModel
@@ -557,7 +560,7 @@ value:
       value:
         class_name: MSEHead
         params:
-          outscale: 1.0
+          outscale: 0.0
 
 algorithm:
   gamma: 0.97
@@ -568,12 +571,12 @@ algorithm:
     damping: 0.1
   entropy_coefs:
     actions: -0.01
-    stiffness: -0.01
-    damping: -0.01
+    stiffness: -0.001
+    damping: -0.001
   desired_kl: 0.01
   kl_key: actions
-  symmetry_loss: True
-  symmetry_augmentation: False
+  symmetry_loss: False
+  symmetry_augmentation: True
   symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0

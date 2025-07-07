@@ -6,6 +6,19 @@ import torch.utils._pytree as pytree
 from legged_gym.utils import space
 
 
+class RunningEMA:
+    def __init__(self, alpha=0.9):
+        self.running_ema = 0.
+        self.alpha = alpha
+
+    def update(self, num):
+        self.running_ema = self.alpha * self.running_ema + (1 - self.alpha) * num
+
+    @property
+    def ema(self):
+        return self.running_ema
+
+
 def _validate_batch_shapes(batch,
                            reference_sample,
                            batch_dims: Tuple[int, ...]) -> None:
