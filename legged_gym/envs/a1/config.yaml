@@ -491,8 +491,8 @@ image_encoder:
     train_ratio_after: 0.1
   learning_rate_scheduler:
     warmup_steps: 100
-    learning_rate_warmup: 1.e-3
-    learning_rate_after: 1.e-4
+    learning_rate_warmup: 1.e-4
+    learning_rate_after: 5.e-5
   params:
     layer_activation: silu
     recurrent_state_size: 512
