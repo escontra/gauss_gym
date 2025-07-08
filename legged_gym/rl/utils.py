@@ -77,6 +77,15 @@ def broadcast_scalar(scalar, src_rank: int, device):
   scalar = scalar_tensor.item()
   return scalar
 
+def sync_state_dict(module, src_rank: int):
+  """
+  Syncs the state dict of a module to all GPUs.
+  """
+  state_dict = module.state_dict()
+  model_params = [state_dict]
+  torch_distributed.broadcast_object_list(model_params, src_rank)
+  module.load_state_dict(model_params[0])
+
 
 class SetpointScheduler:
   def __init__(self, warmup_steps: int, val_warmup, val_after):

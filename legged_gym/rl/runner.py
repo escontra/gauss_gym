@@ -73,6 +73,9 @@ class Runner:
           **self.cfg["image_encoder"]["params"]
         ).to(self.device)
 
+        if self.multi_gpu:
+          rl_utils.sync_state_dict(self.image_encoder, 0)
+
         # Image encoder wrapper computes latents during the environment step.
         self.env = wrappers.ImageEncoderWrapper(self.env, self.image_encoder_key, self.image_encoder)
       if self.image_encoder is None:
@@ -110,6 +113,10 @@ class Runner:
       project_dims=policy_project_dims,
       **self.cfg["policy"]["params"]
     ).to(self.device)
+
+    # Sync policy to all GPUs.
+    if self.multi_gpu:
+      rl_utils.sync_state_dict(self.policy, 0)
     # For KL.
     self.old_policy: models.RecurrentModel = copy.deepcopy(self.policy)
     for param in self.old_policy.parameters():
@@ -124,6 +131,10 @@ class Runner:
       project_dims=value_project_dims,
       **self.cfg["value"]["params"]
     ).to(self.device)
+
+    # Sync value to all GPUs.
+    if self.multi_gpu:
+      rl_utils.sync_state_dict(self.value, 0)
 
     # Optimizers.
     if self.image_encoder_enabled:
