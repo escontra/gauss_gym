@@ -191,16 +191,20 @@ class Runner:
       )[-1]
     else:
       resume_path = resume_root / load_run
-    utils.print(f"Loading checkpoint from: {resume_path}", color='blue')
-    utils.print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}', color='blue')
-    utils.print(f'\tLoading checkpoint: {checkpoint}', color='blue')
-    if (checkpoint == "-1") or (checkpoint == -1):
-      model_path = sorted(
-        (resume_path / "nn").glob("*.pth"),
-        key=lambda path: path.stat().st_mtime,
-      )[-1]
+
+    if load_run.startswith('wandb_'):
+      model_path = rl_utils.get_wandb_path(load_run, self.multi_gpu, self.multi_gpu_global_rank)
     else:
-      model_path = resume_path / "nn" / f"model_{checkpoint:06d}.pth"
+      utils.print(f"Loading checkpoint from: {resume_path}", color='blue')
+      utils.print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}', color='blue')
+      utils.print(f'\tLoading checkpoint: {checkpoint}', color='blue')
+      if (checkpoint == "-1") or (checkpoint == -1):
+        model_path = sorted(
+          (resume_path / "nn").glob("*.pth"),
+          key=lambda path: path.stat().st_mtime,
+        )[-1]
+      else:
+        model_path = resume_path / "nn" / f"model_{checkpoint:06d}.pth"
     utils.print(f'\tLoading model weights from: {model_path}', color='blue')
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
