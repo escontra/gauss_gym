@@ -201,6 +201,10 @@ def a1_motor_strength_symmetry(env, obs):
   return a1_joint_symmetry(env, obs, use_multipliers=False)
 
 
+def a1_motor_error_symmetry(env, obs):
+  return a1_joint_symmetry(env, obs, use_multipliers=True)
+
+
 def a1_dof_friction_curriculum_values_symmetry(env, obs):
   return a1_joint_symmetry(env, obs, use_multipliers=False)
 
@@ -283,6 +287,11 @@ A1_DAMPING = SymmetryModifier(
 A1_MOTOR_STRENGTH = SymmetryModifier(
   observation=observation_groups.MOTOR_STRENGTH,
   symmetry_fn=a1_motor_strength_symmetry,
+)
+
+A1_MOTOR_ERROR = SymmetryModifier(
+  observation=observation_groups.MOTOR_ERROR,
+  symmetry_fn=a1_motor_error_symmetry,
 )
 
 A1_DOF_FRICTION_CURRICULUM_VALUES = SymmetryModifier(

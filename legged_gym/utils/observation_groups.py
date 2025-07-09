@@ -109,6 +109,11 @@ MOTOR_STRENGTH = Observation(
   func=O.motor_strength,
 )
 
+MOTOR_ERROR = Observation(
+  name="motor_error",
+  func=O.motor_error,
+)
+
 CAMERA_IMAGE = Observation(
   name="camera_image",
   func=O.gs_render,

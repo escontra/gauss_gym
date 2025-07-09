@@ -86,6 +86,9 @@ def damping(env: "ANY_ENV", params, is_real=False):
 def motor_strength(env: "ANY_ENV", params, is_real=False):
     return env.motor_strength_multiplier
 
+def motor_error(env: "ANY_ENV", params, is_real=False):
+    return env.motor_error
+
 def ray_cast(env: "ANY_ENV", params, is_real=False):
     sensor = env.sensors[params.sensor]
     world_heights = sensor.get_data()[..., 2]

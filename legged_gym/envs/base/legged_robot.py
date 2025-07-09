@@ -647,8 +647,9 @@ class LeggedRobot(base_task.BaseTask):
         if self.cfg["control"]["computer_clip_torque"]:
             actions = self.clip_position_action_by_torque_limit(actions, pert_dof_stiffness, pert_dof_damping)
 
-        # Perturbation of motor strength.
+        # Perturbation of motor position error and strength.
         actions = actions * self.motor_strength_multiplier
+        actions = actions + self.motor_error
 
         torques = (
             pert_dof_stiffness
@@ -1065,6 +1066,9 @@ class LeggedRobot(base_task.BaseTask):
         self.motor_strength_multiplier = torch.ones_like(self.dof_friction)
         if self.cfg["domain_rand"]["motor_strength"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             self.motor_strength_multiplier = math.apply_randomization(self.motor_strength_multiplier, self.cfg["domain_rand"]["motor_strength"])
+        self.motor_error = torch.zeros_like(self.dof_friction)
+        if self.cfg["domain_rand"]["motor_error"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
+            self.motor_error = math.apply_randomization(self.motor_error, self.cfg["domain_rand"]["motor_error"])
         self.dof_stiffness_multiplier = torch.ones_like(self.dof_friction)
         if self.cfg["domain_rand"]["dof_stiffness"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             self.dof_stiffness_multiplier = math.apply_randomization(self.dof_stiffness_multiplier, self.cfg["domain_rand"]["dof_stiffness"])

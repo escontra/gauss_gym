@@ -292,6 +292,11 @@ domain_rand:
     range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
+  motor_error:
+    apply: True
+    range: [-0.05, 0.05]
+    operation: "additive"
+    distribution: "uniform"
 
   dof_stiffness:
     apply: True
