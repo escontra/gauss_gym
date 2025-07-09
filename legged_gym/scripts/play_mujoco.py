@@ -89,7 +89,7 @@ def main(argv=None):
       )[-1]
 
     print(f'Loading run from: {load_run_path}...')
-    cfg = config.Config.load(load_run_path / 'config.yaml')
+    cfg = config.Config.load(load_run_path / 'train_config.yaml')
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.resume': True})
     cfg = cfg.update({'headless': False})

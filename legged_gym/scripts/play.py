@@ -7,7 +7,7 @@ from legged_gym.envs import *
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils import flags, config
 from legged_gym.utils import helpers
-from legged_gym.rl import utils as rl_utils
+from legged_gym.utils import wandb as wandb_utils
 
 from legged_gym.rl.runner import Runner
 
@@ -26,7 +26,7 @@ def main(argv = None):
 
     print(f'Loading run from: {load_run_path}...')
     if load_run_path.name.startswith('wandb_'):
-      cfg = rl_utils.get_wandb_config(load_run_path.name, multi_gpu=False, multi_gpu_rank=0, config_name="train_config.yaml")
+      cfg = wandb_utils.get_wandb_config(load_run_path.name, multi_gpu=False, multi_gpu_rank=0, config_name="train_config.yaml")
     else:
       cfg = config.Config.load(load_run_path / 'train_config.yaml')
 

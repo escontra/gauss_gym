@@ -14,6 +14,7 @@ from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
 from legged_gym import utils
 from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space, visualization, wrappers, math
+from legged_gym.utils import wandb as wandb_utils
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -193,7 +194,7 @@ class Runner:
       resume_path = resume_root / load_run
 
     if load_run.startswith('wandb_'):
-      model_path = rl_utils.get_wandb_path(load_run, self.multi_gpu, self.multi_gpu_global_rank)
+      model_path = wandb_utils.get_wandb_path(load_run, self.multi_gpu, self.multi_gpu_global_rank)
     else:
       utils.print(f"Loading checkpoint from: {resume_path}", color='blue')
       utils.print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}', color='blue')
