@@ -168,8 +168,8 @@ asset:
   file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/urdf/a1.urdf"
   mujoco_file: "{GAUSS_GYM_ROOT_DIR}/resources/robots/a1/xml/a1.xml"
   name: "a1"
-  base_link_name: "base"
-  camera_link_name: "base"
+  base_link_name: "trunk"
+  camera_link_name: "trunk"
   foot_name: "foot"
   hip_link_names: ["FR_hip", "FL_hip", "RR_hip", "RL_hip"]
   front_hip_names: ["FR_hip_joint", "FL_hip_joint"]
