@@ -413,6 +413,7 @@ runner:
   compile: True
   class_name: "Runner"
   use_wandb: True
+  wandb_save_model: True
   description: ""
   log_every: 30.
   save_every: 150.

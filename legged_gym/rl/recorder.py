@@ -244,6 +244,17 @@ class Recorder:
       utils.print(f"Saving model to {path}", color='blue')
       torch.save(model_dict, path)
 
+
+      if self.cfg["runner"]["use_wandb"] and self.cfg["runner"]["wandb_save_model"]:
+
+        # Create symbolic link to latest checkpoint
+        latest_link = self.model_dir / "model_latest.pth"
+        if latest_link.exists():
+          latest_link.unlink()
+        latest_link.symlink_to(path.name)
+        wandb.save(latest_link)
+        latest_link.unlink()
+
   def _mean(self, data):
     if len(data) == 0:
       return 0.0

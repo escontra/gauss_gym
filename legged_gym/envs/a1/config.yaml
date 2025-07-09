@@ -603,6 +603,7 @@ runner:
   num_steps_per_env: 24
   class_name: Runner
   use_wandb: True
+  wandb_save_model: True
   description: ""
   log_every: 120.
   save_every: 1800.
