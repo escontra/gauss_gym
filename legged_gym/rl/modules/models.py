@@ -414,9 +414,11 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     return features
 
   @torch.jit.unused
-  def update_normalizer(self, obs: Dict[str, torch.Tensor]):
+  def update_normalizer(self, obs: Dict[str, torch.Tensor], multi_gpu: bool = False):
     if self.normalize_obs:
       self.obs_normalizer.update(obs)
+      if multi_gpu:
+        utils.sync_state_dict(self.obs_normalizer, 0)
 
   def forward(self,
               obs: Dict[str, torch.Tensor],

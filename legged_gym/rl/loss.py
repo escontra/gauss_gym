@@ -442,8 +442,8 @@ def learn_ppo(
 
   # Update the observation normalizers.
   with torch.no_grad():
-    policy.update_normalizer(buffer[policy_obs_key])
-    value.update_normalizer(buffer[value_obs_key])
+    policy.update_normalizer(buffer[policy_obs_key], multi_gpu=multi_gpu)
+    value.update_normalizer(buffer[value_obs_key], multi_gpu=multi_gpu)
 
   for i, param_group in enumerate(policy_optimizer.param_groups):
     assert isinstance(param_group["lr"], float)
