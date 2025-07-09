@@ -56,7 +56,7 @@ observations:
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
-      STIFFNESS, DAMPING, MOTOR_STRENGTH, IMAGE_ENCODER_LATENT
+      STIFFNESS, DAMPING, MOTOR_STRENGTH, MOTOR_ERROR, IMAGE_ENCODER_LATENT
     ]
   policy:
     add_noise: True
@@ -82,7 +82,7 @@ symmetries:
       A1_DOF_POS, A1_DOF_VEL, A1_ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       A1_DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, A1_FEET_AIR_TIME, A1_FEET_CONTACT_TIME, A1_FEET_CONTACT,
-      A1_STIFFNESS, A1_DAMPING, A1_MOTOR_STRENGTH,
+      A1_STIFFNESS, A1_DAMPING, A1_MOTOR_STRENGTH, A1_MOTOR_ERROR,
       CAMERA_IMAGE, IMAGE_ENCODER_LATENT
     ]
   policy:
@@ -175,7 +175,7 @@ asset:
   front_hip_names: ["FR_hip_joint", "FL_hip_joint"]
   rear_hip_names: ["RR_hip_joint", "RL_hip_joint"]
   penalize_contacts_on: ["thigh", "calf", "hip"]
-  terminate_after_contacts_on: ["base", "imu"]
+  terminate_after_contacts_on: ["trunk", "base", "imu"]
   feet_edge_pos: [[0.0, 0.0, 0.0]]
   feet_contact_radius: 0.0201
 
@@ -294,7 +294,7 @@ domain_rand:
     distribution: "uniform"
   motor_error:
     apply: True
-    range: [-0.05, 0.05]
+    range: [-0.03, 0.03]
     operation: "additive"
     distribution: "uniform"
 
@@ -505,10 +505,9 @@ image_encoder:
     hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
-    # model_type: timm_test_convnext
-    model_type: cnn_simple
+    model_type: timm_test_convnext
     embedding_dim: 128
-    torchaug_transforms: False
+    torchaug_transforms: True
 
 policy:
   class_name: RecurrentMLPModel
@@ -580,8 +579,8 @@ algorithm:
     damping: -0.001
   desired_kl: 0.01
   kl_key: actions
-  symmetry_loss: False
-  symmetry_augmentation: True
+  symmetry_loss: True
+  symmetry_augmentation: False
   symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0
