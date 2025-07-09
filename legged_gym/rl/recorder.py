@@ -145,7 +145,9 @@ class Recorder:
           config=dict(self.cfg),
         )
 
-      config.Config(self.cfg).save(self.log_dir / "config.yaml")
+      config.Config(self.cfg).save(self.log_dir / "train_config.yaml")
+      if self.cfg["runner"]["use_wandb"] and self.cfg["runner"]["wandb_save_model"] and self.rank_zero:
+        wandb.save(self.log_dir / "train_config.yaml", base_path=self.log_dir)
       config.Config({'deploy': self.deploy_cfg}).save(self.log_dir / "deploy_config.yaml")
 
       for key, value in self.save_dicts.items():
@@ -243,6 +245,16 @@ class Recorder:
       path = self.model_dir / f"model_{it:06d}.pth"
       utils.print(f"Saving model to {path}", color='blue')
       torch.save(model_dict, path)
+
+
+      if self.cfg["runner"]["use_wandb"] and self.cfg["runner"]["wandb_save_model"]:
+
+        # Create symbolic link to latest checkpoint
+        latest_link = self.model_dir / "model_latest.pth"
+        if latest_link.exists():
+          latest_link.unlink()
+        latest_link.symlink_to(path.name)
+        wandb.save(latest_link)
 
   def _mean(self, data):
     if len(data) == 0:
