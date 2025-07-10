@@ -5,6 +5,7 @@ import torch
 import pathlib
 import legged_gym
 import torch.onnx
+import pickle
 
 from legged_gym.envs import *
 from legged_gym import utils
@@ -134,7 +135,7 @@ def export_onnx(model_name, model, obs_space, output_names, save_path, test_inpu
 def main(argv = None):
     log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
-    parsed, other = flags.Flags({'runner': {'load_run': ''}, 'model_name': 'all'}).parse_known(argv)
+    parsed, other = flags.Flags({'runner': {'load_run': ''}, 'model_name': 'all', 'output_path': 'default'}).parse_known(argv)
     if parsed.runner.load_run != '':
       load_run_path = log_root / parsed.runner.load_run
     else:
@@ -144,9 +145,10 @@ def main(argv = None):
       )[-1]
 
     utils.print(f'Loading run from: {load_run_path}...')
-    cfg = config.Config.load(load_run_path / 'train_config.yaml')
+    cfg = helpers.get_config(load_run_path)
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.resume': True})
+    cfg = cfg.update({'multi_gpu': False})
     cfg = cfg.update({'headless': True})
     cfg = cfg.update({'env.num_envs': 1})
     cfg = cfg.update({'rl_device': 'cuda:0'})
@@ -188,11 +190,25 @@ def main(argv = None):
     else:
       export_models = [parsed.model_name]
 
+    if parsed.output_path == 'default':
+        output_path = resume_path
+    else:
+        output_path = pathlib.Path(parsed.output_path)
+
     for model_name in export_models:
       model, obs_space = model_dicts[model_name]
       output_names = model.output_dist_names
       model.eval()
-      export_onnx(model_name, model, obs_space, output_names, resume_path, test_inputs=True)
+      export_onnx(model_name, model, obs_space, output_names, output_path, test_inputs=True)
+
+    yaml_path = output_path / "train_config.yaml"
+    if not yaml_path.exists():
+      config.Config(cfg).save(output_path / "train_config.yaml")
+    for key, value in runner.spaces_dict.items():
+      space_path = output_path / f"{key}.pkl"
+      if not space_path.exists():
+        with open(space_path, "wb") as file:
+          pickle.dump(value, file)
 
 
 if __name__ == "__main__":

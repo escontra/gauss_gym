@@ -273,7 +273,7 @@ domain_rand:
     distribution: "uniform"
   base_mass:
     apply: True
-    range: [0.8, 1.2]
+    range: [0.6, 1.4]
     operation: "scaling"
     distribution: "uniform"
   other_com:
@@ -289,7 +289,7 @@ domain_rand:
 
   motor_strength:
     apply: True
-    range: [0.9, 1.1]
+    range: [0.8, 1.2]
     operation: "scaling"
     distribution: "uniform"
   motor_error:
@@ -305,7 +305,7 @@ domain_rand:
     distribution: "uniform"
   dof_damping:
     apply: True
-    range: [0.95, 1.05]
+    range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
   dof_damping_ankles:

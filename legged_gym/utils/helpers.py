@@ -33,6 +33,22 @@ import copy
 import torch
 import numpy as np
 import random
+import pathlib
+
+from legged_gym import utils
+from legged_gym.utils import config
+from legged_gym.utils import wandb as wandb_utils
+
+
+def get_config(load_run_path: pathlib.Path):
+  if load_run_path.name.startswith('wandb_'):
+    utils.print(f'Loading wandb run: {load_run_path.name}', color='blue')
+    cfg = wandb_utils.get_wandb_config(load_run_path.name, multi_gpu=False, multi_gpu_rank=0, config_name="train_config.yaml")
+  else:
+    utils.print(f'Loading run from: {load_run_path}...', color='blue')
+    cfg = config.Config.load(load_run_path / 'train_config.yaml')
+  return cfg
+
 
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):

@@ -26,7 +26,6 @@ class DeploymentRunner:
       self.resume_path = resume_root / load_run
 
     self.obs_space = pickle.load(open(self.resume_path / f"{self.model_name}_obs_space.pkl", "rb"))
-    self.action_space = pickle.load(open(self.resume_path / "action_space.pkl", "rb"))
 
     onnx_dir = self.resume_path / "onnx"
     onnx_path = onnx_dir / f"{self.model_name}.onnx"

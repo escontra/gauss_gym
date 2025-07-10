@@ -179,7 +179,7 @@ class Runner:
     symmetry_fn = symmetry_fns[obs_name]
     return lambda val: symmetry_fn(self.env, val)
 
-  def load(self, resume_root: pathlib.Path):
+  def load(self, resume_root: pathlib.Path) -> pathlib.Path:
     if not self.cfg["runner"]["resume"]:
       return
 
@@ -245,6 +245,18 @@ class Runner:
     self.policy.eval()
     self.value.eval()
 
+  @property
+  def spaces_dict(self):
+    spaces_dict = {
+      'policy_obs_space': self.policy_obs_space,
+      'value_obs_space': self.value_obs_space,
+      'action_space': self.env.action_space(),
+    }
+    if self.image_encoder_enabled:
+      spaces_dict['image_encoder_obs_space'] = self.image_encoder_obs_space
+    return spaces_dict
+
+
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Logger aggregators.
     self.step_agg = agg.Agg()
@@ -254,15 +266,9 @@ class Runner:
     self.action_agg = agg.Agg()
     self.should_log = when.Clock(self.cfg["runner"]["log_every"])
     self.should_save = when.Clock(self.cfg["runner"]["save_every"])
-    save_spaces = {
-      'policy_obs_space': self.policy_obs_space,
-      'value_obs_space': self.value_obs_space,
-      'action_space': self.env.action_space(),
-    }
     if self.image_encoder_enabled:
-      save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
       self.env.init_image_encoder_replay_buffer(self.cfg["image_encoder"]["num_steps_per_env"])
-    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces, rank_zero=self.rank_zero)
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), self.spaces_dict, rank_zero=self.rank_zero)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
