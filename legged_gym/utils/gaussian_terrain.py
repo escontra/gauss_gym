@@ -339,6 +339,13 @@ class GaussianSceneManager:
         mesh.triangles.flatten(order="C"),
         mesh_params,
       )
+      if self._env.use_viser:
+        self._env.viser_viz.add_mesh(
+            f"/terrain_{i}",
+            vertices=vertices,
+            faces=mesh.triangles,
+            color=(0.282, 0.247, 0.361),
+        )
 
       vertices_offset = (
         0 if len(all_vertices) == 0 else np.concatenate(all_vertices).shape[0]

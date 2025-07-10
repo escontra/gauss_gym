@@ -36,6 +36,15 @@ class LeggedRobot(base_task.BaseTask):
         self.height_samples = None
         self.debug_viz = True
         self.init_done = False
+
+        self.use_viser = not self.cfg["headless"]
+
+                # Initialize viser if enabled
+        if self.use_viser:
+            from legged_gym.utils.viser_visualizer import LeggedRobotViser
+            asset_path = self.cfg["asset"]["file"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
+            self.viser_viz = LeggedRobotViser(self, urdf_path=asset_path, dt=self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"])
+
         super().__init__(self.cfg)
         self.dt = self.cfg["control"]["decimation"] * self.sim_params.dt
         self.command_ranges = dict(self.cfg["commands"]["ranges"])
@@ -195,6 +204,11 @@ class LeggedRobot(base_task.BaseTask):
                 self.post_decimation_step(dec_i)
         reset_buf = self.post_physics_step()
         return self.obs_dict, self.rew_buf, reset_buf, self.extras
+    
+    def render(self, sync_frame_time=True):
+        if self.use_viser:
+            self.viser_viz.update(self.root_states[:, :7], self.dof_pos, 0)
+        super().render(sync_frame_time)
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
