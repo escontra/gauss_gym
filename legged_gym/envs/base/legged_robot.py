@@ -1294,7 +1294,7 @@ class LeggedRobot(base_task.BaseTask):
       weights = torch.tensor(weights, device=self.device)[None]
       reward =  torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos) * weights, dim=-1))
       return reward
-    
+
     def _reward_feet_clearance(self, clearance_height):
       _, _, feet_vel, _ = self.get_feet_state()
       vel_xy = feet_vel[..., :2]

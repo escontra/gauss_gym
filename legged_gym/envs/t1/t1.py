@@ -108,13 +108,13 @@ class T1(LeggedRobot):
           elif 'Waist' in name:
               weights.append(1.0)
           elif 'Hip' in name:
-              weights.append(0.1)
+              weights.append(0.03)
           elif 'Knee' in name:
-              weights.append(0.1)
+              weights.append(0.03)
           elif 'Ankle_Pitch' in name:
-              weights.append(0.1)
+              weights.append(0.03)
           elif 'Ankle_Roll' in name:
-              weights.append(1.0)
+              weights.append(0.1)
           else:
               raise ValueError(f"Unknown dof name: {name}")
       weights = torch.tensor(weights, device=self.device)[None]
