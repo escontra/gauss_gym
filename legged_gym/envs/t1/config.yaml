@@ -209,7 +209,7 @@ curriculum:
     apply: True
     epochs: 3000
     update_every: 10
-    start: 0.2
+    start: 0.1
     end: 0.0
     sample_type: "uniform"
 
@@ -257,7 +257,7 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
   init_base_yaw:
-    apply: True
+    apply: False
     range: [0.0, 1.5]
     operation: "additive"
     distribution: "gaussian"
@@ -332,7 +332,7 @@ domain_rand:
     distribution: "uniform"
   dof_armature_ig_property:
     apply: True
-    range: [0.01, 0.015]
+    range: [0.0, 0.015]
     operation: "additive"
     distribution: "uniform"
 
