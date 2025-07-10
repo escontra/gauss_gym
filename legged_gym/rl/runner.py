@@ -1,82 +1,123 @@
-import os
-import numpy as np
 from typing import Any, Dict
-import random
+import collections
 import time
 import torch
 import torch.utils._pytree as pytree
 import pathlib
 import copy
+import numpy as np
 
-from legged_gym.rl import experience_buffer, recorder
+from legged_gym.rl import experience_buffer, loss, recorder
+from legged_gym.rl.modules import normalizers
+import legged_gym.rl.utils as rl_utils
 from legged_gym.rl.env import vec_env
 from legged_gym.rl.modules import models
-from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space
+from legged_gym import utils
+from legged_gym.utils import agg, observation_groups, symmetry_groups, timer, when, space, visualization, wrappers, math
+from legged_gym.utils import wandb as wandb_utils
 
-
-def discount_values(rewards, dones, values, last_values, gamma, lam):
-  advantages = torch.zeros_like(rewards)
-  last_advantage = torch.zeros_like(advantages[-1, :])
-  for t in reversed(range(rewards.shape[0])):
-    next_nonterminal = 1.0 - dones[t, :].float()
-    if t == rewards.shape[0] - 1:
-      next_values = last_values
-    else:
-      next_values = values[t + 1, :]
-    delta = (
-      rewards[t, :] + gamma * next_nonterminal * next_values - values[t, :]
-    )
-    advantages[t, :] = last_advantage = (
-      delta + gamma * lam * next_nonterminal * last_advantage
-    )
-  return advantages
-
-
-def surrogate_loss(
-  old_actions_log_prob, actions_log_prob, advantages, e_clip=0.2
-):
-  ratio = torch.exp(actions_log_prob - old_actions_log_prob)
-  surrogate = -advantages * ratio
-  surrogate_clipped = -advantages * torch.clamp(
-    ratio, 1.0 - e_clip, 1.0 + e_clip
-  )
-  surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
-  return surrogate_loss
+torch.backends.cuda.matmul.allow_tf32 = True
 
 
 class Runner:
   def __init__(self, env: vec_env.VecEnv, cfg: Dict[str, Any], device="cpu"):
     self.env = env
     self.device = device
-    self.cfg = cfg
-    self._set_seed()
-    self.policy_key = self.cfg["policy"]["obs_key"]
-    self.value_key = self.cfg["value"]["obs_key"]
+    self.multi_gpu = cfg["multi_gpu"]
+    self.multi_gpu_global_rank = cfg["multi_gpu_global_rank"]
+    self.multi_gpu_local_rank = cfg["multi_gpu_local_rank"]
+    self.multi_gpu_world_size = cfg["multi_gpu_world_size"]
 
-    # Policy.
-    reconstruct_space = None
-    reconstruct_head = None
-    if self.cfg["policy"]["reconstruct_observations"] is not None:
-      reconstruct_space = {}
-      reconstruct_head = {}
-      for key in self.cfg["policy"]["reconstruct_observations"]:
-        obs_group, obs_name = key.split('/')
-        obs_name = getattr(observation_groups, obs_name).name
-        reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
-        reconstruct_head[f'{obs_group}/{obs_name}'] = {
-          'output_type': 'mse',
-          'outscale': 1.0
-        }
+    if self.multi_gpu:
+      assert self.device == 'cuda:' + str(self.multi_gpu_local_rank) # check it was set correctly
+
+    self.rank_zero = not self.multi_gpu or self.multi_gpu_global_rank == 0
+
+    self.cfg = cfg
+    rl_utils.set_seed(self.cfg["seed"])
+
+    # Image encoder.
+    self.image_encoder_enabled = self.cfg["algorithm"]["train_image_encoder"]
+    self.image_encoder= None
+    if self.image_encoder_enabled:
+      self.image_encoder_key = self.cfg["image_encoder"]["obs_key"]
+      self.image_encoder_obs_space = self.env.obs_space()[self.image_encoder_key]
+      if len(self.env.obs_space()[self.image_encoder_key].keys()) > 0:
+        reconstruct_space = None
+        reconstruct_head = None
+        if self.cfg["image_encoder"]["reconstruct_observations"] is not None:
+          reconstruct_space = {}
+          reconstruct_head = {}
+          for key in self.cfg["image_encoder"]["reconstruct_observations"]:
+            obs_group, obs_name = key.split('/')
+            obs_name = getattr(observation_groups, obs_name).name
+            if 'ray_cast' in obs_name.lower():
+              reconstruct_head[f'{obs_group}/{obs_name}'] = {
+                'class_name': 'VoxelGridDecoderHead',
+                'params': {}
+              }
+              reconstruct_space[f'{obs_group}/{obs_name}'] = space.Space(
+                torch.float32,
+                shape=(*self.env.obs_space()[obs_group][obs_name].shape,
+                      self.cfg["image_encoder"]["voxel_height_levels"]))
+            else:
+              reconstruct_space[f'{obs_group}/{obs_name}'] = self.env.obs_space()[obs_group][obs_name]
+              reconstruct_head[f'{obs_group}/{obs_name}'] = {
+                'class_name': 'MSEHead',
+                'params': {'outscale': 1.0}
+              }
+        self.image_encoder: models.RecurrentModel = getattr(
+          models, self.cfg["image_encoder"]["class_name"])(
+          reconstruct_space,
+          self.image_encoder_obs_space,
+          head=reconstruct_head,
+          **self.cfg["image_encoder"]["params"]
+        ).to(self.device)
+
+        if self.multi_gpu:
+          rl_utils.sync_state_dict(self.image_encoder, 0)
+
+        # Image encoder wrapper computes latents during the environment step.
+        self.env = wrappers.ImageEncoderWrapper(self.env, self.image_encoder_key, self.image_encoder)
+      if self.image_encoder is None:
+        raise ValueError(
+          "Could not initialize image encoder, either because no image inputs "
+          "were found or because no reconstruction observations were specified."
+        )
+
+    if self.image_encoder is None:
+      for obs_group in self.env.obs_groups:
+        assert observation_groups.IMAGE_ENCODER_LATENT not in obs_group.observations, (
+          f"IMAGE_ENCODER_LATENT must not be in {obs_group.name}.observations"
+          f"when 'train_image_encoder' is False."
+        )
+
+    # Policy and value.
+    self.policy_key = self.cfg["policy"]["obs_key"]
+    self.policy_obs_space = self.env.obs_space()[self.policy_key]
+    self.value_key = self.cfg["value"]["obs_key"]
+    self.value_obs_space = self.env.obs_space()[self.value_key]
+
+    policy_project_dims, value_project_dims = {}, {}
+    if self.image_encoder_enabled and self.image_encoder_key in self.policy_obs_space:
+      if self.cfg["policy"]["project_image_encoder_latent"]:
+        policy_project_dims[self.image_encoder_key] = self.cfg["policy"]["project_image_encoder_latent_dim"]
+    if self.image_encoder_enabled and self.image_encoder_key in self.value_obs_space:
+      if self.cfg["value"]["project_image_encoder_latent"]:
+        value_project_dims[self.image_encoder_key] = self.cfg["value"]["project_image_encoder_latent_dim"]
 
     self.policy_learning_rate = self.cfg["policy"]["learning_rate"]
     self.policy: models.RecurrentModel = getattr(
       models, self.cfg["policy"]["class_name"])(
       self.env.action_space(),
-      self.env.obs_space()[self.policy_key],
-      reconstruct_space=reconstruct_space,
-      reconstruct_head=reconstruct_head,
+      self.policy_obs_space,
+      project_dims=policy_project_dims,
       **self.cfg["policy"]["params"]
     ).to(self.device)
+
+    # Sync policy to all GPUs.
+    if self.multi_gpu:
+      rl_utils.sync_state_dict(self.policy, 0)
     # For KL.
     self.old_policy: models.RecurrentModel = copy.deepcopy(self.policy)
     for param in self.old_policy.parameters():
@@ -86,12 +127,35 @@ class Runner:
     self.value_learning_rate = self.cfg["value"]["learning_rate"]
     self.value: models.RecurrentModel = getattr(
       models, self.cfg["value"]["class_name"])(
-      {'value': space.Space(np.float32, (1,), -np.inf, np.inf)},
-      self.env.obs_space()[self.value_key],
+      {'value': space.Space(torch.float32, (1,), -torch.inf, torch.inf)},
+      self.value_obs_space,
+      project_dims=value_project_dims,
       **self.cfg["value"]["params"]
     ).to(self.device)
 
+    # Sync value to all GPUs.
+    if self.multi_gpu:
+      rl_utils.sync_state_dict(self.value, 0)
+
     # Optimizers.
+    if self.image_encoder_enabled:
+      self.train_ratio_scheduler = rl_utils.SetpointScheduler(
+        warmup_steps=self.cfg["image_encoder"]["train_ratio_scheduler"]["warmup_steps"],
+        val_warmup=self.cfg["image_encoder"]["train_ratio_scheduler"]["train_ratio_warmup"],
+        val_after=self.cfg["image_encoder"]["train_ratio_scheduler"]["train_ratio_after"]
+      )
+      self.image_encoder_learning_rate_scheduler = rl_utils.SetpointScheduler(
+        warmup_steps=self.cfg["image_encoder"]["learning_rate_scheduler"]["warmup_steps"],
+        val_warmup=self.cfg["image_encoder"]["learning_rate_scheduler"]["learning_rate_warmup"],
+        val_after=self.cfg["image_encoder"]["learning_rate_scheduler"]["learning_rate_after"]
+      )
+      image_encoder_parameters = list(self.image_encoder.recurrent_model.parameters())
+      if not self.cfg["image_encoder"]["freeze_encoder"]:
+        image_encoder_parameters.extend(list(self.image_encoder.image_feature_model.parameters()))
+      self.image_encoder_optimizer = torch.optim.Adam(
+        image_encoder_parameters, lr=self.image_encoder_learning_rate_scheduler(0)
+      )
+
     self.policy_optimizer = torch.optim.Adam(
       self.policy.parameters(), lr=self.policy_learning_rate
     )
@@ -99,40 +163,21 @@ class Runner:
       self.value.parameters(), lr=self.value_learning_rate
     )
 
-    if self.cfg["algorithm"]["symmetry"]:
+    self._flatten_parameters()
+    self._set_eval_mode()
+
+    if self.cfg["algorithm"]["symmetry_loss"] or self.cfg["algorithm"]["symmetry_augmentation"]:
       assert "symmetries" in self.cfg, "Need `symmetries` in config when symmetry is enabled. Look at a1/config.yaml for an example."
-      self.symmetry_groups = {}
-      for group_name in self.cfg["symmetries"]:
-        self.symmetry_groups[group_name] = {}
-        for symmetry in self.cfg["symmetries"][group_name]["symmetries"]:
-          symmetry_modifier = getattr(symmetry_groups, symmetry)
-          self.symmetry_groups[group_name][symmetry_modifier.observation.name] = symmetry_modifier
-      assert self.policy_key in self.symmetry_groups
-      assert "actions" in self.symmetry_groups
+      self.symmetry_lookup = symmetry_groups.symmetry_dict_from_config(self.cfg["symmetries"])
+      assert self.policy_key in self.symmetry_lookup
+      assert "actions" in self.symmetry_lookup
 
-  def state_dict_for_network(self, state_dict):
-    new_state_dict = {}
-    prefix = '_orig_mod.'
-    for key, value in state_dict.items():
-        if key.startswith(prefix):
-            new_key = key[len(prefix):]
-            new_state_dict[new_key] = value
-        else:
-            new_state_dict[key] = value
-    return new_state_dict
-
-  def _set_seed(self):
-    seed = self.cfg["seed"]
-    if seed == -1:
-      seed = np.random.randint(0, 10000)
-    print("Setting RL seed: {}".format(seed))
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+  def _get_symmetry_fn(self, obs_group, obs_name):
+    assert obs_group in self.symmetry_lookup, f"{obs_group} not in {self.symmetry_lookup}"
+    symmetry_fns = self.symmetry_lookup[obs_group]
+    assert obs_name in symmetry_fns, f"{obs_name} not in {symmetry_fns}"
+    symmetry_fn = symmetry_fns[obs_name]
+    return lambda val: symmetry_fn(self.env, val)
 
   def load(self, resume_root: pathlib.Path):
     if not self.cfg["runner"]["resume"]:
@@ -147,42 +192,58 @@ class Runner:
       )[-1]
     else:
       resume_path = resume_root / load_run
-    print(f"Loading checkpoint from: {resume_path}")
-    print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}')
-    print(f'\tLoading checkpoint: {checkpoint}')
-    if (checkpoint == "-1") or (checkpoint == -1):
-      model_path = sorted(
-        (resume_path / "nn").glob("*.pth"),
-        key=lambda path: path.stat().st_mtime,
-      )[-1]
+
+    if load_run.startswith('wandb_'):
+      model_path = wandb_utils.get_wandb_path(load_run, self.multi_gpu, self.multi_gpu_global_rank)
     else:
-      model_path = resume_path / "nn" / f"model_{checkpoint}.pth"
-    print(f'\tLoading model weights from: {model_path}')
+      utils.print(f"Loading checkpoint from: {resume_path}", color='blue')
+      utils.print(f'\tNum checkpoints: {len(list((resume_path / "nn").glob("*.pth")))}', color='blue')
+      utils.print(f'\tLoading checkpoint: {checkpoint}', color='blue')
+      if (checkpoint == "-1") or (checkpoint == -1):
+        model_path = sorted(
+          (resume_path / "nn").glob("*.pth"),
+          key=lambda path: path.stat().st_mtime,
+        )[-1]
+      else:
+        model_path = resume_path / "nn" / f"model_{checkpoint:06d}.pth"
+    utils.print(f'\tLoading model weights from: {model_path}', color='blue')
     model_dict = torch.load(
       model_path, map_location=self.device, weights_only=True
     )
+    if self.image_encoder_enabled:
+      self.image_encoder.load_state_dict(model_dict["image_encoder"], strict=True)
     self.policy.load_state_dict(model_dict["policy"], strict=True)
     self.value.load_state_dict(model_dict["value"], strict=True)
     try:
+      if self.image_encoder_enabled:
+        self.image_encoder_optimizer.load_state_dict(model_dict["image_encoder_optimizer"])
       self.policy_optimizer.load_state_dict(model_dict["policy_optimizer"])
       self.value_optimizer.load_state_dict(model_dict["value_optimizer"])
     except Exception as e:
-      print(f"Failed to load optimizer: {e}")
+      utils.print(f"Failed to load optimizer: {e}", color='red')
+    return resume_path
 
   def to_device(self, obs):
     return pytree.tree_map(lambda x: x.to(self.device), obs)
 
-  def filter_nans(self, obs):
-    if isinstance(obs, dict):
-      for _, v in obs.items():
-        num_nan_envs = v.isnan().any(dim=-1).sum()
-    else:
-      num_nan_envs = obs.isnan().any(dim=-1).sum()
+  def _flatten_parameters(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.flatten_parameters()
+    self.policy.flatten_parameters()
+    self.value.flatten_parameters()
+    self.old_policy.flatten_parameters()
 
-    if num_nan_envs > 0:
-      print(f"{num_nan_envs} NaN envs")
-      obs = pytree.tree_map(lambda x: torch.nan_to_num(x, nan=0.0), obs)
-    return obs
+  def _set_train_mode(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.train()
+    self.policy.train()
+    self.value.train()
+
+  def _set_eval_mode(self):
+    if self.image_encoder_enabled:
+      self.image_encoder.eval()
+    self.policy.eval()
+    self.value.eval()
 
   def learn(self, num_learning_iterations, log_dir: pathlib.Path, init_at_random_ep_len=False):
     # Logger aggregators.
@@ -193,18 +254,19 @@ class Runner:
     self.action_agg = agg.Agg()
     self.should_log = when.Clock(self.cfg["runner"]["log_every"])
     self.should_save = when.Clock(self.cfg["runner"]["save_every"])
-    self.recorder = recorder.Recorder(
-      log_dir, self.cfg, self.env.deploy_config(),
-      {'obs_space': self.env.obs_space(),
-       'action_space': self.env.action_space()})
+    save_spaces = {
+      'policy_obs_space': self.policy_obs_space,
+      'value_obs_space': self.value_obs_space,
+      'action_space': self.env.action_space(),
+    }
+    if self.image_encoder_enabled:
+      save_spaces['image_encoder_obs_space'] = self.image_encoder_obs_space
+      self.env.init_image_encoder_replay_buffer(self.cfg["image_encoder"]["num_steps_per_env"])
+    self.recorder = recorder.Recorder(log_dir, self.cfg, self.env.deploy_config(), save_spaces, rank_zero=self.rank_zero)
     if self.cfg["runner"]["record_video"]:
       self.recorder.setup_recorder(self.env)
 
-    self.policy.train()
-    self.value.train()
-    self.policy.flatten_parameters()
-    self.old_policy.flatten_parameters()
-    self.value.flatten_parameters()
+    self._set_eval_mode()
 
     # Initialize hidden states and set random episode length.
     obs_dict = self.to_device(self.env.reset())
@@ -215,43 +277,62 @@ class Runner:
           self.env.episode_length_buf,
           high=int(self.env.max_episode_length))
 
-
     # Replay buffer.
-    self.buffer = experience_buffer.ExperienceBuffer(
+    buffer = experience_buffer.ExperienceBuffer(
       self.cfg["runner"]["num_steps_per_env"],
       self.env.num_envs,
       self.device,
     )
-    self.buffer.add_buffer(self.policy_key, self.env.obs_space()[self.policy_key])
-    self.buffer.add_buffer(self.value_key, self.env.obs_space()[self.value_key])
-    self.buffer.add_buffer("actions", self.env.action_space())
-    self.buffer.add_buffer("rewards", ())
-    self.buffer.add_buffer("values", (1,))
-    self.buffer.add_buffer("dones", (), dtype=bool)
-    self.buffer.add_buffer("time_outs", (), dtype=bool)
-    if self.policy.is_recurrent:
-      self.buffer.add_hidden_state_buffers("policy_hidden_states", (policy_hidden_states,))
-    if self.value.is_recurrent:
-      self.buffer.add_hidden_state_buffers("value_hidden_states", (value_hidden_states,))
 
+    buffer.add_buffer(self.policy_key, self.policy_obs_space)
+    buffer.add_buffer(self.value_key, self.value_obs_space)
+    buffer.add_buffer("actions", self.env.action_space())
+    buffer.add_buffer("rewards", ())
+    buffer.add_buffer("values", (1,))
+    buffer.add_buffer("dones", (), dtype=bool)
+    buffer.add_buffer("time_outs", (), dtype=bool)
+
+    if self.policy.is_recurrent:
+      buffer.add_buffer(f"{self.policy_key}_hidden_states", (policy_hidden_states,), is_hidden_state=True)
+    if self.value.is_recurrent:
+      buffer.add_buffer(f"{self.value_key}_hidden_states", (value_hidden_states,), is_hidden_state=True)
+
+    policy_cnn_keys = self.policy.cnn_keys or []
+    potential_images = {k: obs_dict[self.policy_key][k] for k in policy_cnn_keys}
+    if self.image_encoder_enabled:
+      image_encoder_cnn_keys = self.image_encoder.cnn_keys or []
+      potential_images.update({k: obs_dict[self.image_encoder_key][k] for k in image_encoder_cnn_keys})
+
+    # TODO: Choose a correct value here.
+    running_train_ratio = normalizers.RunningEMA(alpha=0.9)
+    prev_train_ratio_error = 0.0
+    curr_num_updates = self.cfg["image_encoder"]["init_num_updates"]
     for it in range(num_learning_iterations):
       start = time.time()
+      num_enc_updates = 0
+      num_pol_updates = self.cfg["algorithm"]["num_learning_epochs"] * self.cfg["algorithm"]["num_mini_batches"]
       for n in range(self.cfg["runner"]["num_steps_per_env"]):
         if self.cfg["runner"]["record_video"]:
+          for k in policy_cnn_keys:
+            potential_images[k] = obs_dict[self.policy_key][k]
+          if self.image_encoder_enabled: # and image_encoder_obs_available:
+            for k in image_encoder_cnn_keys:
+              if k in obs_dict[self.image_encoder_key]:
+                potential_images[k] = obs_dict[self.image_encoder_key][k]
           self.recorder.record_statistics(
-            self.recorder.maybe_record(self.env, image_features={k: obs_dict[self.policy_key][k] for k in self.policy.cnn_keys}),
+            self.recorder.maybe_record(self.env, image_features=potential_images),
             it * self.cfg["runner"]["num_steps_per_env"] * self.env.num_envs + n)
         with timer.section("buffer_add_obs"):
-          self.buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
-          self.buffer.update_data(self.value_key, n, obs_dict[self.value_key])
           if self.policy.is_recurrent:
-            self.buffer.update_hidden_state_buffers(
-              "policy_hidden_states", n, (policy_hidden_states,)
+            buffer.update_data(
+              f"{self.policy_key}_hidden_states", n, (policy_hidden_states,), is_hidden_state=True
             )
           if self.value.is_recurrent:
-            self.buffer.update_hidden_state_buffers(
-              "value_hidden_states", n, (value_hidden_states,)
+            buffer.update_data(
+              f"{self.value_key}_hidden_states", n, (value_hidden_states,), is_hidden_state=True
             )
+          buffer.update_data(self.policy_key, n, obs_dict[self.policy_key])
+          buffer.update_data(self.value_key, n, obs_dict[self.value_key])
         with timer.section("model_act"):
           with torch.no_grad():
             dists, _, policy_hidden_states = self.policy(
@@ -264,24 +345,49 @@ class Runner:
             )
             actions = {k: dist.sample() for k, dist in dists.items()}
         with timer.section("env_step"):
-          # Scale actions to the environment range.
-          actions_scaled = self.scale_actions(actions)
-          for k, v in actions_scaled.items():
+          # Log action distributions.
+          for k, v in actions.items():
             self.action_agg.add(
               {f'{dof_name}_{k}': v[:, dof_idx].cpu().numpy()
                for dof_idx, dof_name in enumerate(self.env.dof_names)},
               agg='concat'
             )
 
-          obs_dict, rew, done, infos = self.env.step(actions_scaled)
-          obs_dict, rew, done = self.to_device((obs_dict, rew, done))
+          obs_dict, rew, done, infos = self.env.step(actions)
+
+        if self.image_encoder_enabled:
+          image_encoder_buffer = infos.pop(f'{self.image_encoder_key}_buffer', None)
+          if image_encoder_buffer:
+            for param_group in self.image_encoder_optimizer.param_groups:
+              param_group['lr'] = self.image_encoder_learning_rate_scheduler(it)
+            num_learning_epochs, num_mini_batches = math.nearest_factors(curr_num_updates)
+            self._set_train_mode()
+            image_encoder_metrics = loss.learn_image_encoder(
+              image_encoder_buffer,
+              self.image_encoder,
+              self.image_encoder_optimizer,
+              self.image_encoder_key,
+              self.value_key,
+              None,
+              self._get_symmetry_fn,
+              num_learning_epochs=num_learning_epochs,
+              num_mini_batches=num_mini_batches,
+              algorithm_cfg=self.cfg["algorithm"],
+              multi_gpu=self.multi_gpu,
+              multi_gpu_global_rank=self.multi_gpu_global_rank,
+              multi_gpu_world_size=self.multi_gpu_world_size,
+            )
+            self.learn_agg.add(image_encoder_metrics)
+            self._set_eval_mode()
+            num_enc_updates += num_learning_epochs * num_mini_batches
+
         policy_hidden_states = self.policy.reset(done, policy_hidden_states)
         value_hidden_states = self.value.reset(done, value_hidden_states)
         with timer.section("buffer_update_data"):
-          self.buffer.update_data("actions", n, actions)
-          self.buffer.update_data("rewards", n, rew)
-          self.buffer.update_data("dones", n, done)
-          self.buffer.update_data(
+          buffer.update_data("actions", n, actions)
+          buffer.update_data("rewards", n, rew)
+          buffer.update_data("dones", n, done)
+          buffer.update_data(
             "time_outs", n, infos["time_outs"].to(self.device)
           )
         with timer.section("log_step"):
@@ -297,9 +403,61 @@ class Runner:
             write_record=n == (self.cfg["runner"]["num_steps_per_env"] - 1),
           ))
 
-      # We skip the first gradient update to initialize the observation normalizers.
-      learn_stats = self._learn(last_privileged_obs=obs_dict[self.value_key], last_value_hidden_states=value_hidden_states, is_first=it == 0)
+      self._set_train_mode()
+      self.policy_learning_rate, self.value_learning_rate, learn_stats = loss.learn_ppo(
+        buffer,
+        self.policy,
+        self.old_policy,
+        self.value,
+        self.policy_optimizer,
+        self.value_optimizer,
+        self.policy_learning_rate,
+        self.value_learning_rate,
+        self.policy_key,
+        self.value_key,
+        None,
+        self._get_symmetry_fn,
+        obs_dict[self.value_key],
+        value_hidden_states,
+        it,
+        self.cfg["algorithm"],
+        multi_gpu=self.multi_gpu,
+        multi_gpu_global_rank=self.multi_gpu_global_rank,
+        multi_gpu_world_size=self.multi_gpu_world_size,
+      )
       self.learn_agg.add(learn_stats)
+      self._set_eval_mode()
+
+      if self.image_encoder_enabled:
+        if not self.multi_gpu or self.multi_gpu_global_rank == 0:
+          running_train_ratio.update(num_enc_updates / num_pol_updates)
+          desired_train_ratio = self.train_ratio_scheduler(it)
+          error = desired_train_ratio - running_train_ratio.ema
+          derivative = error - prev_train_ratio_error
+          # Proportional gain — tune this!
+          delta = 5.0 * error + 0.4 * derivative
+          curr_num_updates = np.clip(
+            curr_num_updates + delta,
+            self.cfg["image_encoder"]["num_updates_range"][0],
+            self.cfg["image_encoder"]["num_updates_range"][1]
+          )
+          curr_num_updates = max(
+            self.cfg["image_encoder"]["num_updates_range"][0],
+            curr_num_updates
+          )
+          curr_num_updates = min(
+            self.cfg["image_encoder"]["num_updates_range"][1],
+            curr_num_updates)
+          self.learn_agg.add({'train_ratio': running_train_ratio.ema})
+          self.learn_agg.add({'curr_num_updates': curr_num_updates})
+          prev_train_ratio_error = error
+
+        if self.multi_gpu:
+          curr_num_updates = rl_utils.broadcast_scalar(
+            float(curr_num_updates),
+            0,
+            self.device
+          )
 
       if self.should_log(it):
         with timer.section("logger_save"):
@@ -323,315 +481,29 @@ class Runner:
 
       if self.should_save(it):
         with timer.section("model_save"):
-          self.recorder.save( {
-              "policy": self.policy.state_dict(),
-              "value": self.value.state_dict(),
-              "policy_optimizer": self.policy_optimizer.state_dict(),
-              "value_optimizer": self.value_optimizer.state_dict(),
-            },
+          to_save = {
+            "policy": self.policy.state_dict(),
+            "value": self.value.state_dict(),
+            "policy_optimizer": self.policy_optimizer.state_dict(),
+            "value_optimizer": self.value_optimizer.state_dict(),
+          }
+          if self.image_encoder_enabled:
+            to_save["image_encoder"] = self.image_encoder.state_dict()
+            to_save["image_encoder_optimizer"] = self.image_encoder_optimizer.state_dict()
+          self.recorder.save(to_save,
             it + 1,
           )
-      print(
+      utils.print(
         "epoch: {}/{} - {}s.".format(
           it + 1, num_learning_iterations, time.time() - start
-        )
+        ), color='green'
       )
       start = time.time()
-
-  def reccurent_mini_batch_generator(self, last_value_obs, last_value_hidden_states):
-      policy_obs = self.buffer[self.policy_key]
-      value_obs = self.buffer[self.value_key]
-      policy_obs_split = pytree.tree_map(
-        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-        policy_obs,
-      )
-      policy_obs = pytree.tree_map(
-        lambda x: x[0].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
-      )
-      traj_masks = pytree.tree_map(
-        lambda x: x[1].detach(), policy_obs_split, is_leaf=lambda x: isinstance(x, tuple)
-      )
-      traj_masks = list(traj_masks.values())[0]
-      last_was_done = torch.zeros_like(self.buffer["dones"], dtype=torch.bool)
-      last_was_done[1:] = self.buffer["dones"][:-1]
-      last_was_done[0] = True
-      hid_a = [
-        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
-        for saved_hidden_states in self.buffer["policy_hidden_states"]
-      ]
-      value_obs_split = pytree.tree_map(
-        lambda x: models.split_and_pad_trajectories(x, self.buffer["dones"]),
-        value_obs,
-      )
-      value_obs = pytree.tree_map(
-        lambda x: x[0],
-        value_obs_split,
-        is_leaf=lambda x: isinstance(x, tuple),
-      )
-      hid_c = [
-        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done.permute(1, 0)].transpose(1, 0)
-        for saved_hidden_states in self.buffer["value_hidden_states"]
-      ]
-      if self.cfg["algorithm"]["symmetry"]:
-        # Symmetry-augmented observations.
-        policy_obs_sym = {}
-        for key, value in policy_obs.items():
-          assert key in self.symmetry_groups[self.policy_key], f"{key} not in {self.symmetry_groups[self.policy_key]}"
-          policy_obs_sym[key] = self.symmetry_groups[self.policy_key][key](self.env, value).detach()
-
-      # Used for computing KL divergence and old log probs.
-      self.old_policy.load_state_dict(self.policy.state_dict())
-
-      mini_batch_size = self.env.num_envs // self.cfg["algorithm"]["num_mini_batches"]
-      for _ in range(self.cfg["algorithm"]["num_learning_epochs"]):
-          first_traj = 0
-          with torch.no_grad():
-            # Used for value bootstrap.
-            last_value = self.value(last_value_obs, last_value_hidden_states)[0]['value'].pred().detach()
-          for i in range(self.cfg["algorithm"]["num_mini_batches"]):
-              start = i * mini_batch_size
-              stop = (i + 1) * mini_batch_size
-              last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
-
-              masks_batch = traj_masks[:, first_traj:last_traj]
-              policy_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs)
-              value_obs_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], value_obs)
-              hid_a_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_a)
-              hid_c_batch = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hid_c)
-              if self.cfg["algorithm"]["symmetry"]:
-                symmetry_obs_batch = {
-                  f'{self.policy_key}_sym': pytree.tree_map(lambda x: x[:, first_traj:last_traj], policy_obs_sym),
-                }
-              else:
-                symmetry_obs_batch = {}
-
-              dones_batch = self.buffer["dones"][:, start:stop]
-              time_outs_batch = self.buffer["time_outs"][:, start:stop]
-              rewards_batch = self.buffer["rewards"][:, start:stop]
-              actions_batch = {k: self.buffer["actions"][k][:, start:stop] for k in self.buffer["actions"].keys()}
-              last_value_batch = pytree.tree_map(lambda x: x[start:stop], last_value)
-              old_values_batch = self.buffer["values"][:, start:stop]
-              with torch.no_grad():
-                old_dist_batch, _, _ = self.old_policy(
-                  policy_obs_batch,
-                  masks=masks_batch,
-                  hidden_states=hid_a_batch
-                )
-                if self.cfg["algorithm"]["symmetry"]:
-                  symmetry_obs_batch['old_dists_sym'], _, _ = self.old_policy(
-                    symmetry_obs_batch[f'{self.policy_key}_sym'],
-                    masks=masks_batch,
-                    hidden_states=hid_a_batch
-                  )
-
-              yield {
-                self.policy_key: policy_obs_batch,
-                self.value_key: value_obs_batch,
-                "actions": actions_batch,
-                "last_value": last_value_batch,
-                "masks": masks_batch,
-                "hid_a": hid_a_batch,
-                "hid_c": hid_c_batch,
-                "dones": dones_batch,
-                "time_outs": time_outs_batch,
-                "rewards": rewards_batch,
-                "old_values": old_values_batch,
-                "old_dists": old_dist_batch,
-                **symmetry_obs_batch,
-              }
-              
-              first_traj = last_traj
-
-  @timer.section("learn")
-  def _learn(self, last_privileged_obs, last_value_hidden_states, is_first):
-      learn_step_agg = agg.Agg()
-      for n, batch in enumerate(self.reccurent_mini_batch_generator(last_privileged_obs, last_value_hidden_states)):
-        values, _, _ = self.value(
-          batch[self.value_key],
-          masks=batch["masks"],
-          hidden_states=batch["hid_c"]
-        )
-        # Compute returns and advantages.
-        with torch.no_grad():
-          rewards = batch["rewards"].clone()
-          value_preds = values['value'].pred().squeeze(-1)
-          rewards[batch["time_outs"]] = value_preds[batch["time_outs"]]
-          advantages = discount_values(
-            rewards,
-            batch["dones"] | batch["time_outs"],
-            value_preds,
-            batch["last_value"].squeeze(-1),
-            self.cfg["algorithm"]["gamma"],
-            self.cfg["algorithm"]["lam"],
-          )
-          returns = value_preds + advantages
-          if self.cfg["algorithm"]["normalize_advantage_per_minibatch"]:
-            advantage_stats = (advantages.mean(), advantages.std())
-          elif n == 0:
-            advantage_stats = (advantages.mean(), advantages.std())
-
-          advantages = (advantages - advantage_stats[0]) / (advantage_stats[1] + 1e-8)
-
-        # Value loss.
-        if self.cfg["algorithm"]["use_clipped_value_loss"]:
-          value_clipped = batch["old_values"].detach() + (values.pred() - batch["old_values"].detach()).clamp(
-              -self.cfg["algorithm"]["clip_param"], self.cfg["algorithm"]["clip_param"]
-          )
-          value_losses = (values.pred() - returns.unsqueeze(-1)).pow(2)
-          value_losses_clipped = (value_clipped - returns.unsqueeze(-1)).pow(2)
-          value_loss = torch.max(value_losses, value_losses_clipped).mean()
-        else:
-          value_loss = torch.mean(values['value'].loss(returns.unsqueeze(-1)))
-        total_loss = self.cfg["algorithm"]["value_loss_coef"] * value_loss
-        learn_step_agg.add({'value_loss': value_loss.item()})
-
-        # Actor loss.
-        dists, policy_recon_dists, _ = self.policy(
-          batch[self.policy_key],
-          masks=batch["masks"],
-          hidden_states=batch["hid_a"]
-        )
-        if self.cfg["algorithm"]["symmetry"]:
-          dists_sym, _, _ = self.policy(
-            batch[f'{self.policy_key}_sym'],
-            masks=batch["masks"],
-            hidden_states=batch["hid_a"]
-          )
-        if policy_recon_dists is not None:
-          for name, dist in policy_recon_dists.items():
-            obs_group, obs_name = name.split('/')
-            unpadded_obs = models.unpad_trajectories(batch[obs_group][obs_name], batch["masks"])
-            recon_loss = torch.mean(dist.loss(unpadded_obs.detach()))
-            total_loss += self.cfg["algorithm"]["policy_recon_loss_coef"] * recon_loss
-            learn_step_agg.add({f'policy_recon_{obs_group}_{obs_name}_loss': recon_loss.item()})
-
-        kl_means = {}
-        for name, dist in dists.items():
-          actor_loss_coef = self.cfg["algorithm"]["actor_loss_coefs"][name]
-          actions_log_prob = dist.logp(batch["actions"][name].detach()).sum(dim=-1)
-          with torch.no_grad():
-            old_actions_log_prob_batch = batch["old_dists"][name].logp(batch["actions"][name]).sum(dim=-1)
-          actor_loss = surrogate_loss(
-            old_actions_log_prob_batch, actions_log_prob, advantages,
-            e_clip=self.cfg["algorithm"]["clip_param"]
-          )
-          total_loss += actor_loss_coef * actor_loss
-          learn_step_agg.add({f'actor_loss_{name}': actor_loss.item()})
-          klm = torch.mean(torch.sum(dist.kl(batch["old_dists"][name]), axis=-1)).item()
-          kl_means[name] = klm
-          self.learn_agg.add({f'kl_mean_{name}': klm})
-
-          # Entropy loss.
-          entropy = dist.entropy().sum(dim=-1)
-          if name in self.cfg["algorithm"]["entropy_coefs"]:
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coefs"][name] * entropy.mean()
-          learn_step_agg.add({f'entropy_{name}': entropy.mean().item()})
-
-          # Bound loss.
-          if name in self.cfg["algorithm"]["bound_coefs"]:
-            bound_loss = (
-              torch.clip(dist.pred() - 1.0, min=0.0).square().mean()
-              + torch.clip(dist.pred() + 1.0, max=0.0).square().mean()
-            )
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coefs"][name] * bound_loss
-            learn_step_agg.add({f'bound_loss_{name}': bound_loss.item()})
-
-
-          if self.cfg["algorithm"]["symmetry"] and name in self.cfg["algorithm"]["symmetry_coefs"]:
-            # Symmetry loss.
-            dist_act_sym = self.symmetry_groups["actions"][name](self.env, dist.pred())
-            symmetry_loss = torch.nn.MSELoss()(dists_sym[name].pred(), dist_act_sym.detach())
-            # symmetry_loss = torch.mean(dists_sym[name].loss(dist_act_sym.detach()))
-            if self.cfg["algorithm"]["symmetry_coefs"][name] <= 0.0:
-              symmetry_loss = symmetry_loss.detach()
-            learn_step_agg.add({f'symmetry_loss_{name}': symmetry_loss.item()})
-            total_loss += actor_loss_coef * self.cfg["algorithm"]["symmetry_coefs"][name] * symmetry_loss.mean()
-            # TODO(alescontrela): Adding symmetric actor losses causes instability. Why?
-            # # Actor loss with symmetric data.
-            # actions_sym = self.symmetry_groups["actions"]["actions"](self.env, batch["actions"])
-            # actions_log_prob_symm = dist_sym.logp(actions_sym.detach()).sum(dim=-1)
-            # with torch.no_grad():
-            #   old_actions_sym_log_prob_batch = batch["old_dists_sym"].logp(actions_sym).sum(dim=-1)
-            # actor_loss_symm = surrogate_loss(
-            #   old_actions_sym_log_prob_batch, actions_log_prob_symm, advantages,
-            #   e_clip=self.cfg["algorithm"]["clip_param"]
-            # )
-            # learn_step_agg.add({'actor_loss_symm': actor_loss_symm.item()})
-            # total_loss += actor_loss_coef * actor_loss_symm
-            # kl_sym_mean = torch.mean(torch.sum(dist_sym.kl(batch["old_dists_sym"]), axis=-1))
-            # self.learn_agg.add({'kl_sym_mean': kl_sym_mean.item()})
-            # kl_mean = (kl_mean + kl_sym_mean) / 2.0
-
-            # # Bound loss with symmetric data.
-            # bound_loss_sym = (
-            #   torch.clip(dist_sym.pred() - 1.0, min=0.0).square().mean()
-            #   + torch.clip(dist_sym.pred() + 1.0, max=0.0).square().mean()
-            # )
-            # total_loss += actor_loss_coef * self.cfg["algorithm"]["bound_coef"] * bound_loss_sym
-            # learn_step_agg.add({'bound_loss_sym': bound_loss_sym.item()})
-
-            # # Entropy loss with symmetric data.
-            # entropy_sym = dist_sym.entropy().sum(dim=-1)
-            # total_loss += actor_loss_coef * self.cfg["algorithm"]["entropy_coef"] * entropy_sym.mean()
-            # learn_step_agg.add({'entropy_sym': entropy_sym.mean().item()})
-
-
-        # Skip the first gradient update to initialize the observation normalizers.
-        if not is_first:
-          self.policy_optimizer.zero_grad()
-          self.value_optimizer.zero_grad()
-          total_loss.backward()
-          torch.nn.utils.clip_grad_norm_(
-            list(self.policy.parameters()) + list(self.value.parameters()),
-            1.0)
-          self.policy_optimizer.step()
-          self.value_optimizer.step()
-
-          if self.cfg["policy"]["desired_kl"] > 0.0:
-            if kl_means[self.cfg["policy"]["kl_key"]] > self.cfg["policy"]["desired_kl"] * 2.0:
-              self.policy_learning_rate = max(1e-5, self.policy_learning_rate / 1.5)
-            elif kl_means[self.cfg["policy"]["kl_key"]] < self.cfg["policy"]["desired_kl"] / 2.0 and kl_means[self.cfg["policy"]["kl_key"]] > 0.0:
-              self.policy_learning_rate = min(1e-2, self.policy_learning_rate * 1.5)
-            for param_group in self.policy_optimizer.param_groups:
-              param_group["lr"] = self.policy_learning_rate
-
-        policy_stats = {}
-        for k, v in self.policy.stats().items():
-          policy_stats[f'policy/{k}_mean'] = v.mean()
-          policy_stats[f'policy/{k}_std'] = v.std()
-          policy_stats[f'policy/{k}_min'] = v.min()
-          policy_stats[f'policy/{k}_max'] = v.max()
-        learn_step_agg.add(policy_stats)
-
-      # Update the observation normalizers.
-      self.policy.update_normalizer(self.buffer[self.policy_key])
-      self.value.update_normalizer(self.buffer[self.value_key])
-
-      return {
-          **learn_step_agg.result(),
-          "policy_lr": self.policy_learning_rate,
-          "value_lr": self.value_learning_rate,
-      }
-
-  def scale_actions(self, actions):
-    actions_env = {}
-    for k, v in self.env.action_space().items():
-      action = actions[k]
-      low = torch.tensor(v.low, device=self.device)[None]
-      high = torch.tensor(v.high, device=self.device)[None]
-      needs_scaling = (torch.isfinite(low).all() and torch.isfinite(high).all()).item()
-      if needs_scaling:
-        scaled_action = (action + 1) / 2 * (high - low) + low
-        scaled_action = torch.clamp(scaled_action, low, high)
-        actions_env[k] = scaled_action
-      else:
-        actions_env[k] = action
-    return actions_env
 
   def play(self):
     obs_dict = self.to_device(self.env.reset())
     policy_hidden_states = self.policy.reset(torch.zeros(self.env.num_envs, dtype=torch.bool), None)
-
+    self._set_eval_mode()
     inference_time, step = 0., 0
     while True:
       with torch.no_grad():
@@ -641,18 +513,13 @@ class Runner:
           policy_hidden_states
         )
         actions = {k: dist.pred() for k, dist in dists.items()}
-        actions_scaled = self.scale_actions(actions)
         inference_time += time.time() - start
-        obs_dict, _, _, _ = self.env.step(actions_scaled)
-        obs_dict = self.to_device(obs_dict)
+        obs_dict, _, done, _ = self.env.step(actions)
+        obs_dict, done = self.to_device((obs_dict, done))
+        policy_hidden_states = self.policy.reset(done, policy_hidden_states)
 
       step += 1
       if step % 100 == 0:
-        print(f"Average inference time: {inference_time / step}")
-        print(f"\t Per env: {inference_time / step / self.env.num_envs}")
+        utils.print(f"Average inference time: {inference_time / step}", color='green')
+        utils.print(f"\t Per env: {inference_time / step / self.env.num_envs}", color='green')
         inference_time, step = 0., 0
-
-
-  def interrupt_handler(self, signal, frame):
-    print("\nInterrupt received, waiting for video to finish...")
-    self.interrupt = True

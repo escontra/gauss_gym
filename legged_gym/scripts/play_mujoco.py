@@ -89,7 +89,7 @@ def main(argv=None):
       )[-1]
 
     print(f'Loading run from: {load_run_path}...')
-    cfg = config.Config.load(load_run_path / 'config.yaml')
+    cfg = config.Config.load(load_run_path / 'train_config.yaml')
     cfg = cfg.update({'runner.load_run': load_run_path.name})
     cfg = cfg.update({'runner.resume': True})
     cfg = cfg.update({'headless': False})
@@ -153,7 +153,7 @@ def main(argv=None):
 
     runner = DeploymentRunner(deploy_cfg, cfg)
     runner.load(log_root)
-    obs_groups = observation_groups.observation_groups_from_dict(cfg["observations"])
+    obs_groups = observation_groups.observation_groups_from_config(cfg["observations"])
     use_gait_frequency = "GAIT_PROGRESS" in cfg["observations"][cfg["policy"]["obs_key"]]["observations"]
 
     print("Starting MuJoCo viewer...")

@@ -1,10 +1,9 @@
 import pathlib
 
 import legged_gym
-from .base.legged_robot import LeggedRobot
-from .anymal_c.anymal import Anymal
-from .t1.t1 import T1
-
+from legged_gym.envs.base.legged_robot import LeggedRobot
+from legged_gym.envs.anymal_c.anymal import Anymal
+from legged_gym.envs.t1.t1 import T1
 from legged_gym.utils import config
 
 from legged_gym.utils.task_registry import task_registry

@@ -185,7 +185,7 @@
     type="revolute">
     <origin
       xyz="0.0575 0.1063 0.219"
-      rpy="0 0.00088113 0" />
+      rpy="0 0.2 0" />
     <parent
       link="Trunk" />
     <child
@@ -234,7 +234,7 @@
     type="revolute">
     <origin
       xyz="0 0.047 0"
-      rpy="0 0 0" />
+      rpy="-1.35 0 0" />
     <parent
       link="AL1" />
     <child
@@ -348,7 +348,7 @@
     type="revolute">
     <origin
       xyz="0 0.1471 0"
-      rpy="0 0 0" />
+      rpy="0 0 -0.5" />
     <parent
       link="AL3" />
     <child
@@ -397,7 +397,7 @@
     type="revolute">
     <origin
       xyz="0.0575 -0.1063 0.219"
-      rpy="0 0.00088113 0" />
+      rpy="0 0.2 0" />
     <parent
       link="Trunk" />
     <child
@@ -446,7 +446,7 @@
     type="revolute">
     <origin
       xyz="0 -0.047 0"
-      rpy="0 0 0" />
+      rpy="1.35 0 0" />
     <parent
       link="AR1" />
     <child
@@ -560,7 +560,7 @@ xyz="-0.000108 -0.109573 0.000591"
     type="revolute">
     <origin
       xyz="0 -0.1471 0"
-      rpy="0 0 0" />
+      rpy="0 0 0.5" />
     <parent
       link="AR3" />
     <child
@@ -715,7 +715,7 @@ xyz="-0.000108 -0.109573 0.000591"
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-0.2"
+      lower="-0.3"
       upper="1.57"
       effort="30"
       velocity="10.9" />
@@ -880,7 +880,7 @@ xyz="-0.000108 -0.109573 0.000591"
     <limit
       lower="-0.87"
       upper="0.35"
-      effort="20"
+      effort="24"
       velocity="18.8" />
   </joint>
   <link
@@ -892,11 +892,11 @@ xyz="-0.000108 -0.109573 0.000591"
       <mass
         value="0.685" />
       <inertia
-        ixx="0.002214"
-        ixy="0"
-        ixz="-0.000114"
+        ixx="0.001738"
+        ixy="0.000000"
+        ixz="-0.000147"
         iyy="0.002385"
-        iyz="0"
+        iyz="0.000000"
         izz="0.002671" />
     </inertial>
     <visual>
@@ -1034,7 +1034,7 @@ xyz="-0.000108 -0.109573 0.000591"
       xyz="1 0 0" />
     <limit
       lower="-1.57"
-      upper="0.2"
+      upper="0.3"
       effort="30"
       velocity="10.9" />
   </joint>
@@ -1198,7 +1198,7 @@ xyz="-0.000108 -0.109573 0.000591"
     <limit
       lower="-0.87"
       upper="0.35"
-      effort="20"
+      effort="24"
       velocity="18.8" />
   </joint>
   <link
@@ -1210,11 +1210,11 @@ xyz="-0.000108 -0.109573 0.000591"
       <mass
         value="0.685" />
       <inertia
-        ixx="0.002214"
-        ixy="0"
-        ixz="-0.000114"
+        ixx="0.001738"
+        ixy="0.000000"
+        ixz="-0.000147"
         iyy="0.002385"
-        iyz="0"
+        iyz="0.000000"
         izz="0.002671" />
     </inertial>
     <visual>

@@ -6,6 +6,19 @@ import torch.utils._pytree as pytree
 from legged_gym.utils import space
 
 
+class RunningEMA:
+    def __init__(self, alpha=0.9):
+        self.running_ema = 0.
+        self.alpha = alpha
+
+    def update(self, num):
+        self.running_ema = self.alpha * self.running_ema + (1 - self.alpha) * num
+
+    @property
+    def ema(self):
+        return self.running_ema
+
+
 def _validate_batch_shapes(batch,
                            reference_sample,
                            batch_dims: Tuple[int, ...]) -> None:
@@ -173,7 +186,7 @@ class DictNormalizer(nn.Module):
 
   def __init__(self,
                obs_space: Dict[str, space.Space],
-               dont_normalize_keys: List[str] = [],
+               dont_normalize_keys: Optional[List[str]] = None,
                max_abs_value: Optional[float] = None,
                std_min_value: float = 1e-6,
                std_max_value: float = 1e6,
@@ -184,8 +197,8 @@ class DictNormalizer(nn.Module):
     self.std_max_value = std_max_value
     self.use_mean_offset = use_mean_offset
     self.register_buffer('count', torch.zeros(size=(), dtype=torch.int32))
-    self.obs_keys = [k for k in obs_space.keys() if k not in dont_normalize_keys]
-    self.dont_normalize_keys = dont_normalize_keys
+    self.dont_normalize_keys = dont_normalize_keys if dont_normalize_keys is not None else []
+    self.obs_keys = [k for k in obs_space.keys() if k not in self.dont_normalize_keys]
     print('\tDictNormalizer:')
     for k, v in obs_space.items():
       if k in self.dont_normalize_keys:
@@ -195,18 +208,19 @@ class DictNormalizer(nn.Module):
       self.register_buffer(f'std_{k}', torch.ones(v.shape, dtype=torch.float32))
       self.register_buffer(f'summed_variance_{k}', torch.zeros(v.shape, dtype=torch.float32))
 
-  @property
-  def mean(self):
+  @torch.jit.ignore
+  def mean(self) -> Dict[str, torch.Tensor]:
     return {k: getattr(self, f'mean_{k}') for k in self.obs_keys}
 
-  @property
-  def std(self):
+  @torch.jit.ignore
+  def std(self) -> Dict[str, torch.Tensor]:
     return {k: getattr(self, f'std_{k}') for k in self.obs_keys}
 
-  @property
-  def summed_variance(self):
+  @torch.jit.ignore
+  def summed_variance(self) -> Dict[str, torch.Tensor]:
     return {k: getattr(self, f'summed_variance_{k}') for k in self.obs_keys}
 
+  @torch.jit.ignore
   def update(self, obs_tree, validate_shapes: bool = True):
     batch_dims = None
     batch_axis = None
@@ -214,7 +228,7 @@ class DictNormalizer(nn.Module):
       if k in self.dont_normalize_keys:
         continue
       batch_shape = v.shape
-      curr_batch_dims = batch_shape[:len(batch_shape) - self.mean[k].ndim]
+      curr_batch_dims = batch_shape[:len(batch_shape) - self.mean()[k].ndim]
       if batch_dims is None:
         batch_dims = curr_batch_dims
       else:
@@ -225,7 +239,7 @@ class DictNormalizer(nn.Module):
       # compatible, arrays will be silently broadcasted resulting in incorrect
       # statistics.
       if validate_shapes:
-        expected_shape = batch_dims + self.mean[k].shape
+        expected_shape = batch_dims + self.mean()[k].shape
         assert v.shape == expected_shape, f'{v.shape} != {expected_shape}'
 
     step_increment = torch.prod(torch.tensor(batch_dims))
@@ -238,19 +252,19 @@ class DictNormalizer(nn.Module):
         continue
       # The mean and the sum of past variances are updated with Welford's
       # algorithm using batches (see https://stackoverflow.com/q/56402955).
-      diff_to_old_mean = v - self.mean[k]
+      diff_to_old_mean = v - self.mean()[k]
       mean_update = torch.sum(diff_to_old_mean, dim=batch_axis) / self.count
-      self.mean[k].data = self.mean[k].data + mean_update
+      self.mean()[k].data = self.mean()[k].data + mean_update
 
-      diff_to_new_mean = v - self.mean[k]
+      diff_to_new_mean = v - self.mean()[k]
       variance_update = diff_to_old_mean * diff_to_new_mean
       variance_update = torch.sum(variance_update, axis=batch_axis)
-      self.summed_variance[k].data = self.summed_variance[k].data + variance_update
+      self.summed_variance()[k].data = self.summed_variance()[k].data + variance_update
 
-      summed_variance = torch.clip(self.summed_variance[k], min=0)
+      summed_variance = torch.clip(self.summed_variance()[k], min=0)
       std = torch.sqrt(summed_variance / self.count)
       std = torch.clip(std, self.std_min_value, self.std_max_value)
-      self.std[k].data = std
+      self.std()[k].data = std
 
 
 class BackwardReturnTracker(nn.Module):

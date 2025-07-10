@@ -29,11 +29,13 @@ RUN apt-get update \
  libegl1 \
  xvfb \
  git-lfs \
- lsb-release
+ lsb-release \
+ ffmpeg \
+ tmux
 
 # Force gcc 8 to avoid CUDA 10 build issues on newer base OS
-RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
-RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 8
+# RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
+# RUN update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 8
 
 # WAR for eglReleaseThread shutdown crash in libEGL_mesa.so.0 (ensure it's never detected/loaded).
 # Can't remove package libegl-mesa0 directly (because of libegl1 which we need).
@@ -67,6 +69,7 @@ COPY --chown=${USERNAME} . .
 ENV PATH="/home/${USERNAME}/.local/bin:$PATH"
 
 # Install gym modules.
+RUN pip install torch==2.4.1 torchvision --index-url https://download.pytorch.org/whl/cu121
 RUN cd isaacgym/python && pip install -q -e .
 RUN pip install -q -e .
 

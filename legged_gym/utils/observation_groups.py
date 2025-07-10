@@ -13,6 +13,7 @@ class Observation:
   scale: Union[float, None] = None
   latency_range: Tuple[float, float] = (0., 0.)
   refresh_duration: float = 0.
+  ignore_in_observation_manager: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -30,7 +31,7 @@ class ObservationGroup:
   sync_latency: Union[List[Observation], None] = None
 
 
-def observation_groups_from_dict(config: Dict) -> List[ObservationGroup]:
+def observation_groups_from_config(config: Dict) -> List[ObservationGroup]:
   observation_groups = []
   for name, cfg in config.items():
     observations = [eval(obs_name) for obs_name in cfg['observations']]
@@ -108,11 +109,16 @@ MOTOR_STRENGTH = Observation(
   func=O.motor_strength,
 )
 
+MOTOR_ERROR = Observation(
+  name="motor_error",
+  func=O.motor_error,
+)
+
 CAMERA_IMAGE = Observation(
   name="camera_image",
   func=O.gs_render,
   sensor="gs_renderer",
-  # latency_range=(0.25, 0.30),
+  latency_range=(0.12, 0.3),
 )
 
 GAIT_PROGRESS = Observation(
@@ -172,4 +178,10 @@ FEET_CONTACT_TIME = Observation(
 FEET_CONTACT = Observation(
   name="feet_contact",
   func=O.feet_contact,
+)
+
+IMAGE_ENCODER_LATENT = Observation(
+  name="image_encoder",
+  func=None,
+  ignore_in_observation_manager=True,
 )
