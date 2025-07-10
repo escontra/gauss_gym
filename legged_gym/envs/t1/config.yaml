@@ -6,6 +6,10 @@ sim_device: "cuda:0"
 graphics_device: "cuda:0"
 headless: False
 logdir: "default"
+multi_gpu: False
+multi_gpu_global_rank: 0
+multi_gpu_local_rank: 0
+multi_gpu_world_size: 1
 
 env:
   num_envs: 2048
@@ -15,18 +19,21 @@ env:
 
   force_renderer: False
   camera_params:
-    # Refresh duration. How often the camera image is refreshed.
-    # Not to be confused with the sythetic refresh_duration used in
-    # observation_manager.
-    refresh_duration: 0.1
-
-    # Original intrinsics.
-    cam_width: 320
+    # Different realsense intrinsics: https://pastebin.com/fRwwuBmd
+    # 69.95 x 43.18 FOV
+    cam_width: 424
     cam_height: 240
-    fl_x: 303.0424
-    fl_y: 303.1759
-    pp_x: 161.5755
-    pp_y: 124.6430
+    fl_x: 303.042358398438
+    fl_y: 303.17578125
+    pp_x: 213.575500488281
+    pp_y: 124.642997741699
+    # # 70.29 x 43.18 FOV
+    # cam_width: 320
+    # cam_height: 180
+    # fl_x: 227.281799316406
+    # fl_y: 227.381851196289
+    # pp_x: 161.181625366211
+    # pp_y: 93.4822463989258
 
     # How much to downscale the image (and intrinsics) by.
     downscale_factor: 5.0
@@ -36,14 +43,20 @@ env:
     cam_rpy_offset: [1.571, 1.571, 3.142]
 
 observations:
+  image_encoder:
+    add_noise: True
+    add_latency: True
+    latency_resampling_interval_s: 3.0
+    observations: [
+      CAMERA_IMAGE, PROJECTED_GRAVITY, DOF_POS #, DOF_VEL, ACTIONS
+    ]
   critic:
     observations: [
       BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
       DOF_POS, DOF_VEL, ACTIONS, RAY_CAST, BASE_MASS_SCALED,
       DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
       HIP_HEIGHTS, BASE_HEIGHT, FEET_AIR_TIME, FEET_CONTACT_TIME, FEET_CONTACT,
-      STIFFNESS, DAMPING, MOTOR_STRENGTH,
-      GAIT_PROGRESS,
+      STIFFNESS, DAMPING, MOTOR_STRENGTH, MOTOR_ERROR, GAIT_PROGRESS, IMAGE_ENCODER_LATENT
       ]
   policy:
     add_noise: True
@@ -51,9 +64,8 @@ observations:
     latency_resampling_interval_s: 3.0
     observations: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
-      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS,
-      GAIT_PROGRESS,
-      # RAY_CAST,
+      VELOCITY_COMMANDS, DOF_POS, DOF_VEL, ACTIONS, GAIT_PROGRESS,
+      IMAGE_ENCODER_LATENT
     ]
     sync_latency: [
       BASE_ANG_VEL, PROJECTED_GRAVITY,
@@ -61,12 +73,24 @@ observations:
     ]
 
 symmetries:
+  image_encoder:
+    symmetries: [
+      CAMERA_IMAGE, PROJECTED_GRAVITY, T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS
+    ]
+  critic:
+    symmetries: [
+      BASE_LIN_VEL, BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
+      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS, RAY_CAST, BASE_MASS_SCALED,
+      T1_DOF_FRICTION_CURRICULUM_VALUES, PUSHING_FORCES, PUSHING_TORQUES,
+      T1_HIP_HEIGHTS, BASE_HEIGHT, T1_FEET_AIR_TIME, T1_FEET_CONTACT_TIME, T1_FEET_CONTACT,
+      T1_STIFFNESS, T1_DAMPING, T1_MOTOR_STRENGTH, T1_MOTOR_ERROR,
+      CAMERA_IMAGE, RAY_CAST, GAIT_PROGRESS, IMAGE_ENCODER_LATENT
+    ]
   policy:
     symmetries: [
       BASE_ANG_VEL, PROJECTED_GRAVITY, VELOCITY_COMMANDS,
-      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS,
-      GAIT_PROGRESS,
-      # RAY_CAST,
+      T1_DOF_POS, T1_DOF_VEL, T1_ACTIONS, CAMERA_IMAGE, RAY_CAST,
+      GAIT_PROGRESS, IMAGE_ENCODER_LATENT
     ]
   actions:
     symmetries: [
@@ -192,6 +216,36 @@ curriculum:
 domain_rand:
   apply_domain_rand: True
 
+  camera_refresh_interval_s: 3.0
+  # Refresh duration. How often the camera image is refreshed.
+  # Not to be confused with the sythetic refresh_duration used in
+  # observation_manager.
+  refresh_duration:
+    apply: True
+    range: [0.05, 0.15]
+    operation: "additive"
+    distribution: "uniform"
+  focal_length:
+    apply: True
+    range: [0.0, 8.0]
+    operation: "additive"
+    distribution: "gaussian"
+  principal_point:
+    apply: True
+    range: [0.0, 2.0]
+    operation: "additive"
+    distribution: "gaussian"
+  camera_pos:
+    apply: True
+    range: [-0.04, 0.04]
+    operation: "additive"
+    distribution: "uniform"
+  camera_rot:
+    apply: True
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "uniform"
+
   init_dof_pos:
     apply: True
     range: [0.0, 0.05]
@@ -243,6 +297,11 @@ domain_rand:
     apply: True
     range: [0.9, 1.1]
     operation: "scaling"
+    distribution: "uniform"
+  motor_error:
+    apply: True
+    range: [-0.03, 0.03]
+    operation: "additive"
     distribution: "uniform"
 
   dof_stiffness:
@@ -437,56 +496,77 @@ sim:
     contact_collection: 2
 
 image_encoder:
-  enabled: False
   class_name: RecurrentCNNModel
-  learning_rate: 1.e-3
+  freeze_encoder: False
   obs_key: image_encoder
   reconstruct_observations: [
     critic/RAY_CAST, critic/BASE_ANG_VEL, critic/BASE_LIN_VEL
   ]
-  max_batch_size: 128
-  voxel_height_levels: 24 # TODO: cleanup
-  train_rate_scheduler:
-    warmup_steps: 2000
-    train_every_warmup: -1
-    train_every_after: 10
+  voxel_height_levels: 24
+  num_updates_range: [1, 100]
+  init_num_updates: 20
+  num_steps_per_env: 10
+  train_ratio_scheduler:
+    warmup_steps: 100
+    train_ratio_warmup: 1.0
+    train_ratio_after: 0.1
   learning_rate_scheduler:
-    class_name: MultiStepLR
-    params:
-      milestones: [2000]
-      gamma: 0.1
+    warmup_steps: 100
+    learning_rate_warmup: 1.e-4
+    learning_rate_after: 5.e-5
   params:
     layer_activation: silu
     recurrent_state_size: 512
-    recurrent_proj_size: 128
     recurrent_skip_connection: True
-    hidden_layer_sizes: [512, 256, 128]
+    hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
-    model_type: cnn_simple
+    model_type: timm_test_convnext
     embedding_dim: 128
+    torchaug_transforms: True
 
 policy:
   class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
   learning_rate: 1.e-5
-  desired_kl: 0.01
-  kl_key: actions
   obs_key: policy
-  reconstruct_observations: null # e.g. ["critic/RAY_CAST", "policy/DOF_VEL"].
   params:
-    layer_activation: silu
+    layer_activation: "silu"
     recurrent_state_size: 256
     recurrent_skip_connection: True
     hidden_layer_sizes: [256, 128]
     symlog_inputs: True
     normalize_obs: True
     head:
-      actions: {output_type: normal_logstdparam_unclipped, minstd: 0.04, maxstd: 1.0, outscale: 1.0, init_std: 0.3}
-      stiffness: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
-      damping: {output_type: bounded_normal_logstdparam_unclipped, minstd: 0.03, maxstd: 1.0, outscale: 1.0, init_std: 0.15}
+      actions:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.04
+          maxstd: 1.0
+          init_std: 0.3
+          outscale: 0.01
+      stiffness:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.1
+          bounded: True
+          outscale: 0.01
+      damping:
+        class_name: NormalLogSTDHead
+        params:
+          minstd: 0.05
+          maxstd: 1.0
+          init_std: 0.1
+          bounded: True
+          outscale: 0.01
 
 value:
   class_name: RecurrentMLPModel
+  project_image_encoder_latent: True
+  project_image_encoder_latent_dim: 32
   learning_rate: 3.e-4
   obs_key: critic
   params:
@@ -496,8 +576,11 @@ value:
     hidden_layer_sizes: [512, 256, 128]
     symlog_inputs: True
     normalize_obs: True
-    head: 
-      value: {output_type: mse, outscale: 1.0}
+    head:
+      value:
+        class_name: MSEHead
+        params:
+          outscale: 0.0
 
 algorithm:
   gamma: 0.97
@@ -508,9 +591,12 @@ algorithm:
     damping: 0.1
   entropy_coefs:
     actions: -0.01
-    stiffness: -0.01
-    damping: -0.01
-  symmetry: True
+    stiffness: -0.001
+    damping: -0.001
+  desired_kl: 0.01
+  kl_key: actions
+  symmetry_loss: True
+  symmetry_augmentation: False
   symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0
@@ -523,6 +609,8 @@ algorithm:
   clip_param: 0.2
   bound_coefs:
     actions: 1.0
+  train_image_encoder: True
+  image_encoder_batch_size: 48
 
 runner:
   record_video: True
@@ -534,7 +622,7 @@ runner:
   description: ""
   log_every: 120.
   save_every: 1800.
-  record_every: 1800.
+  record_every: 3600.
   record_frames: 300.
   run_name: ""
   resume: False

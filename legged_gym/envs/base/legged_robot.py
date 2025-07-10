@@ -990,7 +990,7 @@ class LeggedRobot(base_task.BaseTask):
 
         self.num_actions = self.num_dofs
 
-        self.hip_names = front_hip_names + rear_hip_names
+        self.hip_names = list(set(front_hip_names + rear_hip_names))
         if len(self.hip_names) > 0:
             self.hip_indices = torch.zeros(len(self.hip_names), dtype=torch.long, device=self.device, requires_grad=False)
             for i, name in enumerate(self.hip_names):

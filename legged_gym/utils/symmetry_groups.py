@@ -1,3 +1,4 @@
+import functools
 from typing import List, Dict
 import torch
 from typing import Callable
@@ -122,23 +123,27 @@ def t1_joint_symmetry(env, joint_val, use_multipliers=True):
   return joint_val_sym
 
 
-def t1_dof_pos_symmetry(env, obs):
-  return t1_joint_symmetry(env, obs)
+def t1_feet_symmetry(env, feet_value):
+  foot_map = {'left': 'right', 'right': 'left'}
+  feet_value_sym = torch.zeros_like(feet_value)
+  for foot_name in env.feet_names:
+    side = foot_name.split('_')[0]
+    new_name = foot_name.replace(side, foot_map[side])
+    # print(f'Mapping {foot_name} (idx {env.feet_names.index(foot_name)}) '
+    #       f'to {new_name} (idx {env.feet_names.index(new_name)}).')
+    feet_value_sym[..., env.feet_names.index(foot_name)] = feet_value[..., env.feet_names.index(new_name)]
+  return feet_value_sym
 
-
-def t1_dof_vel_symmetry(env, obs):
-  return t1_joint_symmetry(env, obs)
-
-
-def t1_actions_symmetry(env, obs):
-  return t1_joint_symmetry(env, obs)
-
-
-def t1_stiffness_symmetry(env, obs):
-  return t1_joint_symmetry(env, obs, use_multipliers=False)
-
-def t1_damping_symmetry(env, obs):
-  return t1_joint_symmetry(env, obs, use_multipliers=False)
+def t1_hip_height_symmetry(env, hip_heights):
+  hip_map = {'Left': 'Right', 'Right': 'Left'}
+  hip_val_sym = torch.zeros_like(hip_heights)
+  for hip_name in env.hip_names:
+    side = hip_name.split('_')[0]
+    new_name = hip_name.replace(side, hip_map[side])
+    # print(f'Mapping {hip_name} (idx {env.hip_names.index(hip_name)}) '
+    #       f'to {new_name} (idx {env.hip_names.index(new_name)}).')
+    hip_val_sym[..., env.hip_names.index(hip_name)] = hip_heights[..., env.hip_names.index(new_name)]
+  return hip_val_sym
 
 
 def a1_joint_symmetry(env, joint_val, use_multipliers=True):
@@ -175,38 +180,6 @@ def a1_feet_symmetry(env, feet_value):
     #       f'to {new_name} (idx {env.feet_names.index(new_name)}).')
     feet_value_sym[..., env.feet_names.index(foot_name)] = feet_value[..., env.feet_names.index(new_name)]
   return feet_value_sym
-
-
-def a1_dof_pos_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs)
-
-
-def a1_dof_vel_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs)
-
-
-def a1_actions_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs)
-
-
-def a1_stiffness_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs, use_multipliers=False)
-
-
-def a1_damping_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs, use_multipliers=False)
-
-
-def a1_motor_strength_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs, use_multipliers=False)
-
-
-def a1_motor_error_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs, use_multipliers=True)
-
-
-def a1_dof_friction_curriculum_values_symmetry(env, obs):
-  return a1_joint_symmetry(env, obs, use_multipliers=False)
 
 
 RAY_CAST = SymmetryModifier(
@@ -249,11 +222,6 @@ BASE_HEIGHT = SymmetryModifier(
   symmetry_fn=identity_symmetry,
 )
 
-HIP_HEIGHTS = SymmetryModifier(
-  observation=observation_groups.HIP_HEIGHTS,
-  symmetry_fn=a1_hip_height_symmetry,
-)
-
 VELOCITY_COMMANDS = SymmetryModifier(
   observation=observation_groups.VELOCITY_COMMANDS,
   symmetry_fn=velocity_commands_symmetry,
@@ -261,42 +229,42 @@ VELOCITY_COMMANDS = SymmetryModifier(
 
 A1_DOF_POS = SymmetryModifier(
   observation=observation_groups.DOF_POS,
-  symmetry_fn=a1_dof_pos_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=True),
 )
 
 A1_DOF_VEL = SymmetryModifier(
   observation=observation_groups.DOF_VEL,
-  symmetry_fn=a1_dof_vel_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=True),
 )
 
 A1_ACTIONS = SymmetryModifier(
   observation=observation_groups.ACTIONS,
-  symmetry_fn=a1_actions_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=True),
 )
 
 A1_STIFFNESS = SymmetryModifier(
   observation=observation_groups.STIFFNESS,
-  symmetry_fn=a1_stiffness_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=False),
 )
 
 A1_DAMPING = SymmetryModifier(
   observation=observation_groups.DAMPING,
-  symmetry_fn=a1_damping_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=False),
 )
 
 A1_MOTOR_STRENGTH = SymmetryModifier(
   observation=observation_groups.MOTOR_STRENGTH,
-  symmetry_fn=a1_motor_strength_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=False),
 )
 
 A1_MOTOR_ERROR = SymmetryModifier(
   observation=observation_groups.MOTOR_ERROR,
-  symmetry_fn=a1_motor_error_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=True),
 )
 
 A1_DOF_FRICTION_CURRICULUM_VALUES = SymmetryModifier(
   observation=observation_groups.DOF_FRICTION_CURRICULUM_VALUES,
-  symmetry_fn=a1_dof_friction_curriculum_values_symmetry,
+  symmetry_fn=functools.partial(a1_joint_symmetry, use_multipliers=False),
 )
 
 A1_FEET_AIR_TIME = SymmetryModifier(
@@ -314,29 +282,69 @@ A1_FEET_CONTACT = SymmetryModifier(
   symmetry_fn=a1_feet_symmetry,
 )
 
+A1_HIP_HEIGHTS = SymmetryModifier(
+  observation=observation_groups.HIP_HEIGHTS,
+  symmetry_fn=a1_hip_height_symmetry,
+)
+
 T1_DOF_POS = SymmetryModifier(
   observation=observation_groups.DOF_POS,
-  symmetry_fn=t1_dof_pos_symmetry,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=True),
 )
 
 T1_DOF_VEL = SymmetryModifier(
   observation=observation_groups.DOF_VEL,
-  symmetry_fn=t1_dof_vel_symmetry,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=True),
 )
 
 T1_ACTIONS = SymmetryModifier(
   observation=observation_groups.ACTIONS,
-  symmetry_fn=t1_actions_symmetry,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=True),
 )
 
 T1_STIFFNESS = SymmetryModifier(
   observation=observation_groups.STIFFNESS,
-  symmetry_fn=t1_stiffness_symmetry,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=False),
 )
 
 T1_DAMPING = SymmetryModifier(
   observation=observation_groups.DAMPING,
-  symmetry_fn=t1_damping_symmetry,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=False),
+)
+
+T1_DOF_FRICTION_CURRICULUM_VALUES = SymmetryModifier(
+  observation=observation_groups.DOF_FRICTION_CURRICULUM_VALUES,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=False),
+)
+
+T1_MOTOR_STRENGTH = SymmetryModifier(
+  observation=observation_groups.MOTOR_STRENGTH,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=False),
+)
+
+T1_MOTOR_ERROR = SymmetryModifier(
+  observation=observation_groups.MOTOR_ERROR,
+  symmetry_fn=functools.partial(t1_joint_symmetry, use_multipliers=True),
+)
+
+T1_FEET_AIR_TIME = SymmetryModifier(
+  observation=observation_groups.FEET_AIR_TIME,
+  symmetry_fn=t1_feet_symmetry,
+)
+
+T1_FEET_CONTACT_TIME = SymmetryModifier(
+  observation=observation_groups.FEET_CONTACT_TIME,
+  symmetry_fn=t1_feet_symmetry,
+)
+
+T1_FEET_CONTACT = SymmetryModifier(
+  observation=observation_groups.FEET_CONTACT,
+  symmetry_fn=t1_feet_symmetry,
+)
+
+T1_HIP_HEIGHTS = SymmetryModifier(
+  observation=observation_groups.HIP_HEIGHTS,
+  symmetry_fn=t1_hip_height_symmetry,
 )
 
 GAIT_PROGRESS = SymmetryModifier(
