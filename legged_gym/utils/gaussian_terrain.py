@@ -339,13 +339,13 @@ class GaussianSceneManager:
         mesh.triangles.flatten(order="C"),
         mesh_params,
       )
-      if self._env.use_viser:
-        self._env.viser_viz.add_mesh(
-            f"/terrain_{i}",
-            vertices=vertices,
-            faces=mesh.triangles,
-            color=(0.282, 0.247, 0.361),
-        )
+      # if self._env.use_viser:
+      #   self._env.viser_viz.add_mesh(
+      #       f"/terrain_{i}",
+      #       vertices=vertices,
+      #       faces=mesh.triangles,
+      #       color=(0.282, 0.247, 0.361),
+      #   )
 
       vertices_offset = (
         0 if len(all_vertices) == 0 else np.concatenate(all_vertices).shape[0]
@@ -497,6 +497,10 @@ class GaussianSceneManager:
   @property
   def num_meshes(self):
     return self._terrain.num_meshes
+  
+  @property
+  def mesh_names(self):
+    return [self.mesh_name_from_id(i) for i in range(self.num_meshes)]
 
   def robots_in_mesh_id(self, mesh_id):
     return self.repeat_counts[mesh_id]

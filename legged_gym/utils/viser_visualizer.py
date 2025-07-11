@@ -58,22 +58,29 @@ class LeggedRobotViser:
         # Load URDF for both simulators
         self.urdf = yourdfpy.URDF.load(urdf_path, load_collision_meshes=True)
 
+
+        # Also store mesh handles in case you want direct references
+        self._mesh_handles = {}
+
+
+        self.scene_manager = self.env.scene_manager
+        self.current_rendered_env_id = 0
+        self.last_rendered_env_id = -1 # set to -1 to force camera update on first render
+
+        self.add_terrain_meshes()
+        self.setup_scene_selection()
+
         # Attach URDF under both world nodes
         self.isaac_urdf = ViserUrdf(
             target=self.server,
             urdf_or_path=self.urdf,
             root_node_name="/isaac_world"
         )
-
-
-        # Also store mesh handles in case you want direct references
-        self._mesh_handles = {}
-
         @self.reset_button.on_click
         def _(_):
             """Reset both simulators when reset button is clicked"""
             # Reset IsaacGym environment
-            self.env.reset_idx(torch.tensor([0], device=self.env.device), time_out_buf=torch.zeros(self.env.num_envs, device=self.env.device))
+            self.env.reset_idx(torch.tensor([self.current_rendered_env_id], device=self.env.device), time_out_buf=torch.zeros(self.env.num_envs, device=self.env.device))
             print(f'[PLAY] Resetting Isaac')
         
         @self.step_button.on_click
@@ -81,6 +88,35 @@ class LeggedRobotViser:
             if not self.play_pause.value:  # Only allow stepping when paused
                 self.step_requested = True
     
+    def add_terrain_meshes(self):
+        self.add_mesh(
+            "terrain",
+            self.scene_manager.all_vertices_mesh,
+            self.scene_manager.all_triangles_mesh,
+            color=(0.282, 0.247, 0.361),
+        )
+
+    def setup_scene_selection(self):
+
+        mesh_names = sorted(self.scene_manager.mesh_names)
+
+        with self.server.gui.add_folder("Scene Selection"):
+            self.scene_selection = self.server.gui.add_dropdown(
+                "Select Scene",
+                options=mesh_names,
+                initial_value=mesh_names[0],
+                hint="Select which scene to visualize"
+            )
+        
+            # Add callback for clip selection
+            @self.scene_selection.on_update
+            def _(event) -> None:
+
+                for i, mesh_name in enumerate(mesh_names):
+                    if mesh_name == self.scene_selection.value:
+                        possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
+                        self.current_rendered_env_id = possible_env_ids[0]
+                        break
 
     def set_viewer_camera(self, position: Union[np.ndarray, List[float]], lookat: Union[np.ndarray, List[float]]):
         """
@@ -95,7 +131,7 @@ class LeggedRobotViser:
             client.camera.position = position
             client.camera.look_at = lookat
 
-    def get_camera_position_for_robot(self, env_offset, root_pos):
+    def get_camera_position_for_robot(self, root_pos):
         """
         Calculate camera position to look at the robot from 3m away.
         
@@ -108,7 +144,8 @@ class LeggedRobotViser:
             lookat_pos: Position to look at (robot position)
         """
         # Get actual robot position in world frame (root_pos is in env frame, need to transform to world frame)
-        world_pos = root_pos + env_offset
+        # world_pos = root_pos + env_offset
+        world_pos = root_pos
         
         # Position to look at (robot position plus small height offset)
         lookat_pos = world_pos + np.array([0.0, 0.0, 0.5])
@@ -120,6 +157,20 @@ class LeggedRobotViser:
         camera_pos = world_pos + camera_offset
         
         return camera_pos, lookat_pos
+    
+    def set_viewer_camera(self, position: Union[np.ndarray, List[float]], lookat: Union[np.ndarray, List[float]]):
+        """
+        Set the camera position and look-at point.
+        
+        Args:
+            position: Camera position in world coordinates
+            lookat: Point to look at in world coordinates
+        """
+        clients = self.server.get_clients()
+        for id, client in clients.items():
+            client.camera.position = position
+            client.camera.look_at = lookat
+
     
     def add_mesh(self, 
                 name: str,
@@ -145,7 +196,7 @@ class LeggedRobotViser:
         self._mesh_handles[name.lstrip('/')] = handle
         return handle
 
-    def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor, env_idx: int = 0):
+    def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor):
         """
         Update IsaacGym viz.
         
@@ -154,6 +205,17 @@ class LeggedRobotViser:
             dof_pos: (num_envs, num_dofs)
             env_idx: Which environment to read from
         """
+
+        env_idx = self.current_rendered_env_id
+
+        if env_idx != self.last_rendered_env_id:
+
+            camera_pos, lookat_pos = self.get_camera_position_for_robot(
+                # self.scene_manager.env_origins[env_idx],
+                root_states[env_idx, :3].cpu().numpy()
+            )
+            self.set_viewer_camera(position=camera_pos, lookat=lookat_pos)
+
         # Block until either play is true or step is requested
         while not (self.play_pause.value or self.step_requested):
             time.sleep(0.01)  # Small sleep to prevent CPU spinning
@@ -186,3 +248,4 @@ class LeggedRobotViser:
             self.isaac_urdf.update_cfg(dof_pos_np)
         
         self.step_requested = False
+        self.last_rendered_env_id = env_idx

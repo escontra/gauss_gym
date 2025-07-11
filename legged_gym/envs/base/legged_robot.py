@@ -38,13 +38,6 @@ class LeggedRobot(base_task.BaseTask):
         self.init_done = False
 
         self.use_viser = not self.cfg["headless"]
-
-                # Initialize viser if enabled
-        if self.use_viser:
-            from legged_gym.utils.viser_visualizer import LeggedRobotViser
-            asset_path = self.cfg["asset"]["file"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
-            self.viser_viz = LeggedRobotViser(self, urdf_path=asset_path, dt=self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"])
-
         super().__init__(self.cfg)
         self.dt = self.cfg["control"]["decimation"] * self.sim_params.dt
         self.command_ranges = dict(self.cfg["commands"]["ranges"])
@@ -72,6 +65,13 @@ class LeggedRobot(base_task.BaseTask):
             self.sensors["gs_renderer"] = self.scene_manager.renderer
 
         self.obs_manager = observation_manager.ObsManager(self, self.obs_groups)
+
+        # Initialize viser if enabled
+        if self.use_viser:
+            from legged_gym.utils.viser_visualizer import LeggedRobotViser
+            asset_path = self.cfg["asset"]["file"].format(GAUSS_GYM_ROOT_DIR=legged_gym.GAUSS_GYM_ROOT_DIR)
+            self.viser_viz = LeggedRobotViser(self, urdf_path=asset_path, dt=self.cfg["control"]["decimation"] * self.cfg["sim"]["dt"])
+
 
 
     def clip_position_action_by_torque_limit(self, actions_scaled, dof_stiffness, dof_damping):
@@ -207,7 +207,7 @@ class LeggedRobot(base_task.BaseTask):
     
     def render(self, sync_frame_time=True):
         if self.use_viser:
-            self.viser_viz.update(self.root_states[:, :7], self.dof_pos, 0)
+            self.viser_viz.update(self.root_states[:, :7], self.dof_pos)
         super().render(sync_frame_time)
 
     @timer.section("pre_decimation_step")
