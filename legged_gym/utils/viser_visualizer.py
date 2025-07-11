@@ -195,6 +195,38 @@ class LeggedRobotViser:
         )
         self._mesh_handles[name.lstrip('/')] = handle
         return handle
+    
+    def update_camera_frustum(self):
+
+        env_idx = self.current_rendered_env_id
+
+        cam_pos = self.scene_manager.renderer.camera_positions[env_idx].cpu().numpy()
+        cam_quat = self.scene_manager.renderer.camera_quats_xyzw[env_idx].cpu().numpy()
+        cam_quat_wxyz = np.array([cam_quat[3], cam_quat[0], cam_quat[1], cam_quat[2]])
+        cam_image = self.scene_manager.renderer.renders[env_idx].cpu().numpy().transpose(1, 2, 0)
+
+        fov = self.scene_manager.renderer.fov
+        aspect = self.scene_manager.renderer.aspect
+        scale = 0.15
+        final_quat = cam_quat_wxyz
+        body_pos = cam_pos
+        depth_rgb = cam_image
+
+        self.server.scene.add_camera_frustum(
+                f"/cam",
+                fov=fov,
+                aspect=aspect,
+                scale=scale,
+                line_width=3.0,  # Thicker lines for better visibility
+                color=(0, 0, 0),  # Bright magenta color for visibility
+                wxyz=final_quat,
+                position=body_pos,
+                image=depth_rgb,
+                # format='rgb',  # Use RGB format which is supported by Viser
+                format='jpeg',
+                jpeg_quality=90,
+            )
+
 
     def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor):
         """
@@ -227,6 +259,7 @@ class LeggedRobotViser:
         # Convert quaternion from (x,y,z,w) to (w,x,y,z) for Viser
         viser_quat = np.array([root_quat[3], root_quat[0], root_quat[1], root_quat[2]])
 
+        self.update_camera_frustum()
         # Update IsaacGym visualization
         self._isaac_world_node.position = root_pos
         self._isaac_world_node.wxyz = viser_quat
