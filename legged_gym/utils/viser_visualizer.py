@@ -6,7 +6,7 @@ import trimesh
 import torch
 import numpy as np
 import time
-
+import cv2
 
 class LeggedRobotViser:
     """A robot visualizer using Viser, with the URDF attached under a /world root node."""
@@ -36,6 +36,31 @@ class LeggedRobotViser:
         self.dt = dt
         self.force_dt = force_dt
 
+        self._isaac_world_node = self.server.scene.add_frame("/isaac_world", show_axes=False)
+
+        # Load URDF for both simulators
+        self.urdf = yourdfpy.URDF.load(urdf_path, load_collision_meshes=True)
+
+
+        # Also store mesh handles in case you want direct references
+        self._mesh_handles = {}
+
+
+        self.scene_manager = self.env.scene_manager
+        self.current_rendered_env_id = 0
+        self.last_rendered_env_id = -1 # set to -1 to force camera update on first render
+
+        self.add_terrain_meshes()
+        self.add_gui_elements()
+
+        # Attach URDF under both world nodes
+        self.isaac_urdf = ViserUrdf(
+            target=self.server,
+            urdf_or_path=self.urdf,
+            root_node_name="/isaac_world"
+        )
+    
+    def add_gui_elements(self):
         # Add simulation control buttons
         with self.server.gui.add_folder("Simulation Control"):
             self.play_pause = self.server.gui.add_checkbox(
@@ -53,40 +78,29 @@ class LeggedRobotViser:
             )
             self.step_requested = False
 
-        self._isaac_world_node = self.server.scene.add_frame("/isaac_world", show_axes=False)
+            @self.reset_button.on_click
+            def _(_):
+                """Reset both simulators when reset button is clicked"""
+                # Reset IsaacGym environment
+                self.env.reset_idx(torch.tensor([self.current_rendered_env_id], device=self.env.device), time_out_buf=torch.zeros(self.env.num_envs, device=self.env.device))
+                print(f'[PLAY] Resetting Isaac')
+            
+            @self.step_button.on_click
+            def _(_):
+                if not self.play_pause.value:  # Only allow stepping when paused
+                    self.step_requested = True
 
-        # Load URDF for both simulators
-        self.urdf = yourdfpy.URDF.load(urdf_path, load_collision_meshes=True)
-
-
-        # Also store mesh handles in case you want direct references
-        self._mesh_handles = {}
-
-
-        self.scene_manager = self.env.scene_manager
-        self.current_rendered_env_id = 0
-        self.last_rendered_env_id = -1 # set to -1 to force camera update on first render
-
-        self.add_terrain_meshes()
         self.setup_scene_selection()
+            
 
-        # Attach URDF under both world nodes
-        self.isaac_urdf = ViserUrdf(
-            target=self.server,
-            urdf_or_path=self.urdf,
-            root_node_name="/isaac_world"
-        )
-        @self.reset_button.on_click
-        def _(_):
-            """Reset both simulators when reset button is clicked"""
-            # Reset IsaacGym environment
-            self.env.reset_idx(torch.tensor([self.current_rendered_env_id], device=self.env.device), time_out_buf=torch.zeros(self.env.num_envs, device=self.env.device))
-            print(f'[PLAY] Resetting Isaac')
-        
-        @self.step_button.on_click
-        def _(_):
-            if not self.play_pause.value:  # Only allow stepping when paused
-                self.step_requested = True
+        self.camera_viz_folder = self.server.gui.add_folder("Camera Visualization")
+        with self.camera_viz_folder:
+            self.show_robot_frustum = self.server.gui.add_checkbox(
+                "Show Robot Frustum",
+                initial_value=False,
+                hint="Toggle robot frustum visibility"
+            )
+
     
     def add_terrain_meshes(self):
         self.add_mesh(
@@ -210,7 +224,7 @@ class LeggedRobotViser:
         scale = 0.15
         final_quat = cam_quat_wxyz
         body_pos = cam_pos
-        depth_rgb = cam_image
+        rgb_image = cam_image
 
         self.server.scene.add_camera_frustum(
                 f"/cam",
@@ -221,12 +235,25 @@ class LeggedRobotViser:
                 color=(0, 0, 0),  # Bright magenta color for visibility
                 wxyz=final_quat,
                 position=body_pos,
-                image=depth_rgb,
+                image=rgb_image,
                 # format='rgb',  # Use RGB format which is supported by Viser
                 format='jpeg',
                 jpeg_quality=90,
+                visible=self.show_robot_frustum.value,
             )
 
+        # upscale the image by a factor of 3 to be more visible
+        rgb_image_upscaled = cv2.resize(rgb_image, (rgb_image.shape[1] * 3, rgb_image.shape[0] * 3))
+        if not hasattr(self, 'robot_camera_handle'):
+            with self.camera_viz_folder:
+                self.robot_camera_handle = self.server.gui.add_image(
+                    rgb_image_upscaled,
+                    label="Robot Camera",
+                    format='jpeg',
+                    jpeg_quality=90,
+                )
+        else:
+            self.robot_camera_handle.image = rgb_image_upscaled
 
     def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor):
         """
