@@ -394,11 +394,11 @@ rewards:
   dof_acc:
     scale: -2.5e-7
   torques:
-    scale: -0.0001
+    scale: -0.0002
   feet_air_time:
     scale: 1.0
-    min_air_time: 0.5
-    max_air_time: 100.0
+    min_air_time: 0.3
+    max_air_time: 0.3
   collision:
     scale: -1.0
   action_rate:

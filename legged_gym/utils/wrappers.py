@@ -71,6 +71,8 @@ class ImageEncoderWrapper(Wrapper):
   def add_latent_to_obs_dict(self, obs_dict: Dict[str, Dict[str, torch.Tensor]], latent: torch.Tensor):
     for obs_group in self.env.obs_groups:
       if observation_groups.IMAGE_ENCODER_LATENT in obs_group.observations:
+        if self.env.obs_groups[self.env.obs_groups.index(obs_group)].add_noise:
+          latent = latent + (2 * torch.rand_like(latent) - 1) * observation_groups.IMAGE_ENCODER_LATENT.noise
         obs_dict[obs_group.name][observation_groups.IMAGE_ENCODER_LATENT.name] = latent
     return obs_dict
 

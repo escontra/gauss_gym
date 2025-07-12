@@ -85,7 +85,7 @@ DOF_POS = Observation(
 DOF_VEL = Observation(
   name="dof_vel",
   func=O.dof_vel,
-  noise=1.5,
+  noise=0.5,
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -184,4 +184,5 @@ IMAGE_ENCODER_LATENT = Observation(
   name="image_encoder",
   func=None,
   ignore_in_observation_manager=True,
+  noise=0.2,
 )

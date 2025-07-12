@@ -1,5 +1,4 @@
 from typing import Any, Dict
-import collections
 import time
 import torch
 import torch.utils._pytree as pytree

@@ -101,7 +101,17 @@ class RayCaster():
 
 
 class FootContactSensor():
-    def __init__(self, env, direction: Tuple = (0.0, 0.0, -1.0)):        
+    def __init__(self, env, contact_method: str = "force", ray_direction: Tuple = (0.0, 0.0, -1.0), force_window_size: int = 2):
+        """Detect contacts between feet and terrain.
+
+        Args:
+            env (Env): The environment.
+            contact_method (str): The method to use to detect contacts. Can be "ray" or "force".
+            ray_direction (Tuple): The direction of the ray.
+            force_window_size (int): The number of timesteps for the force window. If any value
+              in the window registers a contact, the foot is considered to be in contact. Helps
+              with stability.
+        """
         self.feet_edge_pos = env.cfg["asset"]["feet_edge_pos"]
         self.attach_yaw_only = True
         self.default_hit_value = 10
@@ -109,30 +119,36 @@ class FootContactSensor():
         self.num_envs = env.num_envs
         self.num_feet = len(env.feet_indices)
         self.device = env.device
+        self.contact_method = contact_method
+        self.env = env
+        self.sphere_geom = None
 
-        self.ray_starts = torch.zeros(1, 3, device=self.device)
-        self.ray_directions = torch.zeros_like(self.ray_starts)
-        self.ray_directions[..., :] = torch.tensor(list(direction), device=self.device)
-
-        self.ray_starts = self.ray_starts.repeat(self.num_feet, 1)
-        self.ray_directions = self.ray_directions.repeat(self.num_feet, 1)
-
-        self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
-        self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
         feet_edge_relative_pos = math.to_torch(env.cfg["asset"]["feet_edge_pos"], device=env.device, requires_grad=False)
         self.num_edge_points = feet_edge_relative_pos.shape[0]
+        self.total_edges = self.num_feet * self.num_edge_points
+        self.feet_edge_pos = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, 3, device=env.device)
         self.feet_edge_relative_pos = (
             feet_edge_relative_pos.unsqueeze(0).unsqueeze(0)
             .expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
         )
-        self.total_edges = self.num_feet * self.num_edge_points
 
-        self.feet_edge_pos = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, 3, device=env.device)
-        self.feet_ground_distance = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, device=env.device)
-        self.feet_contact = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, dtype=torch.bool, device=env.device)
-        self.env = env
-        self.sphere_geom = None
+        if contact_method == "ray":
+          self.ray_starts = torch.zeros(1, 3, device=self.device)
+          self.ray_directions = torch.zeros_like(self.ray_starts)
+          self.ray_directions[..., :] = torch.tensor(list(ray_direction), device=self.device)
 
+          self.ray_starts = self.ray_starts.repeat(self.num_feet, 1)
+          self.ray_directions = self.ray_directions.repeat(self.num_feet, 1)
+
+          self.ray_starts = self.ray_starts.repeat(self.num_envs, 1, 1)
+          self.ray_directions = self.ray_directions.repeat(self.num_envs, 1, 1)
+          self.feet_ground_distance = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, device=env.device)
+          self.feet_contact = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, dtype=torch.bool, device=env.device)
+        elif contact_method == "force":
+          self.feet_contact = torch.zeros(self.num_envs, self.num_feet, force_window_size, dtype=torch.bool, device=env.device)
+        else:
+          raise ValueError(f"Invalid contact method: {contact_method}")
+  
     def update(self, dt, env_ids=...):
         """Perform raycasting on the terrain.
 
@@ -145,10 +161,16 @@ class FootContactSensor():
         feet_edge_pos = expanded_feet_pos.reshape(-1, 3) + math.quat_rotate(expanded_feet_quat.reshape(-1, 4), self.feet_edge_relative_pos.reshape(-1, 3))
         self.feet_edge_pos[env_ids] = feet_edge_pos.reshape(self.num_envs, self.num_feet, self.num_edge_points, 3)
 
-        nearest_points = warp_utils.nearest_point(feet_edge_pos, self.terrain_mesh)
-        dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
-        self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
-        self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg["asset"]["feet_contact_radius"]
+        if self.contact_method == "ray":
+          nearest_points = warp_utils.nearest_point(feet_edge_pos, self.terrain_mesh)
+          dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
+          self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
+          self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg["asset"]["feet_contact_radius"]
+        elif self.contact_method == "force":
+          contact_forces = self.env.contact_forces[env_ids, self.env.feet_indices, :]
+          in_contact = torch.linalg.norm(contact_forces, dim=-1) > 0.1
+          self.feet_contact[env_ids] = torch.roll(self.feet_contact[env_ids], -1, dims=-1)
+          self.feet_contact[env_ids, :, -1] = in_contact
 
     def get_data(self):
         foot_contact = torch.any(self.feet_contact, dim=-1)
@@ -160,7 +182,12 @@ class FootContactSensor():
                 self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg["asset"]["feet_contact_radius"], 16, 16, None, color=(1, 1, 0)
             )
         feet_edge_pos = self.feet_edge_pos.view(-1, 3)
-        feet_contact = self.feet_contact.view(-1)
+        if self.contact_method == "ray":
+          feet_contact = self.feet_contact.view(-1)
+        elif self.contact_method == "force":
+          feet_contact = torch.any(self.feet_contact, dim=-1)
+          feet_contact = feet_contact[..., None].repeat(1, 1, self.num_edge_points)
+          feet_contact = feet_contact.view(-1)
         color_red = math.to_torch(np.array([1., 0., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
         color_green = math.to_torch(np.array([0., 1., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
         colors = torch.where(feet_contact[..., None], color_green, color_red)
