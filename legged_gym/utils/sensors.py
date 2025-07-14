@@ -229,6 +229,9 @@ class GaussianSplattingRenderer():
         self.pp_x = self.env.cfg["env"]["camera_params"]["pp_x"] / downscale_factor
         self.pp_y = self.env.cfg["env"]["camera_params"]["pp_y"] / downscale_factor
 
+        self.fov = np.arctan2(self.cam_height / 2, self.fl_y)
+        self.aspect = self.cam_width / self.cam_height
+
         # Camera intrinsics randomization.
         self.apply_domain_rand = self.env.cfg["domain_rand"]["apply_domain_rand"]
         self.camera_refresh_interval_s = self.env.cfg["domain_rand"]["camera_refresh_interval_s"]
