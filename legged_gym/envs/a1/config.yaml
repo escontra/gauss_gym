@@ -408,6 +408,8 @@ rewards:
   stumble:
     scale: -3.0
     multiplier: 2.0
+  feet_slip:
+    scale: -0.1
 
 commands:
   still_proportion: 0.05
