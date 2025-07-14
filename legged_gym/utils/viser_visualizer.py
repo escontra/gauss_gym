@@ -59,7 +59,7 @@ class LeggedRobotViser:
             urdf_or_path=self.urdf,
             root_node_name="/isaac_world"
         )
-    
+
     def add_gui_elements(self):
         # Add simulation control buttons
         with self.server.gui.add_folder("Simulation Control"):
@@ -112,7 +112,9 @@ class LeggedRobotViser:
 
     def setup_scene_selection(self):
 
-        mesh_names = sorted(self.scene_manager.mesh_names)
+        mesh_names = self.scene_manager.mesh_names
+        sorted_indices = sorted(range(len(mesh_names)), key=lambda i: mesh_names[i])
+        mesh_names = [mesh_names[i] for i in sorted_indices]
 
         with self.server.gui.add_folder("Scene Selection"):
             self.scene_selection = self.server.gui.add_dropdown(
@@ -126,7 +128,7 @@ class LeggedRobotViser:
             @self.scene_selection.on_update
             def _(event) -> None:
 
-                for i, mesh_name in enumerate(mesh_names):
+                for i, mesh_name in zip(sorted_indices, mesh_names):
                     if mesh_name == self.scene_selection.value:
                         possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
                         self.current_rendered_env_id = possible_env_ids[0]
@@ -281,7 +283,8 @@ class LeggedRobotViser:
             
         root_pos = root_states[env_idx, :3].cpu().numpy()
         root_quat = root_states[env_idx, 3:7].cpu().numpy()
-        dof_pos_np = dof_pos[env_idx].cpu().numpy()
+        dof_dict = dict(zip(self.env.dof_names, dof_pos[env_idx].cpu().numpy().tolist()))
+        dof_pos_np = np.array([dof_dict[name] for name in self.isaac_urdf.get_actuated_joint_names()])
         
         # Convert quaternion from (x,y,z,w) to (w,x,y,z) for Viser
         viser_quat = np.array([root_quat[3], root_quat[0], root_quat[1], root_quat[2]])

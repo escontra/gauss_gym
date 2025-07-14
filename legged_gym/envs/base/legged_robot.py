@@ -366,6 +366,8 @@ class LeggedRobot(base_task.BaseTask):
         time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self.reset_idx(torch.arange(self.num_envs, device=self.device), time_out_buf)
         obs_dict, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        if self.use_viser:
+            self.viser_viz.update(self.root_states[:, :7], self.dof_pos)
         return obs_dict
 
     @timer.section("reset_idx")
