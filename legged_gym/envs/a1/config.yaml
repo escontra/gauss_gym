@@ -201,10 +201,11 @@ curriculum:
   dof_friction:
     apply: True
     # epochs: 10000
-    epochs: 3000
+    epochs: 0
     update_every: 10
     start: 0.1
     end: 0.0
+    buckets: 255
     sample_type: "uniform"
 
 domain_rand:
@@ -410,6 +411,11 @@ rewards:
     multiplier: 2.0
   feet_slip:
     scale: -0.1
+  feet_clearance:
+    scale: 0.3
+    clearance_distance: 0.08
+  energy_substeps:
+    scale: -0.001
 
 commands:
   still_proportion: 0.05

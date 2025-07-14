@@ -4,6 +4,12 @@ import numpy as np
 from typing import Union, Optional, Dict, Any, Tuple
 
 
+def get_bucket_value(value: float, min_value: float, max_value: float, num_buckets: int) -> float:
+  range_value = max_value - min_value
+  value = (round(((value - min_value) / range_value) * num_buckets) / num_buckets) * range_value + min_value
+  return value
+  
+
 def nearest_factors(n):
     n = int(n)
     a = int(np.sqrt(n))

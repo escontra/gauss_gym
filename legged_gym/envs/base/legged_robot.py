@@ -55,7 +55,8 @@ class LeggedRobot(base_task.BaseTask):
             "foot_height_raycaster": sensors.LinkHeightSensor(self, self.feet_names, color=(0.5, 0.0, 0.5)),
             "base_height_raycaster": sensors.LinkHeightSensor(self, [self.cfg["asset"]["base_link_name"]], color=(0.5, 0.0, 0.5)),
             "hip_height_raycaster": sensors.LinkHeightSensor(self, self.cfg["asset"]["hip_link_names"], color=(1.0, 0.41, 0.71)),
-            "foot_contact_sensor": sensors.FootContactSensor(self)}
+            "foot_contact_sensor": sensors.FootContactSensor(self),
+            "foot_distance_sensor": sensors.FootDistanceSensor(self)}
         self.obs_groups = observation_groups.observation_groups_from_config(self.cfg["observations"])
 
         # Maybe add renderer to sensors.
@@ -325,7 +326,10 @@ class LeggedRobot(base_task.BaseTask):
                 start = self.cfg["curriculum"]["dof_friction"]["start"]
                 end = self.cfg["curriculum"]["dof_friction"]["end"]
                 total_steps = self.cfg["curriculum"]["dof_friction"]["epochs"] * self.cfg["runner"]["num_steps_per_env"]
-                progress = np.clip(self.common_step_counter / total_steps, 0., 1.)
+                if total_steps == 0:
+                    progress = 1.
+                else:
+                    progress = np.clip(self.common_step_counter / total_steps, 0., 1.)
                 curr_end = start + (end - start) * progress
                 curr_epoch = self.common_step_counter // self.cfg["runner"]["num_steps_per_env"]
                 utils.print(f'Friction Curriculum [{curr_epoch}] progress: {progress*100:.2f}%, start: {start:.3f}, curr_end: {curr_end:.3f}, end: {end:.3f}', color='yellow')
@@ -339,7 +343,14 @@ class LeggedRobot(base_task.BaseTask):
                         new_friction = np.random.uniform(min(start, curr_end), max(start, curr_end))
                     else:
                         raise ValueError(f"Invalid sample type: {self.cfg['curriculum']['dof_friction']['sample_type']}")
-                    dof_props["friction"].fill(new_friction)
+                    # Discretize the friction value to the nearest bucket value.
+                    new_friction = math.get_bucket_value(
+                        new_friction,
+                        min_value=min(start, end),
+                        max_value=max(start, end),
+                        num_buckets=self.cfg["curriculum"]["dof_friction"]["buckets"]
+                    )
+                    dof_props["friction"][:] = new_friction
                     self.dof_friction_curriculum_values[i] = new_friction
                     self.gym.set_actor_dof_properties(
                         self.envs[i],
@@ -366,8 +377,6 @@ class LeggedRobot(base_task.BaseTask):
         time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
         self.reset_idx(torch.arange(self.num_envs, device=self.device), time_out_buf)
         obs_dict, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
-        if self.use_viser:
-            self.viser_viz.update(self.root_states[:, :7], self.dof_pos)
         return obs_dict
 
     @timer.section("reset_idx")
@@ -1426,13 +1435,16 @@ class LeggedRobot(base_task.BaseTask):
       reward =  torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos) * weights, dim=-1))
       return reward
 
-    def _reward_feet_clearance(self, clearance_height):
+    def _reward_feet_clearance(self, clearance_distance):
+      # Rewards robot for having moving feet maintain a minimum distance from the environment.
       _, _, feet_vel, _ = self.get_feet_state()
       vel_xy = feet_vel[..., :2]
       vel_norm = torch.linalg.norm(vel_xy, dim=-1)
-      feet_z = self.sensors["foot_height_raycaster"].get_data()
-      delta = torch.abs(feet_z - clearance_height)
-      return torch.sum(delta * vel_norm, dim=-1)
+      feet_distance = self.sensors["foot_distance_sensor"].get_data().clamp(min=0.)
+      delta = (feet_distance - clearance_distance).clamp(max=0.).mean(dim=-1)
+      reward = torch.sum(delta * vel_norm, dim=-1)
+      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      return reward
 
     def _reward_feet_clearance_clipped(self, clearance_height):
       height_diff = self.swing_peak - clearance_height

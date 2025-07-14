@@ -100,6 +100,56 @@ class RayCaster():
           self.sphere_geom.draw(ray_hits_world_viz, env.gym, env.viewer, env.envs[0])
 
 
+class FootDistanceSensor():
+    def __init__(self, env):
+        """Detect contacts between feet and terrain.
+
+        Args:
+            env (Env): The environment.
+            contact_method (str): The method to use to detect contacts. Can be "ray" or "force".
+            ray_direction (Tuple): The direction of the ray.
+            force_window_size (int): The number of timesteps for the force window. If any value
+              in the window registers a contact, the foot is considered to be in contact. Helps
+              with stability.
+        """
+        self.feet_edge_pos = env.cfg["asset"]["feet_edge_pos"]
+        self.attach_yaw_only = True
+        self.default_hit_value = 10
+        self.terrain_mesh = env.scene_manager.terrain_mesh
+        self.num_envs = env.num_envs
+        self.num_feet = len(env.feet_indices)
+        self.device = env.device
+        self.env = env
+
+        feet_edge_relative_pos = math.to_torch(env.cfg["asset"]["feet_edge_pos"], device=env.device, requires_grad=False)
+        self.num_edge_points = feet_edge_relative_pos.shape[0]
+        self.feet_edge_relative_pos = (
+            feet_edge_relative_pos.unsqueeze(0).unsqueeze(0)
+            .expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
+        )
+        self.feet_ground_distance = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, device=env.device)
+
+    def update(self, dt, env_ids=...):
+        """Perform raycasting on the terrain.
+
+        Args:
+            env_ids (List[int], optional): Subset of environments for which to return the ray hits. Defaults to ....
+        """
+        feet_pos, feet_quat, _ ,_ = self.env.get_feet_state()
+        expanded_feet_pos = feet_pos.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
+        expanded_feet_quat = feet_quat.unsqueeze(2).expand(self.num_envs, self.num_feet, self.num_edge_points, 4)
+        feet_edge_pos = expanded_feet_pos.reshape(-1, 3) + math.quat_rotate(expanded_feet_quat.reshape(-1, 4), self.feet_edge_relative_pos.reshape(-1, 3))
+
+        nearest_points = warp_utils.nearest_point(feet_edge_pos, self.terrain_mesh)
+        dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
+        self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
+
+    def get_data(self):
+        return self.feet_ground_distance - self.env.cfg["asset"]["feet_contact_radius"]
+
+    def debug_vis(self, env):
+        return
+
 class FootContactSensor():
     def __init__(self, env, contact_method: str = "force", ray_direction: Tuple = (0.0, 0.0, -1.0), force_window_size: int = 2):
         """Detect contacts between feet and terrain.
