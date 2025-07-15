@@ -1248,7 +1248,8 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_dof_acc(self):
         # Penalize dof accelerations
-        return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=-1)
+        dof_acc = (self.dof_vel - self.last_dof_vel) / self.dt
+        return torch.norm(dof_acc, p=2, dim=-1) + dof_acc.abs().sum(dim=-1)
 
     def _reward_action_rate(self):
         # Penalize changes in actions

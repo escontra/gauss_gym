@@ -415,7 +415,7 @@ rewards:
     scale: 0.3
     clearance_distance: 0.08
   energy_substeps:
-    scale: -0.001
+    scale: -0.0001
 
 commands:
   still_proportion: 0.05
