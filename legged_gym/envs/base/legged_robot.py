@@ -1236,11 +1236,7 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_torques(self):
         # Penalize torques
-        return torch.norm(self.torques, p=2, dim=-1) + self.torques.abs().sum(dim=-1)
-        # torque_reward = torch.sum(torch.square(self.torques), dim=-1)
-        # if include_abs:
-        #   torque_reward += self.torques.abs().sum(dim=-1)
-        # return torque_reward
+        return torch.sum(torch.square(self.torques), dim=1) + self.torques.abs().sum(dim=-1)
 
     def _reward_dof_vel(self):
         # Penalize dof velocities
@@ -1254,16 +1250,9 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_action_rate(self):
         # Penalize changes in actions
         action_diff = self.last_actions - self.actions
-        return torch.norm(action_diff, p=2, dim=-1) + action_diff.abs().sum(dim=-1)
-        # # Penalize changes in actions
-        # action_diff = self.last_actions - self.actions
-        # action_rate_reward = torch.sum(torch.square(action_diff), dim=-1)
-        # if include_abs:
-        #   action_rate_reward += action_diff.abs().sum(dim=-1)
-        # return action_rate_reward
+        return torch.sum(torch.square(action_diff), dim=1) + action_diff.abs().sum(dim=1)
 
     def _reward_action_rate_gains(self):
-
         # Re-normalize the actions to the range [-1, 1]
         normalized_last_actions = self.normalize_actions({
             "stiffness": self.last_stiffness,
