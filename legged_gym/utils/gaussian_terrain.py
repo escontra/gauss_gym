@@ -9,6 +9,7 @@ import torch
 from isaacgym import gymapi
 
 import legged_gym
+from legged_gym import utils
 from legged_gym.utils import sensors, math, visualization, warp_utils, visualization_geometries
 
 
@@ -70,7 +71,7 @@ class GaussianTerrain:
     self._load_meshes()
     self._process_poses()
 
-    print(f"Loaded {len(self._mesh_dict)} meshes.")
+    utils.print(f"Loaded {len(self._mesh_dict)} meshes.", color='green')
 
   @property
   def num_meshes(self):

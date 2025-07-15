@@ -200,7 +200,6 @@ curriculum:
 
   dof_friction:
     apply: True
-    # epochs: 10000
     epochs: 0
     update_every: 10
     start: 0.1
@@ -413,7 +412,7 @@ rewards:
     scale: -0.1
   feet_clearance:
     scale: 0.3
-    clearance_distance: 0.08
+    clearance_distance: 0.1
   energy_substeps:
     scale: -0.0001
 
