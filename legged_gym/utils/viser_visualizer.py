@@ -7,6 +7,8 @@ import torch
 import numpy as np
 import time
 import cv2
+import viser.transforms as vtf
+
 
 class LeggedRobotViser:
     """A robot visualizer using Viser, with the URDF attached under a /world root node."""
@@ -44,6 +46,7 @@ class LeggedRobotViser:
 
         # Also store mesh handles in case you want direct references
         self._mesh_handles = {}
+        self._gs_handle = None
 
 
         self.scene_manager = self.env.scene_manager
@@ -101,13 +104,74 @@ class LeggedRobotViser:
                 hint="Toggle robot frustum visibility"
             )
 
-    
+        self.gaussian_splatting_viz_folder = self.server.gui.add_folder("Gaussian Splatting")
+        with self.gaussian_splatting_viz_folder:
+            self.show_gaussian_splatting = self.server.gui.add_checkbox(
+                "Show Gaussian Splat",
+                initial_value=True,
+                hint="Toggle robot frustum visibility"
+            )
+
+        self.mesh_viz_folder = self.server.gui.add_folder("Mesh Visualization")
+        with self.mesh_viz_folder:
+            self.show_mesh = self.server.gui.add_checkbox(
+                "Show Mesh",
+                initial_value=True,
+                hint="Toggle robot frustum visibility"
+            )
+
     def add_terrain_meshes(self):
         self.add_mesh(
             "terrain",
             self.scene_manager.all_vertices_mesh,
             self.scene_manager.all_triangles_mesh,
             color=(0.282, 0.247, 0.361),
+        )
+
+    def add_gaussians(self, mesh_name: str, env_idx: int):
+        if "gs_renderer" not in self.env.sensors:
+            return
+        ply_renderers = self.env.sensors["gs_renderer"].get_gs_renderers()
+        splat_name = '/'.join(mesh_name.split('/')[:-1])
+        renderer = ply_renderers[splat_name]
+        centers = renderer.means.cpu().numpy() / renderer.dataparser_scale
+        colors = renderer.colors_viser.cpu().numpy()
+        opacities = renderer.opacities.cpu().numpy()[..., None]
+        scales = renderer.scales.cpu().numpy() / renderer.dataparser_scale
+        Rs = vtf.SO3(renderer.quats.cpu().numpy()).as_matrix()
+        covariances = np.einsum(
+            "nij,njk,nlk->nil", Rs, np.eye(3)[None, :, :] * scales[:, None, :] ** 2, Rs
+        )
+
+        cam_offset = self.scene_manager.cam_offset[env_idx].cpu().numpy()
+        env_offset = self.env.env_origins[env_idx].cpu().numpy()
+
+        ig_to_orig_rot = vtf.SO3.from_matrix(self.scene_manager.ig_to_orig_rot[env_idx].cpu().numpy())
+        dataparser_transform = vtf.SE3.from_matrix(renderer.dataparser_transform.cpu().numpy())
+
+        # Move from GS frame to IG frame.
+        cumulative_transform = dataparser_transform.inverse()
+        cumulative_transform = vtf.SE3.from_rotation_and_translation(
+            vtf.SO3.identity(),
+            cam_offset
+        ).inverse().multiply(cumulative_transform)
+        cumulative_transform = vtf.SE3.from_rotation_and_translation(
+            ig_to_orig_rot,
+            np.zeros(3)
+        ).inverse().multiply(cumulative_transform)
+        cumulative_transform = vtf.SE3.from_rotation_and_translation(
+              vtf.SO3.identity(),
+              env_offset
+        ).multiply(cumulative_transform)
+
+        self._gs_handle = self.server.scene.add_gaussian_splats(
+            "gs",
+            centers=centers,
+            covariances=covariances,
+            rgbs=colors,
+            opacities=opacities,
+            wxyz=cumulative_transform.rotation().wxyz,
+            position=cumulative_transform.translation(),
         )
 
     def setup_scene_selection(self):
@@ -132,6 +196,7 @@ class LeggedRobotViser:
                     if mesh_name == self.scene_selection.value:
                         possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
                         self.current_rendered_env_id = possible_env_ids[0]
+                        self.add_gaussians(self.scene_selection.value, self.current_rendered_env_id)
                         break
 
     def set_viewer_camera(self, position: Union[np.ndarray, List[float]], lookat: Union[np.ndarray, List[float]]):
@@ -276,6 +341,12 @@ class LeggedRobotViser:
                 root_states[env_idx, :3].cpu().numpy()
             )
             self.set_viewer_camera(position=camera_pos, lookat=lookat_pos)
+
+        if self._gs_handle is not None:
+            self._gs_handle.visible = self.show_gaussian_splatting.value
+
+        for _, v in self._mesh_handles.items():
+            v.visible = self.show_mesh.value
 
         # Block until either play is true or step is requested
         while not (self.play_pause.value or self.step_requested):

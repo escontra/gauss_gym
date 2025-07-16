@@ -83,7 +83,7 @@ class BatchPLYRenderer:
         self.device = torch.device(device)
         
         # Load Gaussian parameters from PLY
-        self.means, self.scales, self.quats, self.colors, self.opacities, self.sh_degree = self._load_ply_gaussians(ply_path)
+        self.means, self.scales, self.quats, self.colors, self.colors_viser, self.opacities, self.sh_degree = self._load_ply_gaussians(ply_path)
         
         # Set dummy transform parameters (replace these with actual values if needed)
         # Read these values from the corresponding .json file of the same name as the splat file
@@ -112,6 +112,9 @@ class BatchPLYRenderer:
         
         # Load rotations
         quats = torch.from_numpy(np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], axis=-1)).float().to(self.device)
+
+        SH_C0 = 0.28209479177387814
+        colors_viser = torch.from_numpy(0.5 + SH_C0 * np.stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]], axis=1)).float().to(self.device)
         
         # Load spherical harmonics
         sh_components = [
@@ -134,7 +137,7 @@ class BatchPLYRenderer:
         # Calculate SH degree
         sh_degree = int(np.sqrt(colors.shape[1]) - 1)
         
-        return means, scales, quats, colors, opacities, sh_degree
+        return means, scales, quats, colors, colors_viser, opacities, sh_degree
 
     @torch.no_grad()
     def batch_render(

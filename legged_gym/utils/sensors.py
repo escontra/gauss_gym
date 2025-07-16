@@ -309,6 +309,10 @@ class GaussianSplattingRenderer():
             np.array(self.env.cfg["env"]["camera_params"]["cam_xyz_offset"])[None].repeat(self.num_envs, 0),
             dtype=torch.float, device=self.device, requires_grad=False
         )
+  
+    def get_gs_renderers(self):
+        return {k: self._gs_renderer.renderers[v] for k, v in self.scene_path_map.items()}
+       
 
     def _maybe_sample_camera_params(self):
         if self.apply_domain_rand and self.fl_rand_params["apply"]:
