@@ -202,7 +202,7 @@ curriculum:
     apply: True
     epochs: 0
     update_every: 10
-    start: 0.1
+    start: 0.05
     end: 0.0
     buckets: 255
     sample_type: "uniform"
@@ -379,13 +379,13 @@ rewards:
   only_positive_rewards: True
 
   tracking_lin_vel_x:
-    scale: 1.0
+    scale: 2.0
     tracking_sigma: 0.25
   tracking_lin_vel_y:
-    scale: 1.0
+    scale: 2.0
     tracking_sigma: 0.25
   tracking_ang_vel:
-    scale: 0.5
+    scale: 1.0
     tracking_sigma: 0.25
   lin_vel_z:
     scale: -2.0
@@ -412,9 +412,9 @@ rewards:
     scale: -0.1
   feet_clearance:
     scale: 0.3
-    clearance_distance: 0.1
-  energy_substeps:
-    scale: -0.0001
+    clearance_distance: 0.08
+  # energy_substeps:
+  #   scale: -0.0001
 
 commands:
   still_proportion: 0.05
