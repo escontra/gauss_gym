@@ -181,6 +181,7 @@ class FootContactSensor():
             feet_edge_relative_pos.unsqueeze(0).unsqueeze(0)
             .expand(self.num_envs, self.num_feet, self.num_edge_points, 3)
         )
+        self.feet_contact_viz = torch.zeros(self.num_envs, self.num_feet, self.num_edge_points, dtype=torch.bool, device=env.device)
 
         if contact_method == "ray":
           self.ray_starts = torch.zeros(1, 3, device=self.device)
@@ -216,11 +217,13 @@ class FootContactSensor():
           dist = torch.norm(nearest_points - feet_edge_pos, dim=-1)
           self.feet_ground_distance[env_ids] = dist.view(self.num_envs, self.num_feet, self.num_edge_points)
           self.feet_contact[env_ids] = self.feet_ground_distance[env_ids] < self.env.cfg["asset"]["feet_contact_radius"]
+          self.feet_contact_viz = self.feet_contact.clone()
         elif self.contact_method == "force":
           contact_forces = self.env.contact_forces[env_ids, self.env.feet_indices, :]
           in_contact = torch.linalg.norm(contact_forces, dim=-1) > 0.1
           self.feet_contact[env_ids] = torch.roll(self.feet_contact[env_ids], -1, dims=-1)
           self.feet_contact[env_ids, :, -1] = in_contact
+          self.feet_contact_viz = torch.any(self.feet_contact, dim=-1)[..., None].repeat(1, 1, self.num_edge_points)
 
     def get_data(self):
         foot_contact = torch.any(self.feet_contact, dim=-1)
@@ -232,12 +235,7 @@ class FootContactSensor():
                 self.num_envs * self.num_feet * self.num_edge_points, self.env.cfg["asset"]["feet_contact_radius"], 16, 16, None, color=(1, 1, 0)
             )
         feet_edge_pos = self.feet_edge_pos.view(-1, 3)
-        if self.contact_method == "ray":
-          feet_contact = self.feet_contact.view(-1)
-        elif self.contact_method == "force":
-          feet_contact = torch.any(self.feet_contact, dim=-1)
-          feet_contact = feet_contact[..., None].repeat(1, 1, self.num_edge_points)
-          feet_contact = feet_contact.view(-1)
+        feet_contact = self.feet_contact_viz.view(-1)
         color_red = math.to_torch(np.array([1., 0., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
         color_green = math.to_torch(np.array([0., 1., 0.])[None].repeat(feet_contact.shape[0], 0), device=self.device, requires_grad=False)
         colors = torch.where(feet_contact[..., None], color_green, color_red)
