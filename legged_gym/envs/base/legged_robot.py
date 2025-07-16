@@ -213,7 +213,8 @@ class LeggedRobot(base_task.BaseTask):
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
-        self.last_dof_vel[:] = self.dof_vel
+        return
+        # self.last_dof_vel[:] = self.dof_vel
 
     @timer.section("post_decimation_step")
     def post_decimation_step(self, dec_i):
@@ -278,8 +279,8 @@ class LeggedRobot(base_task.BaseTask):
         contact_filt = torch.logical_or(self.feet_contact[:], self.last_contacts) 
         self.first_contact = (self.feet_air_time > 0.) * contact_filt
         self.last_contact = (self.feet_contact_time > 0.) * ~contact_filt
-        self.feet_air_time += self.dt
-        self.feet_contact_time += self.dt
+        self.feet_air_time += ~contact_filt * self.dt
+        self.feet_contact_time += contact_filt * self.dt
         self.swing_peak = torch.maximum(
             self.swing_peak,
             self.sensors["foot_height_raycaster"].get_data())
@@ -1236,7 +1237,7 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_torques(self):
         # Penalize torques
-        return torch.sum(torch.square(self.torques), dim=1) + self.torques.abs().sum(dim=-1)
+        return torch.sum(torch.square(self.torques), dim=1)
 
     def _reward_dof_vel(self):
         # Penalize dof velocities
@@ -1245,12 +1246,12 @@ class LeggedRobot(base_task.BaseTask):
     def _reward_dof_acc(self):
         # Penalize dof accelerations
         dof_acc = (self.dof_vel - self.last_dof_vel) / self.dt
-        return torch.sum(torch.square(dof_acc), dim=-1) + dof_acc.abs().sum(dim=-1)
+        return torch.sum(torch.square(dof_acc), dim=-1)
 
     def _reward_action_rate(self):
         # Penalize changes in actions
         action_diff = self.last_actions - self.actions
-        return torch.sum(torch.square(action_diff), dim=1) + action_diff.abs().sum(dim=1)
+        return torch.sum(torch.square(action_diff), dim=1)
 
     def _reward_action_rate_gains(self):
         # Re-normalize the actions to the range [-1, 1]
@@ -1273,7 +1274,7 @@ class LeggedRobot(base_task.BaseTask):
 
     def _reward_collision(self):
         # Penalize collisions on selected bodies
-        return torch.sum(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 1.0, dim=-1).to(torch.float32)
+        return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
 
     def _reward_termination(self, reset_buf, time_out_buf):
         # Terminal reward / penalty
