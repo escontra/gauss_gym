@@ -1,4 +1,4 @@
-from typing import Dict, List, Union, Optional, Tuple
+from typing import Dict, List, Union
 import viser
 from viser.extras import ViserUrdf
 import yourdfpy
@@ -12,6 +12,7 @@ import viser.transforms as vtf
 from legged_gym import utils
 
 VEL_SCALE = 0.25
+HEADING_SCALE = 0.2
 FRAME_SCALE = 0.25
 
 
@@ -227,6 +228,11 @@ class LeggedRobotViser:
             self._mesh_handle.vertices = mesh.vertices
             self._mesh_handle.faces = mesh.faces
 
+    def add_everything(self, env_idx: int):
+        self.add_mesh(env_idx)
+        self.add_gaussians(env_idx)
+        self.add_camera_axes(env_idx)
+
     def setup_scene_selection(self):
 
         mesh_names = self.scene_manager.mesh_names
@@ -249,9 +255,7 @@ class LeggedRobotViser:
                     if mesh_name == self.scene_selection.value:
                         possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
                         self.current_rendered_env_id = possible_env_ids[0].item()
-                        self.add_mesh(self.current_rendered_env_id)
-                        self.add_gaussians(self.current_rendered_env_id)
-                        self.add_camera_axes(self.current_rendered_env_id)
+                        self.add_everything(self.current_rendered_env_id)
                         break
 
     def set_viewer_camera(self, position: Union[np.ndarray, List[float]], lookat: Union[np.ndarray, List[float]]):
@@ -344,14 +348,17 @@ class LeggedRobotViser:
         vel_y_world = robot_rot.apply(np.array([0, vel_y_scale, 0]))
         vel_x_segment = np.stack([vel_origin, vel_origin + vel_x_world], axis=0)
         vel_y_segment = np.stack([vel_origin, vel_origin + vel_y_world], axis=0)
-        vel_segments = np.stack([vel_x_segment, vel_y_segment], axis=0)
+        heading_rot = vtf.SO3.from_rpy_radians(0., 0., self.scene_manager.heading_command[env_idx].item())
+        heading_segment = np.stack([vel_origin, vel_origin + heading_rot.apply(np.array([HEADING_SCALE, 0.0, 0.0]))], axis=0)
+        vel_segments = np.stack([vel_x_segment, vel_y_segment, heading_segment], axis=0)
+        colors = np.array([[255, 255, 255], [255, 255, 255], [255, 255, 0]])[:, None].repeat(2, axis=1)
         if self._vel_handle is None:
             self._vel_handle = self.server.scene.add_line_segments(
                 "/vel_command",
                 points=vel_segments,
-                colors=(255, 255, 255),
+                colors=colors,
                 visible=self.show_robot_velocities.value,
-                line_width=3.0,
+                line_width=4.0,
             )
         else:
             self._vel_handle.visible = self.show_robot_velocities.value
@@ -425,9 +432,7 @@ class LeggedRobotViser:
             self.set_viewer_camera(position=camera_pos, lookat=lookat_pos)
 
         if self.last_rendered_env_id == -1:
-            self.add_mesh(env_idx)
-            self.add_gaussians(env_idx)
-            self.add_camera_axes(env_idx)
+          self.add_everything(env_idx)
 
         if self._gs_handle is not None:
             self._gs_handle.visible = self.show_gaussian_splatting.value
