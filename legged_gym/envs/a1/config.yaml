@@ -388,13 +388,13 @@ rewards:
     scale: 1.0
     tracking_sigma: 0.25
   lin_vel_z:
-    scale: -2.0
+    scale: -1.0
   ang_vel_xy:
     scale: -0.05
   dof_acc:
     scale: -2.5e-7
   torques:
-    scale: -0.0002
+    scale: -0.0001
   feet_air_time:
     scale: 1.0
     min_air_time: 0.3
@@ -411,8 +411,8 @@ rewards:
   feet_slip:
     scale: -0.1
   feet_clearance:
-    scale: 0.3
-    clearance_distance: 0.08
+    scale: 1.0
+    clearance_distance: 0.1
   # energy_substeps:
   #   scale: -0.0001
 
