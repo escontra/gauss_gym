@@ -243,6 +243,7 @@ class LeggedRobot(base_task.BaseTask):
           self.base_lin_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
           self.base_ang_vel[:] = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
           self.projected_gravity[:] = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
+          _, _, self.feet_vel[:], _ = self.get_feet_state()
           with timer.section("update_sensors"):
             for sensor in self.sensors.values():
                 sensor.update(-1)
@@ -296,6 +297,7 @@ class LeggedRobot(base_task.BaseTask):
         self.last_stiffness[:] = self.stiffness[:]
         self.last_damping[:] = self.damping[:]
         self.last_dof_vel[:] = self.dof_vel[:]
+        self.last_feet_vel[:] = self.feet_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
         self.last_contacts[:] = self.feet_contact[:]
         self.last_torques[:] = self.torques[:]
@@ -702,6 +704,7 @@ class LeggedRobot(base_task.BaseTask):
         self.last_stiffness[env_ids] = 0.
         self.last_damping[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
+        self.last_feet_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
         self.swing_peak[env_ids] = 0.
         self.feet_contact_time[env_ids] = 0.
@@ -725,6 +728,7 @@ class LeggedRobot(base_task.BaseTask):
         self.last_stiffness[env_ids] = self.stiffness[env_ids]
         self.last_damping[env_ids] = self.damping[env_ids]
         self.last_dof_vel[env_ids] = self.dof_vel[env_ids]
+        self.last_feet_vel[env_ids] = self.feet_vel[env_ids]
         self.last_contacts[env_ids] = self.feet_contact[env_ids]
         self.last_torques[env_ids] = self.torques[env_ids]
         self.filtered_lin_vel[env_ids] = self.base_lin_vel[env_ids]
@@ -895,6 +899,8 @@ class LeggedRobot(base_task.BaseTask):
         self.pushing_torques = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device)
         self.dof_friction_curriculum_values = torch.zeros(self.num_envs, self.num_dofs, dtype=torch.float, device=self.device)
         self.base_lin_vel = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.feet_vel = torch.zeros(self.num_envs, len(self.feet_indices), 3, dtype=torch.float, device=self.device)
+        self.last_feet_vel = torch.zeros_like(self.feet_vel)
         self.base_ang_vel = tu.quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.filtered_lin_vel = self.base_lin_vel.clone()
         self.filtered_ang_vel = self.base_ang_vel.clone()
@@ -1247,6 +1253,11 @@ class LeggedRobot(base_task.BaseTask):
         # Penalize dof accelerations
         dof_acc = (self.dof_vel - self.last_dof_vel) / self.dt
         return torch.sum(torch.square(dof_acc), dim=-1)
+
+    def _reward_feet_acc(self):
+        foot_acc = (self.feet_vel - self.last_feet_vel) / self.dt
+        foot_acc_norm = torch.linalg.norm(foot_acc, dim=-1)
+        return torch.sum(foot_acc_norm, dim=-1)
 
     def _reward_action_rate(self):
         # Penalize changes in actions
