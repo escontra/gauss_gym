@@ -309,6 +309,8 @@ class GaussianSceneManager:
     env_origins = []
     all_vertices = []
     all_triangles = []
+    all_vertices_orig = []
+    all_triangles_orig = []
 
     for i, (scene, mesh) in enumerate(self._terrain.mesh_keys):
       if i > 0 and i % num_rows == 0:
@@ -352,8 +354,12 @@ class GaussianSceneManager:
         0 if len(all_vertices) == 0 else np.concatenate(all_vertices).shape[0]
       )
       all_triangles.append(mesh.triangles + vertices_offset)
+      all_triangles_orig.append(mesh.triangles)
       all_vertices.append(vertices)
+      all_vertices_orig.append(vertices)
 
+    self.all_vertices = all_vertices_orig
+    self.all_triangles = all_triangles_orig
     self.all_vertices_mesh = np.concatenate(all_vertices)
     self.all_triangles_mesh = np.concatenate(all_triangles)
     self.terrain_mesh = warp_utils.convert_to_wp_mesh(self.all_vertices_mesh, self.all_triangles_mesh, self._env.device)

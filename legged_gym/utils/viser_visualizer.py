@@ -48,21 +48,19 @@ class LeggedRobotViser:
         # Load URDF for both simulators
         self.urdf = yourdfpy.URDF.load(urdf_path, load_collision_meshes=True)
 
-
         # Also store mesh handles in case you want direct references
-        self._mesh_handles = {}
         self._gs_handle = None
         self._axes_handle = None
         self._frustrum_handle = None
         self._vel_handle = None
         self._robot_camera_handle = None
         self._contact_handles = None
+        self._mesh_handle = None
 
         self.scene_manager = self.env.scene_manager
         self.current_rendered_env_id = 0
         self.last_rendered_env_id = -1 # set to -1 to force camera update on first render
 
-        self.add_terrain_meshes()
         self.add_gui_elements()
 
         # Attach URDF under both world nodes
@@ -143,18 +141,11 @@ class LeggedRobotViser:
                 hint="Toggle robot mesh visibility"
             )
 
-    def add_terrain_meshes(self):
-        self.add_mesh(
-            "terrain",
-            self.scene_manager.all_vertices_mesh,
-            self.scene_manager.all_triangles_mesh,
-            color=(0.282, 0.247, 0.361),
-        )
-
-    def add_gaussians(self, mesh_name: str, env_idx: int):
+    def add_gaussians(self, env_idx: int):
         if "gs_renderer" not in self.env.sensors:
             return
         ply_renderers = self.env.sensors["gs_renderer"].get_gs_renderers()
+        mesh_name = self.scene_manager.mesh_names[self.scene_manager.mesh_id_for_env_id(env_idx)]
         splat_name = '/'.join(mesh_name.split('/')[:-1])
         renderer = ply_renderers[splat_name]
         centers = renderer.means.cpu().numpy() / renderer.dataparser_scale
@@ -198,7 +189,6 @@ class LeggedRobotViser:
             wxyz=cumulative_transform.rotation().wxyz,
             position=cumulative_transform.translation(),
         )
-        # print(self._gs_handle)
 
     def add_camera_axes(self, env_idx: int):
         mesh_idx = self.scene_manager.mesh_id_for_env_id(env_idx)
@@ -216,6 +206,26 @@ class LeggedRobotViser:
             self._axes_handle.visible = self.show_camera_axes.value
             self._axes_handle.batched_wxyz = np.roll(cam_quat, 1, axis=1)
             self._axes_handle.batched_positions = cam_trans
+
+    def add_mesh(self, env_idx: int):
+        # Get vertices and faces from the scene manager.
+        mesh_idx = self.scene_manager.mesh_id_for_env_id(env_idx)
+        vertices = self.scene_manager.all_vertices[mesh_idx]
+        faces = self.scene_manager.all_triangles[mesh_idx]
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        if self._mesh_handle is None:
+            self._mesh_handle = self.server.scene.add_mesh_simple(
+                name="/terrain",
+                vertices=mesh.vertices,
+                faces=mesh.faces,
+                color=(0.282, 0.247, 0.361),
+                side='double',
+                visible=self.show_mesh.value,
+            )
+        else:
+            self._mesh_handle.visible = self.show_mesh.value
+            self._mesh_handle.vertices = mesh.vertices
+            self._mesh_handle.faces = mesh.faces
 
     def setup_scene_selection(self):
 
@@ -239,7 +249,8 @@ class LeggedRobotViser:
                     if mesh_name == self.scene_selection.value:
                         possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
                         self.current_rendered_env_id = possible_env_ids[0].item()
-                        self.add_gaussians(self.scene_selection.value, self.current_rendered_env_id)
+                        self.add_mesh(self.current_rendered_env_id)
+                        self.add_gaussians(self.current_rendered_env_id)
                         self.add_camera_axes(self.current_rendered_env_id)
                         break
 
@@ -256,7 +267,7 @@ class LeggedRobotViser:
             client.camera.position = position
             client.camera.look_at = lookat
 
-    def get_camera_position_for_robot(self, root_pos):
+    def get_camera_position_for_robot(self, env_idx: int):
         """
         Calculate camera position to look at the robot from 3m away.
         
@@ -270,7 +281,7 @@ class LeggedRobotViser:
         """
         # Get actual robot position in world frame (root_pos is in env frame, need to transform to world frame)
         # world_pos = root_pos + env_offset
-        world_pos = root_pos
+        world_pos = self.env.root_states[env_idx, :3].cpu().numpy()
         
         # Position to look at (robot position plus small height offset)
         lookat_pos = world_pos + np.array([0.0, 0.0, 0.5])
@@ -295,30 +306,6 @@ class LeggedRobotViser:
         for id, client in clients.items():
             client.camera.position = position
             client.camera.look_at = lookat
-
-    def add_mesh(self, 
-                name: str,
-                vertices: np.ndarray,
-                faces: np.ndarray,
-                color: Union[Tuple[float, float, float], List[float]] = (1.0, 0.5, 0.5),
-                transform: Optional[np.ndarray] = None):
-        """
-        Add a mesh to the scene under root "/".  (You can also attach to "/world" if you wish.)
-        """
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        if transform is not None:
-            mesh.apply_transform(transform)
-        
-        handle = self.server.scene.add_mesh_simple(
-            name,
-            mesh.vertices,
-            mesh.faces,
-            color=color,
-            side='double',
-            # light blue colour
-        )
-        self._mesh_handles[name.lstrip('/')] = handle
-        return handle
 
     def update_contacts(self, env_idx: int):
         foot_contact_sensor = self.env.sensors["foot_contact_sensor"]
@@ -434,12 +421,13 @@ class LeggedRobotViser:
         env_idx = self.current_rendered_env_id
 
         if env_idx != self.last_rendered_env_id:
-
-            camera_pos, lookat_pos = self.get_camera_position_for_robot(
-                # self.scene_manager.env_origins[env_idx],
-                root_states[env_idx, :3].cpu().numpy()
-            )
+            camera_pos, lookat_pos = self.get_camera_position_for_robot(env_idx)
             self.set_viewer_camera(position=camera_pos, lookat=lookat_pos)
+
+        if self.last_rendered_env_id == -1:
+            self.add_mesh(env_idx)
+            self.add_gaussians(env_idx)
+            self.add_camera_axes(env_idx)
 
         if self._gs_handle is not None:
             self._gs_handle.visible = self.show_gaussian_splatting.value
@@ -447,8 +435,8 @@ class LeggedRobotViser:
         if self._axes_handle is not None:
             self._axes_handle.visible = self.show_camera_axes.value
 
-        for _, v in self._mesh_handles.items():
-            v.visible = self.show_mesh.value
+        if self._mesh_handle is not None:
+            self._mesh_handle.visible = self.show_mesh.value
 
         # Block until either play is true or step is requested
         while not (self.play_pause.value or self.step_requested):
