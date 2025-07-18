@@ -52,6 +52,7 @@ class BaseTask():
         # create envs, sim and viewer
         self.create_sim()
 
+        self.rew_dict = {}
         self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
 
