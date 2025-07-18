@@ -7,6 +7,11 @@ import numpy as np
 
 import viser.transforms as vtf
 
+CAMERA_MODEL_MAP = {
+   'hdr': 'OPENCV_FISHEYE',
+   'zed': 'OPENCV'
+}
+
 def find_nearest_key(d, key):
     if key in d:
         return key
@@ -60,12 +65,9 @@ def main(argv=None):
   valid_cameras = []
   print(f'Excluding cameras: {parsed.exclude_cameras}')
   for camera_name in camera_map.keys():
-    print(f'Camera name: {camera_name}')
     excluded = False
     for exclude_camera in parsed.exclude_cameras:
-      print(f'Exclude camera: {exclude_camera}')
       if exclude_camera in camera_name:
-        print(f'Excluded camera: {camera_name}')
         excluded = True
     if excluded:
       continue
@@ -74,9 +76,22 @@ def main(argv=None):
 
   print(f'Valid cameras: {valid_cameras}')
 
+  camera_model_map = {}
+  for camera_name in valid_cameras:
+    for k in CAMERA_MODEL_MAP.keys():
+      if k in camera_name:
+        camera_model_map[camera_name] = CAMERA_MODEL_MAP[k]
+
+  camera_models = list(set(camera_model_map.values()))
+  if len(camera_models) > 1:
+    raise ValueError(f'Multiple camera models found: {camera_models}')
+  camera_model = camera_models[0]
+  print(f'Camera model: {camera_model}')
+
   timestamp_per_camera = {k: [] for k in valid_cameras}
 
   new_transforms = copy.deepcopy(transforms)
+  new_transforms["camera_model"] = camera_model
   new_transforms["frames"] = []
 
   anchor_camera = valid_cameras[0]
@@ -112,7 +127,6 @@ def main(argv=None):
         continue
       timestamp_per_camera[camera_name].append(nearest_timestamp)
       frame = camera_map[camera_name][nearest_timestamp]
-      print(frame.keys())
       num_added += 1
 
       new_transforms["frames"].append(frame)
