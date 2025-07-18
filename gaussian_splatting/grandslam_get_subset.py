@@ -8,7 +8,7 @@ import numpy as np
 import viser.transforms as vtf
 
 CAMERA_MODEL_MAP = {
-   'hdr': 'OPENCV_FISHEYE',
+   'hdr': 'OPENCV',
    'zed': 'OPENCV'
 }
 
