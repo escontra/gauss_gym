@@ -71,6 +71,7 @@ def main(argv=None):
     {
       "runner": {"load_run": ""},
       "debug": False,
+      "save_step": False,
       "namespace": "/a112138",
       "serial_number": '',
     }
@@ -141,34 +142,34 @@ def main(argv=None):
 
   duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
   ros_rate = rospy.Rate(1.0 / duration)
-  get_frame = when.Clock(every=cfg["env"]["camera_params"]["refresh_duration"], first=True)
-  rospy.loginfo(
-    "Using refresh duration {}s".format(
-      cfg["env"]["camera_params"]["refresh_duration"]
-    )
-  )
 
   rospy.loginfo("RealSense initialized.")
   frames = rs_pipeline.wait_for_frames(2000)
+  print(f'is_frame: {frames.is_frame()}')
+  color_frame = frames.get_color_frame()
+  color_frame = np.asanyarray(color_frame.get_data())
+  color_frame = rs_filter(color_frame)
   print('Initial frames received!')
   occupancy_fig_state = (None, None)
   os.makedirs('visualizations', exist_ok=True)
   step = 0
+  if parsed.save_step:
+      save_path = '/home/unitree/a1_data_vision'
+      import pickle
+      os.makedirs(save_path, exist_ok=False)
   try:
     embedding_msg = Float32MultiArrayStamped()
     embedding_msg.header.frame_id = parsed.namespace + "/camera_color_optical_frame"
 
     while not rospy.is_shutdown():
       inference_start_time = rospy.get_time()
-      get_new_frame = get_frame()
-      # if get_new_frame:
       frames = rs_pipeline.poll_for_frames()
-      # frames = rs_pipeline.wait_for_frames(
-      #   int(cfg["env"]["camera_params"]["refresh_duration"] * 1000)
-      # )
-      color_frame = frames.get_color_frame()
-      color_frame = np.asanyarray(color_frame.get_data())
-      color_frame = rs_filter(color_frame)
+      if frames.is_frame():
+          color_frame = frames.get_color_frame()
+          color_frame = np.asanyarray(color_frame.get_data())
+          color_frame = rs_filter(color_frame)
+      else:
+          print('Did not poll frame, likely querying faster than FPS')
       realsense_duration = rospy.get_time() - inference_start_time
       rospy.loginfo_throttle(10, "realsense duration: {:.3f}".format(realsense_duration))
 
@@ -183,7 +184,10 @@ def main(argv=None):
               'projected_gravity': projected_gravity,
               'camera_image': np.transpose(color_frame, (2, 0, 1))[None]
       }
-      _, visual_embedding = runner.predict(encoder_input, rnn_only=True) #not parsed.debug)
+      model_preds, visual_embedding = runner.predict(encoder_input, rnn_only=False)
+      if parsed.save_step:
+          with open(os.path.join(save_path, f'{rospy.Time.now()}.pkl'), 'wb') as f:
+              pickle.dump({'inputs': encoder_input, 'model_preds': model_preds, 'visual_embedding': visual_embedding}, f, protocol=5)
       embedding_msg.header.stamp = rospy.Time.now()
       embedding_msg.header.seq += 1
       embedding_msg.data = visual_embedding[0].tolist()
@@ -193,19 +197,19 @@ def main(argv=None):
 
       inference_duration = rospy.get_time() - inference_start_time
       rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
-      if parsed.debug and get_new_frame:
-          # occupancy_grid_state = visualization.update_occupancy_grid(
-          #         None,
-          #         *occupancy_fig_state,
-          #         0,
-          #         [model_preds['out_critic/ray_cast/occupancy_grid']],
-          #         ['pred'],
-          #         show=False
-          #         )
-          # occupancy_grid_state[0].savefig(f"visualizations/occupancy_{step:06}.png")
-          # from PIL import Image as PILImage
-          # img = PILImage.fromarray(color_frame)
-          # img.save(f"visualizations/image_{step:06}.png")
+      if parsed.debug and frames.is_frame():
+          occupancy_grid_state = visualization.update_occupancy_grid(
+                  None,
+                  *occupancy_fig_state,
+                  0,
+                  [model_preds['critic/ray_cast/occupancy_grid']],
+                  ['pred'],
+                  show=False
+                  )
+          occupancy_grid_state[0].savefig(f"visualizations/occupancy_{step:06}.png")
+          from PIL import Image as PILImage
+          img = PILImage.fromarray(color_frame)
+          img.save(f"visualizations/image_{step:06}.png")
 
           rgb_image_msg = ros_numpy.msgify(Image, color_frame, encoding="rgb8")
           rgb_image_msg.header.stamp = rospy.Time.now()

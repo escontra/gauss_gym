@@ -300,6 +300,8 @@ class UnitreeA1Real:
               continue
           obs_dict[group.name] = {}
           for observation in group.observations:
+              if observation == observation_groups.IMAGE_ENCODER_LATENT:
+                  continue
               obs = observation.func(self, observation, is_real=True)
               if observation.name == "dof_pos":
                   self.dof_pos = obs + self.default_dof_pos

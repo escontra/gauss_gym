@@ -62,7 +62,6 @@ def standup_procedure(
         ros_rate.sleep()
     rospy.loginfo("Robot standing up procedure finished!")
 
-
 def main(argv = None):
     log_root = pathlib.Path(os.path.join(legged_gym.GAUSS_GYM_ROOT_DIR, 'logs'))
     load_run_path = None
@@ -132,15 +131,23 @@ def main(argv = None):
         warmup_timesteps= 100,
         policy=runner.predict,
     )
+    import pickle
+    if parsed.debug:
+        save_path = '/home/unitree/a1_data_policy'
+        os.makedirs(save_path, exist_ok=False)
     while not rospy.is_shutdown():
         inference_start_time = rospy.get_time()
         obs = unitree_real_env.get_obs()
         preds, _ = runner.predict(obs[cfg["policy"]["obs_key"]])
-        actions = preds['out_actions']
+        print(obs[cfg["policy"]["obs_key"]])
+        actions = preds['actions']
+        if parsed.debug:
+            with open(os.path.join(save_path, f'{rospy.Time.now()}.pkl'), 'wb') as f:
+                pickle.dump({'inputs': obs[cfg["policy"]["obs_key"]], 'actions': preds['actions']}, f, protocol=5)
         unitree_real_env.send_action(actions)
-        inference_duration = rospy.get_time() - inference_start_time
         motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
         rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
+        inference_duration = rospy.get_time() - inference_start_time
         rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
         rate.sleep()
         if unitree_real_env.quit_pressed:
