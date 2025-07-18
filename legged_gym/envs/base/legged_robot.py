@@ -437,11 +437,13 @@ class LeggedRobot(base_task.BaseTask):
             adds each terms to the episode sums and to the total reward
         """
         self.rew_buf[:] = 0.
+        self.rew_dict = {}
         for name, scale, function in zip(self.reward_names, self.reward_scales, self.reward_functions):
             orig_rew = function()
             assert orig_rew.shape == self.rew_buf.shape, f'{orig_rew.shape} != {self.rew_buf.shape}'
             rew = orig_rew * scale
             self.rew_buf += rew
+            self.rew_dict[name] = rew
             self.episode_sums[name] += rew
         if self.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
@@ -450,6 +452,7 @@ class LeggedRobot(base_task.BaseTask):
             rew = self._reward_termination(reset_buf, time_out_buf) * self.cfg["rewards"]["termination"]["scale"] * self.dt
             self.rew_buf += rew
             self.episode_sums["termination"] += rew
+            self.rew_dict["termination"] = rew
 
     def create_sim(self):
         """ Creates simulation, terrain and evironments

@@ -1,4 +1,5 @@
-from typing import Dict, List, Union, Optional, Tuple
+from typing import Dict, List, Union
+import collections
 import viser
 from viser.extras import ViserUrdf
 import yourdfpy
@@ -8,11 +9,20 @@ import numpy as np
 import time
 import cv2
 import viser.transforms as vtf
+import plotly.graph_objects as go
 
 from legged_gym import utils
 
 VEL_SCALE = 0.25
+HEADING_SCALE = 0.2
 FRAME_SCALE = 0.25
+PLOT_TIME_WINDOW = 5.0
+
+COLORS = [
+    '#0022ff', '#33aa00', '#ff0011', '#ddaa00', '#cc44dd', '#0088aa',
+    '#001177', '#117700', '#990022', '#885500', '#553366', '#006666',
+    '#7777cc', '#999999', '#990099', '#888800', '#ff00aa', '#444444',
+]
 
 
 class LeggedRobotViser:
@@ -99,6 +109,96 @@ class LeggedRobotViser:
             def _(_):
                 if not self.play_pause.value:  # Only allow stepping when paused
                     self.step_requested = True
+
+        with self.server.gui.add_folder("Plot Control", expand_by_default=False, order=100):
+            self.joint_selection = self.server.gui.add_dropdown(
+                "Select joint",
+                options=['all'] + self.env.dof_names,
+                initial_value='all',
+                hint="Which joint to plot."
+            )
+            self.show_action_plot = self.server.gui.add_checkbox(
+                "Show Action Plot",
+                initial_value=False,
+                hint="Toggle action plot visibility"
+            )
+            self.show_dof_pos_plot = self.server.gui.add_checkbox(
+                "Show DOF Pos Plot",
+                initial_value=False,
+                hint="Toggle DOF pos plot visibility"
+            )
+            self.reward_selection = self.server.gui.add_dropdown(
+                "Select Reward",
+                options=['all'] + self.env.reward_names,
+                initial_value='all',
+                hint="Which reward to plot."
+            )
+            self.show_rew_plot = self.server.gui.add_checkbox(
+                "Show Reward Plot",
+                initial_value=False,
+                hint="Toggle reward plot visibility"
+            )
+
+            self.action_plot = None
+            self.dof_pos_plot = None
+            self.rew_plot = None
+
+            @self.show_action_plot.on_update
+            def _(event) -> None:
+                if self.show_action_plot.value:
+                    # Create the action plot if it doesn't exist
+                    if self.action_plot is None:
+                        self.action_plot = self.server.gui.add_plotly(
+                            figure=go.Figure(),
+                            aspect=1.0,
+                            visible=True
+                        )
+                else:
+                    # Remove the plot if it exists
+                    if self.action_plot is not None:
+                        self.action_plot.remove()
+                        self.action_plot = None
+
+            @self.show_dof_pos_plot.on_update
+            def _(event) -> None:
+                if self.show_dof_pos_plot.value:
+                    # Create the action plot if it doesn't exist
+                    if self.dof_pos_plot is None:
+                        self.dof_pos_plot = self.server.gui.add_plotly(
+                            figure=go.Figure(),
+                            aspect=1.0,
+                            visible=True
+                        )
+                else:
+                    # Remove the plot if it exists
+                    if self.dof_pos_plot is not None:
+                        self.dof_pos_plot.remove()
+                        self.dof_pos_plot = None
+
+            @self.show_rew_plot.on_update
+            def _(event) -> None:
+                if self.show_rew_plot.value:
+                    # Create the action plot if it doesn't exist
+                    if self.rew_plot is None:
+                        self.rew_plot = self.server.gui.add_plotly(
+                            figure=go.Figure(),
+                            aspect=1.0,
+                            visible=True
+                        )
+                else:
+                    # Remove the plot if it exists
+                    if self.rew_plot is not None:
+                        self.rew_plot.remove()
+                        self.rew_plot = None
+
+
+        # Initialize history for plots.
+        self.history_length = int(PLOT_TIME_WINDOW / self.dt)
+        self.current_time = 0.0
+        self.time_history = []
+        self.action_history = []
+        self.dof_pos_history = []
+        self.rew_history = collections.defaultdict(list)
 
         self.setup_scene_selection()
 
@@ -227,6 +327,11 @@ class LeggedRobotViser:
             self._mesh_handle.vertices = mesh.vertices
             self._mesh_handle.faces = mesh.faces
 
+    def add_everything(self, env_idx: int):
+        self.add_mesh(env_idx)
+        self.add_gaussians(env_idx)
+        self.add_camera_axes(env_idx)
+
     def setup_scene_selection(self):
 
         mesh_names = self.scene_manager.mesh_names
@@ -249,9 +354,7 @@ class LeggedRobotViser:
                     if mesh_name == self.scene_selection.value:
                         possible_env_ids = self.scene_manager.env_ids_for_mesh_id(i)
                         self.current_rendered_env_id = possible_env_ids[0].item()
-                        self.add_mesh(self.current_rendered_env_id)
-                        self.add_gaussians(self.current_rendered_env_id)
-                        self.add_camera_axes(self.current_rendered_env_id)
+                        self.add_everything(self.current_rendered_env_id)
                         break
 
     def set_viewer_camera(self, position: Union[np.ndarray, List[float]], lookat: Union[np.ndarray, List[float]]):
@@ -344,14 +447,17 @@ class LeggedRobotViser:
         vel_y_world = robot_rot.apply(np.array([0, vel_y_scale, 0]))
         vel_x_segment = np.stack([vel_origin, vel_origin + vel_x_world], axis=0)
         vel_y_segment = np.stack([vel_origin, vel_origin + vel_y_world], axis=0)
-        vel_segments = np.stack([vel_x_segment, vel_y_segment], axis=0)
+        heading_rot = vtf.SO3.from_rpy_radians(0., 0., self.scene_manager.heading_command[env_idx].item())
+        heading_segment = np.stack([vel_origin, vel_origin + heading_rot.apply(np.array([HEADING_SCALE, 0.0, 0.0]))], axis=0)
+        vel_segments = np.stack([vel_x_segment, vel_y_segment, heading_segment], axis=0)
+        colors = np.array([[255, 255, 255], [255, 255, 255], [255, 255, 0]])[:, None].repeat(2, axis=1)
         if self._vel_handle is None:
             self._vel_handle = self.server.scene.add_line_segments(
                 "/vel_command",
                 points=vel_segments,
-                colors=(255, 255, 255),
+                colors=colors,
                 visible=self.show_robot_velocities.value,
-                line_width=3.0,
+                line_width=4.0,
             )
         else:
             self._vel_handle.visible = self.show_robot_velocities.value
@@ -407,6 +513,160 @@ class LeggedRobotViser:
                 )
         else:
             self._robot_camera_handle.image = rgb_image_upscaled
+  
+    def update_action_plot(self):
+        """Update the action plot with the current history."""
+        if self.action_plot is None:
+            return
+
+        # Convert histories to numpy arrays for easier slicing
+        times = np.array(self.time_history)
+        actions = np.array(self.action_history)
+        
+        # Make times relative to current time
+        current_time = self.current_time
+        relative_times = times - current_time
+        
+        # Create a new figure
+        fig = go.Figure()
+        
+        if self.joint_selection.value == 'all':
+          for i, joint_name in enumerate(self.env.dof_names):
+              fig.add_trace(go.Scatter(
+                  x=relative_times,
+                  y=actions[:, i],
+                  name=joint_name,
+                  line=dict(color=COLORS[i % len(COLORS)]),
+                  showlegend=False
+              ))
+        else:
+          fig.add_trace(go.Scatter(
+              x=relative_times,
+              y=actions[:, self.env.dof_names.index(self.joint_selection.value)],
+              name=self.joint_selection.value,
+              line=dict(color=COLORS[0]),
+              showlegend=False
+          ))
+        
+        # Update layout
+        fig.update_layout(
+            title="Joint Actions",
+            xaxis_title="Time (seconds ago)",
+            yaxis_title="Action Value",
+            xaxis=dict(
+                range=[-PLOT_TIME_WINDOW, 0],  # Fixed window of last 5 seconds
+                autorange=False  # Disable autoranging
+            ),
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=False,
+        )
+        
+        # Update the plot
+        self.action_plot.figure = fig
+
+    def update_dof_pos_plot(self):
+        """Update the DOF pos plot with the current history."""
+        if self.dof_pos_plot is None:
+            return
+
+        # Convert histories to numpy arrays for easier slicing
+        times = np.array(self.time_history)
+        dof_pos = np.array(self.dof_pos_history)
+        
+        # Make times relative to current time
+        current_time = self.current_time
+        relative_times = times - current_time
+        
+        # Create a new figure
+        fig = go.Figure()
+        
+        if self.joint_selection.value == 'all':
+          for i, joint_name in enumerate(self.env.dof_names):
+              fig.add_trace(go.Scatter(
+                  x=relative_times,
+                  y=dof_pos[:, i],
+                  name=joint_name,
+                  line=dict(color=COLORS[i % len(COLORS)]),
+                  showlegend=False
+              ))
+        else:
+          fig.add_trace(go.Scatter(
+              x=relative_times,
+              y=dof_pos[:, self.env.dof_names.index(self.joint_selection.value)],
+              name=self.joint_selection.value,
+              line=dict(color=COLORS[0]),
+              showlegend=False
+          ))
+          dof_pos_lower = self.env.dof_pos_limits[self.env.dof_names.index(self.joint_selection.value), 0].item()
+          dof_pos_upper = self.env.dof_pos_limits[self.env.dof_names.index(self.joint_selection.value), 1].item()
+          fig.add_hline(y=dof_pos_upper, line=dict(color='red', width=2, dash='dash'), name='Upper Limit')
+          fig.add_hline(y=dof_pos_lower, line=dict(color='red', width=2, dash='dash'), name='Lower Limit')
+
+        # Update layout
+        fig.update_layout(
+            title="DOF Positions",
+            xaxis_title="Time (seconds ago)",
+            yaxis_title="Action Value",
+            xaxis=dict(
+                range=[-PLOT_TIME_WINDOW, 0],  # Fixed window of last 5 seconds
+                autorange=False  # Disable autoranging
+            ),
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=False,
+        )
+        
+        # Update the plot
+        self.dof_pos_plot.figure = fig
+
+    def update_rew_plot(self):
+        """Update the reward plot with the current history."""
+        if self.rew_plot is None:
+            return
+
+        # Convert histories to numpy arrays for easier slicing
+        times = np.array(self.time_history)
+
+        # Make times relative to current time
+        current_time = self.current_time
+        relative_times = times - current_time
+        
+        # Create a new figure
+        fig = go.Figure()
+        
+        if self.reward_selection.value == 'all':
+          for i, name in enumerate(self.rew_history.keys()):
+              fig.add_trace(go.Scatter(
+                  x=relative_times,
+                  y=self.rew_history[name],
+                  name=name,
+                  line=dict(color=COLORS[i % len(COLORS)]),
+                  showlegend=False
+              ))
+        else:
+          fig.add_trace(go.Scatter(
+              x=relative_times,
+              y=self.rew_history[self.reward_selection.value],
+              name=self.reward_selection.value,
+              line=dict(color=COLORS[0]),
+              showlegend=False
+          ))
+
+        # Update layout
+        fig.update_layout(
+            title="Rewards",
+            xaxis_title="Time (seconds ago)",
+            yaxis_title="Action Value",
+            xaxis=dict(
+                range=[-PLOT_TIME_WINDOW, 0],  # Fixed window of last 5 seconds
+                autorange=False  # Disable autoranging
+            ),
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=False,
+        )
+        
+        # Update the plot
+        self.rew_plot.figure = fig
+
 
     def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor):
         """
@@ -423,11 +683,14 @@ class LeggedRobotViser:
         if env_idx != self.last_rendered_env_id:
             camera_pos, lookat_pos = self.get_camera_position_for_robot(env_idx)
             self.set_viewer_camera(position=camera_pos, lookat=lookat_pos)
+            self.time_history = []
+            self.action_history = []
+            self.dof_pos_history = []
+            self.rew_history = collections.defaultdict(list)
+            self.current_time = 0.0
 
         if self.last_rendered_env_id == -1:
-            self.add_mesh(env_idx)
-            self.add_gaussians(env_idx)
-            self.add_camera_axes(env_idx)
+          self.add_everything(env_idx)
 
         if self._gs_handle is not None:
             self._gs_handle.visible = self.show_gaussian_splatting.value
@@ -437,6 +700,24 @@ class LeggedRobotViser:
 
         if self._mesh_handle is not None:
             self._mesh_handle.visible = self.show_mesh.value
+
+        self.current_time += self.dt
+        self.time_history.append(self.current_time)
+        self.action_history.append(self.env.actions[env_idx].cpu().numpy())
+        self.dof_pos_history.append(dof_pos[env_idx].cpu().numpy())
+        for name in self.env.rew_dict:
+            self.rew_history[name].append(self.env.rew_dict[name][env_idx].item())
+
+        if len(self.time_history) > self.history_length:
+            self.time_history = self.time_history[-self.history_length:]
+            self.action_history = self.action_history[-self.history_length:]
+            self.dof_pos_history = self.dof_pos_history[-self.history_length:]
+            for name in self.rew_history:
+                self.rew_history[name] = self.rew_history[name][-self.history_length:]
+
+        self.update_action_plot()
+        self.update_dof_pos_plot()
+        self.update_rew_plot()
 
         # Block until either play is true or step is requested
         while not (self.play_pause.value or self.step_requested):
