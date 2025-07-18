@@ -413,6 +413,9 @@ rewards:
   feet_clearance:
     scale: 1.0
     clearance_distance: 0.1
+  dof_pos_limits:
+    scale: -10.0
+    soft_dof_pos_limit: 0.9
   # energy_substeps:
   #   scale: -0.0001
 

@@ -280,8 +280,8 @@ class LeggedRobot(base_task.BaseTask):
         contact_filt = torch.logical_or(self.feet_contact[:], self.last_contacts) 
         self.first_contact = (self.feet_air_time > 0.) * contact_filt
         self.last_contact = (self.feet_contact_time > 0.) * ~contact_filt
-        self.feet_air_time += ~contact_filt * self.dt
-        self.feet_contact_time += contact_filt * self.dt
+        self.feet_air_time += self.dt
+        self.feet_contact_time += self.dt
         self.swing_peak = torch.maximum(
             self.swing_peak,
             self.sensors["foot_height_raycaster"].get_data())
@@ -1428,7 +1428,7 @@ class LeggedRobot(base_task.BaseTask):
           if 'hip' in name:
               weights.append(1.0)
           elif 'thigh' in name:
-              weights.append(1.0)
+              weights.append(0.3)
           elif 'calf' in name:
               weights.append(0.1)
           else:
