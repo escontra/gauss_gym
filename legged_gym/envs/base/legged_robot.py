@@ -213,13 +213,13 @@ class LeggedRobot(base_task.BaseTask):
 
     @timer.section("pre_decimation_step")
     def pre_decimation_step(self, dec_i):
-        return
-        # self.last_dof_vel[:] = self.dof_vel
+        self.last_dof_vel[:] = self.dof_vel
 
     @timer.section("post_decimation_step")
     def post_decimation_step(self, dec_i):
         self.substep_torques[:, dec_i, :] = self.torques
         self.substep_dof_vel[:, dec_i, :] = self.dof_vel
+        self.substep_dof_acc[:, dec_i, :] = (self.dof_vel - self.last_dof_vel) / self.sim_params.dt
         self.substep_exceed_dof_pos_limits[:, dec_i, :] = (self.dof_pos < self.dof_pos_limits[:, 0]) | (self.dof_pos > self.dof_pos_limits[:, 1])
         self.substep_exceed_dof_pos_limit_abs[:, dec_i, :] = torch.clip(torch.maximum(
             self.dof_pos_limits[:, 0] - self.dof_pos,
@@ -590,6 +590,10 @@ class LeggedRobot(base_task.BaseTask):
                 else:
                     self.torque_limits = torch.tensor(self.cfg["control"]["torque_limits"], dtype=torch.float, device=self.device, requires_grad=False)
 
+        if self.cfg["asset"]["disable_joint_limits"]:
+            props["lower"][:] = np.finfo(props["lower"].dtype).min
+            props["upper"][:] = np.finfo(props["upper"].dtype).max
+
         if self.cfg["domain_rand"]["dof_friction_ig_property"]["apply"] and self.cfg["domain_rand"]["apply_domain_rand"]:
             for i in range(len(props)):
                 props["friction"][i] = math.apply_randomization(props["friction"][i], self.cfg["domain_rand"]["dof_friction_ig_property"])
@@ -910,6 +914,7 @@ class LeggedRobot(base_task.BaseTask):
         self.projected_gravity = tu.quat_rotate_inverse(self.base_quat, self.gravity_vec)
         self.substep_torques = torch.zeros(self.num_envs, self.cfg["control"]["decimation"], self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.substep_dof_vel = torch.zeros(self.num_envs, self.cfg["control"]["decimation"], self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.substep_dof_acc = torch.zeros(self.num_envs, self.cfg["control"]["decimation"], self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self.substep_exceed_dof_pos_limits = torch.zeros(self.num_envs, self.cfg["control"]["decimation"], self.num_dof, dtype=torch.bool, device=self.device, requires_grad=False)
         self.substep_exceed_dof_pos_limit_abs = torch.zeros(self.num_envs, self.cfg["control"]["decimation"], self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self.max_power_per_timestep = torch.zeros(self.num_envs, dtype= torch.float32, device= self.device)
@@ -1252,10 +1257,18 @@ class LeggedRobot(base_task.BaseTask):
         # Penalize dof velocities
         return torch.sum(torch.square(self.dof_vel), dim=-1)
 
-    def _reward_dof_acc(self):
+    def _reward_dof_acc(self, method: str='mean'):
         # Penalize dof accelerations
-        dof_acc = (self.dof_vel - self.last_dof_vel) / self.dt
-        return torch.sum(torch.square(dof_acc), dim=-1)
+        # Use the last dof acc if method is 'last', 'mean' to use the mean of
+        # the substeps.
+        if method == 'last':
+            dof_acc = self.substep_dof_acc[:, -1, :]
+        elif method == 'mean':
+            dof_acc = torch.mean(self.substep_dof_acc, dim=1)
+        else:
+            raise ValueError(f'Invalid method: {method}')
+        reward = torch.sum(torch.square(dof_acc), dim=-1)
+        return reward
 
     def _reward_feet_acc(self):
         foot_acc = (self.feet_vel - self.last_feet_vel) / self.dt
