@@ -105,36 +105,83 @@ def main(argv = None):
         forward_depth_embedding_dims=None,
         move_by_wireless_remote= False,
         move_by_gamepad=True,
+        use_vision=False,
     )
     unitree_real_env.start_ros()
     unitree_real_env.wait_untill_ros_working()
     duration = cfg["sim"]["dt"] * cfg["control"]["decimation"] # in sec
     rate = rospy.Rate(1 / duration)
 
-    standup_procedure(
-        unitree_real_env,
-        rate,
-        cfg,
-        angle_tolerance= 0.2,
-        kp= 80,
-        kd= 1.5,
-        warmup_timesteps= 100,
-        policy=None,
-    )
+    # standup_procedure(
+    #     unitree_real_env,
+    #     rate,
+    #     cfg,
+    #     angle_tolerance= 0.2,
+    #     kp= 80,
+    #     kd= 1.5,
+    #     warmup_timesteps= 100,
+    #     policy=None,
+    # )
+    excite_duration = 5.0
     while not rospy.is_shutdown():
-        inference_start_time = rospy.get_time()
-        obs = unitree_real_env.get_obs()
-        unitree_real_env.send_action(np.zeros_like(unitree_real_env.default_dof_pos[None]), kp=20, kd=0.5)
-        # unitree_real_env.send_action(actions)
-        motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
-        rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
-        inference_duration = rospy.get_time() - inference_start_time
-        rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
-        rate.sleep()
-        if unitree_real_env.quit_pressed:
-            unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos[None], kp=20, kd=0.5)
-            rospy.signal_shutdown("Controller send stop signal, exiting")
-    return
+        excite_procedure(unitree_real_env, rate, cfg, excite_duration)
+    # while not rospy.is_shutdown():
+    #     excite_start = rospy.get_time()
+    #     inference_start_time = rospy.get_time()
+    #     obs = unitree_real_env.get_obs()
+    #     unitree_real_env.send_action(np.zeros_like(unitree_real_env.default_dof_pos[None]), kp=20, kd=0.5)
+    #     # unitree_real_env.send_action(actions)
+    #     motor_temperatures = [motor_state.temperature for motor_state in unitree_real_env.low_state_buffer.motorState]
+    #     rospy.loginfo_throttle(10, " ".join(["motor_temperatures:"] + ["{:d},".format(t) for t in motor_temperatures[:12]]))
+    #     inference_duration = rospy.get_time() - inference_start_time
+    #     rospy.loginfo_throttle(10, "inference duration: {:.3f}".format(inference_duration))
+    #     rate.sleep()
+    #     if unitree_real_env.quit_pressed:
+    #         unitree_real_env.publish_legs_cmd(unitree_real_env.default_dof_pos[None], kp=20, kd=0.5)
+    #         rospy.signal_shutdown("Controller send stop signal, exiting")
+    # return
+
+def excite_procedure(env, rate, cfg, excite_duration):
+  # Get the robot to its default position.
+  print('Choose the joint to excite:')
+  for i, name in range(env.extra_cfg["dof_names"]):
+      print(f'\t {name}: [{i}]')
+  joint_idx = int(input('Enter the joint index: '))
+  real_joint_idx = env.extra_cfg["dof_map"][joint_idx]
+  gain = float(input('Enter the desired gain:'))
+  damping = float(input('Enter the desired damping:'))
+  action = float(input('Enter the desired action:'))
+
+  times = []
+  actions = []
+  dof_pos = []
+
+  # Get the robot to its default position.
+  standup_procedure(
+      env,
+      rate,
+      cfg,
+      angle_tolerance= 0.2,
+      kp= 80,
+      kd= 1.5,
+      warmup_timesteps= 100,
+      policy=None,
+  )
+
+  excite_start = rospy.get_time()
+  while not rospy.is_shutdown():
+    if rospy.get_time() - excite_start > excite_duration:
+        break
+    times.append(rospy.get_time() - excite_start)
+    actions.append(action)
+    actions = np.zeros_like(env.default_dof_pos[None])
+    actions[0, real_joint_idx] = action
+    dof_pos.append(env.dof_pos[0, real_joint_idx])
+    env.send_action(actions, kp=gain, kd=damping)
+    rate.sleep()
+    if env.quit_pressed:
+        env.publish_legs_cmd(env.default_dof_pos[None], kp=20, kd=0.5)
+        rospy.signal_shutdown("Controller send stop signal, exiting")
 
 
 if __name__ == "__main__":

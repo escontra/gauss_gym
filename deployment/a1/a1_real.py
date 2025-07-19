@@ -30,6 +30,7 @@ class UnitreeA1Real:
             cfg= dict(),
             extra_cfg= dict(),
             read_only: bool = False,
+            use_vision: bool = True
         ):
         """
         NOTE:
@@ -55,6 +56,7 @@ class UnitreeA1Real:
         self.move_by_wireless_remote = move_by_wireless_remote
         self.move_by_gamepad = move_by_gamepad
         self.read_only = read_only
+        self.use_vision = use_vision
         assert not (self.move_by_wireless_remote and self.move_by_gamepad), "Cannot move by both wireless remote and gamepad at the same time."
         self.cfg = cfg
         self.extra_cfg = dict(
@@ -187,7 +189,7 @@ class UnitreeA1Real:
             self.dummy_handler,
             queue_size= 1,
         )
-        if not self.read_only:
+        if not self.read_only and self.use_vision:
             self.visual_embedding_subscriber = rospy.Subscriber(
                 self.robot_namespace + "/visual_embedding",
                 Float32MultiArrayStamped,
@@ -200,8 +202,9 @@ class UnitreeA1Real:
         while not hasattr(self, "low_state_buffer"):
             rate.sleep()
         rate = rospy.Rate(100)
-        if not self.read_only:
+        if not self.read_only and self.use_vision:
             while not hasattr(self, "visual_embedding_buffer"):
+                print("Waiting for visual embedding buffer...")
                 rate.sleep()
         rospy.loginfo("UnitreeA1Real.low_state_buffer acquired, stop waiting.")
         
@@ -316,7 +319,7 @@ class UnitreeA1Real:
                   obs = scale * obs
               obs_dict[group.name][observation.name] = obs
 
-        if hasattr(self, "visual_embedding_buffer"):
+        if hasattr(self, "visual_embedding_buffer") and self.use_vision:
             obs_dict["policy"]["image_encoder"] = self.visual_embedding_buffer
         self.obs_dict = obs_dict
 
@@ -324,7 +327,7 @@ class UnitreeA1Real:
     """ The methods combined with outer model forms the step function
     NOTE: the outer user handles the loop frequency.
     """
-    def send_action(self, actions):
+    def send_action(self, actions, kp=None, kd=None):
         """ The function that send commands to the real robot.
         """
         self.actions[:] = self.clip_action_before_scale(actions)
@@ -334,7 +337,7 @@ class UnitreeA1Real:
             rospy.logwarn_throttle(60, "You are using control without any torque clip. The network might output torques larger than the system can provide.")
             robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos[None]
 
-        self.publish_legs_cmd(robot_coordinates_action)
+        self.publish_legs_cmd(robot_coordinates_action, kp=kp, kd=kd)
 
     def publish_legs_cmd(self, robot_coordinates_action, kp= None, kd= None):
         """ publish the joint position directly to the robot. NOTE: The joint order from input should
