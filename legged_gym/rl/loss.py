@@ -66,8 +66,6 @@ def value_loss(
     )
     returns = value_preds + advantages
 
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
   # Value loss.
   if use_clipped_value_loss:
     value_clipped = batch.rl_values["old_values"].detach() + (values.pred() - batch.rl_values["old_values"].detach()).clamp(
@@ -386,6 +384,13 @@ def learn_ppo(
     )
     total_loss = algorithm_cfg["value_loss_coef"] * val_loss
     learn_step_agg.add(metrics)
+
+    # Normalize advantages.
+    if multi_gpu:
+      advantages_mean, advantages_std = utils.broadcast_moments(advantages)
+    else:
+      advantages_mean, advantages_std = advantages.mean(), advantages.std()
+    advantages = (advantages - advantages_mean) / (advantages_std + 1e-8)
 
     # Actor loss.
     act_loss, kls, metrics = actor_loss(

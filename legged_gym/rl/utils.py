@@ -71,6 +71,25 @@ def sync_grads_multi_gpu(param_list, multi_gpu_world_size: int):
       offset += param.numel()
 
 
+def broadcast_moments(tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+  tensor_flat = tensor.contiguous().view(-1)
+
+  local_sum    = tensor_flat.sum()
+  local_sum_sq = (tensor_flat * tensor_flat).sum()
+  local_count  = torch.tensor([tensor_flat.numel()], device=tensor.device, dtype=torch.long)
+
+  stats = torch.tensor([local_sum, local_sum_sq], device=tensor.device)
+  stats = torch.cat([stats, local_count.float().to(tensor.device)])
+  torch_distributed.all_reduce(stats, op=torch_distributed.ReduceOp.SUM)
+  global_sum, global_sum_sq, global_count = stats
+  global_count = global_count.long()
+
+  mean = global_sum / global_count
+  var  = global_sum_sq / global_count - mean * mean
+  std  = torch.sqrt(var.clamp(min=0.0))
+  return mean, std
+
+
 def broadcast_scalar(scalar, src_rank: int, device):
   scalar_tensor = torch.tensor([scalar], device=device)
   torch_distributed.broadcast(scalar_tensor, src_rank)
