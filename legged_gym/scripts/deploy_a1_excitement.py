@@ -151,17 +151,16 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
   joint_idx = int(input('Enter the joint index: '))
   joint_name = env.extra_cfg["dof_names"][joint_idx]
 
-  times = []
-  actions = []
-  dof_pos = []
-
   excitement_data = np.load(os.path.join(sim_excitement_dir, f'{joint_name}_sim.npz'))
   dof_lim_low = excitement_data['dof_lim_low']
   dof_lim_high = excitement_data['dof_lim_high']
-  time_history = excitement_data['time_history']
-  total_s = time_history[-1]
+  total_s = excitement_data['time_history'][-1]
   amplitude = (dof_lim_high - dof_lim_low) / 2.0
   period = 1.0
+
+  action_history = []
+  dof_pos_history = []
+  time_history = []
 
   # Get the robot to its default position.
   standup_procedure(
@@ -179,6 +178,7 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
 
   excite_start = rospy.get_time()
   while not rospy.is_shutdown():
+    env.compute_observation()
     t = rospy.get_time() - excite_start
     if t > total_s:
       rospy.signal_shutdown("Exited excitement procedure")
@@ -186,14 +186,20 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
     actions = np.zeros_like(env.default_dof_pos[None])
     action = amplitude * np.sin(period * np.pi * t)
     actions[0, joint_idx] = action
-    times.append(t)
-    actions.append(action)
-    dof_pos.append(env.dof_pos[0, joint_idx])
+    time_history.append(t)
+    action_history.append(action)
+    dof_pos_history.append(env.dof_pos[0, joint_idx])
     env.send_action(actions)
     rate.sleep()
     if env.quit_pressed:
         env.publish_legs_cmd(env.default_dof_pos[None], kp=20, kd=0.5)
         rospy.signal_shutdown("Controller send stop signal, exiting")
+
+  np.savez(os.path.join(sim_excitement_dir, f'{joint_name}_real.npz'),
+           time_hisotry=np.array(time_history),
+           action_history=np.array(action_history),
+           dof_pos_history=np.array(dof_pos_history)
+          )
 
 if __name__ == "__main__":
     main()
