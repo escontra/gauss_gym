@@ -179,7 +179,8 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
   while not rospy.is_shutdown():
     t = rospy.get_time() - excite_start
     if t > total_s:
-        break
+      rospy.signal_shutdown("Exited excitement procedure")
+      break
     actions = np.zeros_like(env.default_dof_pos[None])
     action = amplitude * np.sin(period * np.pi * t)
     actions[0, joint_idx] = action
