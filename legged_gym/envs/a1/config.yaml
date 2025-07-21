@@ -203,7 +203,7 @@ curriculum:
     apply: True
     epochs: 0
     update_every: 10
-    start: 0.05
+    start: 0.1
     end: 0.0
     buckets: 255
     sample_type: "uniform"
@@ -394,7 +394,7 @@ rewards:
     scale: -0.05
   dof_acc:
     scale: -1.5e-8
-    method: "last"
+    method: last
   torques:
     scale: -0.0002
   feet_air_time:
@@ -413,8 +413,8 @@ rewards:
   feet_slip:
     scale: -0.1
   feet_clearance:
-    scale: 0.5
-    clearance_distance: 0.06
+    scale: 1.0
+    clearance_distance: 0.1
   dof_pos_limits:
     scale: -10.0
     soft_dof_pos_limit: 0.9
@@ -607,7 +607,7 @@ algorithm:
     actions: 1.0
   train_image_encoder: True
   image_encoder_batch_size: 48
-  normalize_rewards: True
+  normalize_rewards: False
 
 runner:
   record_video: True

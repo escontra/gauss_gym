@@ -163,10 +163,10 @@ class Runner:
         image_encoder_parameters, lr=self.image_encoder_learning_rate_scheduler(0)
       )
 
-    self.policy_optimizer = torch.optim.Adam(
+    self.policy_optimizer = torch.optim.AdamW(
       self.policy.parameters(), lr=self.policy_learning_rate
     )
-    self.value_optimizer = torch.optim.Adam(
+    self.value_optimizer = torch.optim.AdamW(
       self.value.parameters(), lr=self.value_learning_rate
     )
 
