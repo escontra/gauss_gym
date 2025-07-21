@@ -478,19 +478,19 @@ class TwoHotHead(nn.Module):
     self.projection_net = nn.Linear(input_size, int(np.prod(self.output_size) * self.num_bins)) #, **self.kw)
     utils.init_linear(self.projection_net, scale=self.outscale)
 
-    if self.num_bins % 2 == 1:
-      half = torch.linspace(-20, 0, (self.num_bins - 1) // 2 + 1, dtype=torch.float32)
-      half = math.symexp(half)
-      self.bins = torch.cat([half, -half[:-1].flip(0)], 0)
-    else:
-      half = torch.linspace(-20, 0, self.num_bins // 2, dtype=torch.float32)
-      half = math.symexp(half)
-      self.bins = torch.cat([half, -half.flip(0)], 0)
-
   def forward(self, x: torch.Tensor) -> TwoHot:
+    if self.num_bins % 2 == 1:
+      half = torch.linspace(-20, 0, (self.num_bins - 1) // 2 + 1, dtype=torch.float32, device=x.device)
+      half = math.symexp(half)
+      bins = torch.cat([half, -half[:-1].flip(0)], dim=0)
+    else:
+      half = torch.linspace(-20, 0, self.num_bins // 2, dtype=torch.float32, device=x.device)
+      half = math.symexp(half)
+      bins = torch.cat([half, -half.flip(0)], dim=0)
+
     logits = self.projection_net(x)
     logits = utils.reshape_output(logits, (int(np.prod(self.output_size)), self.num_bins))
-    return TwoHot(logits, self.bins)
+    return TwoHot(logits, bins)
 
 
 class MSEHead(nn.Module):

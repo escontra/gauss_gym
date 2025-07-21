@@ -1,4 +1,4 @@
-from typing import Dict, Any, Tuple, Callable
+from typing import Dict, Any, Tuple, Callable, Optional
 import torch
 import torch.utils._pytree as pytree
 import torch.distributed as torch_distributed
@@ -313,6 +313,7 @@ def learn_ppo(
     buffer: experience_buffer.ExperienceBuffer,
     policy: torch.nn.Module,
     old_policy: torch.nn.Module,
+    reward_normalizer: Optional[torch.nn.Module],
     value: torch.nn.Module,
     policy_optimizer: torch.optim.Optimizer,
     value_optimizer: torch.optim.Optimizer,
@@ -348,6 +349,9 @@ def learn_ppo(
     obs_sym_groups.append(value_obs_key)
   elif algorithm_cfg["symmetry_loss"]:
     obs_sym_groups.append(policy_obs_key)
+  rl_normalizers = {}
+  if algorithm_cfg["normalize_rewards"]:
+    rl_normalizers["rewards"] = reward_normalizer
 
   for batch in buffer.reccurent_mini_batch_generator(
     algorithm_cfg["num_learning_epochs"],
@@ -367,6 +371,7 @@ def learn_ppo(
     rl_keys=[
       "values", "time_outs", "rewards", "dones", "actions"
     ],
+    rl_normalizers=rl_normalizers,
   ):
     # Value loss.
     val_loss, advantages, metrics = value_loss(

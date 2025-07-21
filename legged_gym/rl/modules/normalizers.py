@@ -267,6 +267,34 @@ class DictNormalizer(nn.Module):
       self.std()[k].data = std
 
 
+class RewardNormalizer(nn.Module):
+  def __init__(self, gamma: float, num_envs: int, g_max: float=10.0, epsilon: float=1e-8):
+    super().__init__()
+    self.register_buffer('G', torch.zeros(num_envs, dtype=torch.float32))
+    self.G_rms = DictNormalizer(
+      obs_space={
+        'G': space.Space(torch.float32, ())
+      }
+    )
+    self.register_buffer('G_r_max', torch.zeros((), dtype=torch.float32))
+    self.gamma = gamma
+    self.g_max = g_max
+    self.epsilon = epsilon
+
+  def forward(self, rewards: torch.Tensor) -> torch.Tensor:
+    var_denominator = self.G_rms.std()['G'] + self.epsilon
+    min_required_denominator = self.G_r_max / self.g_max
+    denominator = torch.maximum(var_denominator, min_required_denominator)
+    return rewards / denominator
+
+  def update(self, rewards: torch.Tensor, dones: torch.Tensor):
+    self.G.data = self.gamma * (1 - dones.to(torch.float32)) * self.G.data + rewards
+    self.G_rms.update({'G': self.G})
+    self.G_r_max.data = torch.maximum(
+      self.G_r_max.data,
+      torch.max(torch.abs(self.G.data)))
+
+
 class BackwardReturnTracker(nn.Module):
 
   def __init__(self,

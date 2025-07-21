@@ -97,6 +97,14 @@ class Runner:
     self.value_key = self.cfg["value"]["obs_key"]
     self.value_obs_space = self.env.obs_space()[self.value_key]
 
+    # Reward normalizer.
+    self.reward_normalizer = None
+    if self.cfg["algorithm"]["normalize_rewards"]:
+      self.reward_normalizer = normalizers.RewardNormalizer(
+        self.cfg["algorithm"]["gamma"],
+        num_envs=self.env.num_envs
+      ).to(self.device)
+
     policy_project_dims, value_project_dims = {}, {}
     if self.image_encoder_enabled and self.image_encoder_key in self.policy_obs_space:
       if self.cfg["policy"]["project_image_encoder_latent"]:
@@ -359,6 +367,10 @@ class Runner:
             )
 
           obs_dict, rew, done, infos = self.env.step(actions)
+          if self.reward_normalizer is not None:
+            self.reward_normalizer.update(rew, done)
+            if self.multi_gpu:
+              rl_utils.sync_state_dict(self.reward_normalizer, 0)
 
         if self.image_encoder_enabled:
           image_encoder_buffer = infos.pop(f'{self.image_encoder_key}_buffer', None)
@@ -413,6 +425,7 @@ class Runner:
         buffer,
         self.policy,
         self.old_policy,
+        self.reward_normalizer,
         self.value,
         self.policy_optimizer,
         self.value_optimizer,

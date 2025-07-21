@@ -153,7 +153,7 @@ init_state:
 control:
   control_type: "P"
   stiffness: {
-    "joint": 50.0
+    "joint": 40.0
   }
   damping: {
     "joint": 1.0
@@ -203,7 +203,7 @@ curriculum:
     apply: True
     epochs: 0
     update_every: 10
-    start: 0.1
+    start: 0.05
     end: 0.0
     buckets: 255
     sample_type: "uniform"
@@ -607,6 +607,7 @@ algorithm:
     actions: 1.0
   train_image_encoder: True
   image_encoder_batch_size: 48
+  normalize_rewards: True
 
 runner:
   record_video: True

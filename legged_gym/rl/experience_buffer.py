@@ -156,6 +156,7 @@ class ExperienceBuffer:
       symmetry_flip_latents: bool,
       dones_key: str,
       rl_keys: List[str],
+      rl_normalizers: Dict[str, torch.nn.Module],
   ):
 
     # Symmetry-augmented observations computed during the environment step.
@@ -212,7 +213,10 @@ class ExperienceBuffer:
           rl_values_batch['last_value'] = pytree.tree_map(lambda x: x[start:stop], last_value)
         rl_values_batch['masks'] = masks_batch
         for key in rl_keys:
-          rl_values_batch[key] = pytree.tree_map(lambda x: x[:, start:stop], self.tensor_dict[key])
+          rl_value = pytree.tree_map(lambda x: x[:, start:stop], self.tensor_dict[key])
+          if key in rl_normalizers:
+            rl_value = rl_normalizers[key](rl_value)
+          rl_values_batch[key] = rl_value
 
         with torch.no_grad():
           network_batch, network_sym_batch = {}, {}

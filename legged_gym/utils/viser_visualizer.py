@@ -1,5 +1,6 @@
 from typing import Dict, List, Union
 import collections
+import sys
 import viser
 from viser.extras import ViserUrdf
 import yourdfpy
@@ -12,6 +13,16 @@ import viser.transforms as vtf
 import plotly.graph_objects as go
 
 from legged_gym import utils
+
+
+if sys.version_info < (3, 9):
+    # Fixes importlib.resources for python < 3.9.
+    # From: https://github.com/messense/typst-py/issues/12#issuecomment-1812956252
+    import importlib.resources as importlib_res
+    import importlib_resources
+    setattr(importlib_res, "files", importlib_resources.files)
+    setattr(importlib_res, "as_file", importlib_resources.as_file)
+
 
 VEL_SCALE = 0.25
 HEADING_SCALE = 0.2
