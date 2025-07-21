@@ -68,6 +68,7 @@ def main(argv = None):
         'runner': {'load_run': ''},
         'debug': False,
         'namespace': '/a112138',
+        'sim_excitement_dir': None,
     }).parse_known(argv)
 
     if parsed.runner.load_run != '':
@@ -122,9 +123,8 @@ def main(argv = None):
     #     warmup_timesteps= 100,
     #     policy=None,
     # )
-    excite_duration = 5.0
     while not rospy.is_shutdown():
-        excite_procedure(unitree_real_env, rate, cfg, excite_duration)
+        excite_procedure(unitree_real_env, rate, cfg, parsed.sim_excitement_dir)
     # while not rospy.is_shutdown():
     #     excite_start = rospy.get_time()
     #     inference_start_time = rospy.get_time()
@@ -141,20 +141,25 @@ def main(argv = None):
     #         rospy.signal_shutdown("Controller send stop signal, exiting")
     # return
 
-def excite_procedure(env, rate, cfg, excite_duration):
+def excite_procedure(env, rate, cfg, sim_excitement_dir):
   # Get the robot to its default position.
   print('Choose the joint to excite:')
   for i, name in range(env.extra_cfg["dof_names"]):
       print(f'\t {name}: [{i}]')
   joint_idx = int(input('Enter the joint index: '))
-  real_joint_idx = env.extra_cfg["dof_map"][joint_idx]
-  gain = float(input('Enter the desired gain:'))
-  damping = float(input('Enter the desired damping:'))
-  action = float(input('Enter the desired action:'))
+  joint_name = env.extra_cfg["dof_names"][joint_idx]
 
   times = []
   actions = []
   dof_pos = []
+
+  excitement_data = np.load(os.path.join(sim_excitement_dir, f'{joint_name}_sim.npz'))
+  dof_lim_low = excitement_data['dof_lim_low']
+  dof_lim_high = excitement_data['dof_lim_high']
+  time_history = excitement_data['time_history']
+  total_s = time_history[-1]
+  amplitude = (dof_lim_high - dof_lim_low) / 2.0
+  period = 1.0
 
   # Get the robot to its default position.
   standup_procedure(
@@ -170,19 +175,20 @@ def excite_procedure(env, rate, cfg, excite_duration):
 
   excite_start = rospy.get_time()
   while not rospy.is_shutdown():
-    if rospy.get_time() - excite_start > excite_duration:
+    t = rospy.get_time() - excite_start
+    if t > total_s:
         break
-    times.append(rospy.get_time() - excite_start)
-    actions.append(action)
     actions = np.zeros_like(env.default_dof_pos[None])
-    actions[0, real_joint_idx] = action
-    dof_pos.append(env.dof_pos[0, real_joint_idx])
-    env.send_action(actions, kp=gain, kd=damping)
+    action = amplitude * np.sin(period * np.pi * t)
+    actions[0, joint_idx] = action
+    times.append(t)
+    actions.append(action)
+    dof_pos.append(env.dof_pos[0, joint_idx])
+    env.send_action(actions)
     rate.sleep()
     if env.quit_pressed:
         env.publish_legs_cmd(env.default_dof_pos[None], kp=20, kd=0.5)
         rospy.signal_shutdown("Controller send stop signal, exiting")
-
 
 if __name__ == "__main__":
     main()
