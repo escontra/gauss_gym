@@ -49,6 +49,7 @@ def standup_procedure(
 
     rospy.loginfo("Robot stood up! press A on the gamepad to continue")
     while not rospy.is_shutdown():
+        print('Waiting for start signal...'g)
         if env.start_pressed:
             break
         if env.quit_pressed:
@@ -144,7 +145,7 @@ def main(argv = None):
 def excite_procedure(env, rate, cfg, sim_excitement_dir):
   # Get the robot to its default position.
   print('Choose the joint to excite:')
-  for i, name in range(env.extra_cfg["dof_names"]):
+  for i, name in enumerate(env.extra_cfg["dof_names"]):
       print(f'\t {name}: [{i}]')
   joint_idx = int(input('Enter the joint index: '))
   joint_name = env.extra_cfg["dof_names"][joint_idx]
@@ -172,6 +173,7 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
       warmup_timesteps= 100,
       policy=None,
   )
+  print('Exited standup procedure')
 
   excite_start = rospy.get_time()
   while not rospy.is_shutdown():
