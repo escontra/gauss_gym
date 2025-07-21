@@ -149,10 +149,16 @@ class LeggedRobotViser:
                 initial_value=False,
                 hint="Toggle reward plot visibility"
             )
+            self.show_command_plot = self.server.gui.add_checkbox(
+                "Show Command Plot",
+                initial_value=False,
+                hint="Toggle command plot visibility"
+            )
 
             self.action_plot = None
             self.dof_pos_plot = None
             self.rew_plot = None
+            self.command_plot = None
 
             @self.show_action_plot.on_update
             def _(event) -> None:
@@ -202,6 +208,23 @@ class LeggedRobotViser:
                         self.rew_plot.remove()
                         self.rew_plot = None
 
+            @self.show_command_plot.on_update
+            def _(event) -> None:
+                if self.show_command_plot.value:
+                    # Create the action plot if it doesn't exist
+                    if self.command_plot is None:
+                        self.command_plot = self.server.gui.add_plotly(
+                            figure=go.Figure(),
+                            aspect=1.0,
+                            visible=True
+                        )
+                else:
+                    # Remove the plot if it exists
+                    if self.command_plot is not None:
+                        self.command_plot.remove()
+                        self.command_plot = None
+
+
 
         # Initialize history for plots.
         self.history_length = int(PLOT_TIME_WINDOW / self.dt)
@@ -209,6 +232,8 @@ class LeggedRobotViser:
         self.time_history = []
         self.action_history = []
         self.dof_pos_history = []
+        self.command_history = []
+        self.velocity_history = []
         self.rew_history = collections.defaultdict(list)
 
         self.setup_scene_selection()
@@ -678,6 +703,83 @@ class LeggedRobotViser:
         # Update the plot
         self.rew_plot.figure = fig
 
+    def update_command_plot(self):
+        """Update the command plot with the current history."""
+        if self.command_plot is None:
+            return
+
+        # Convert histories to numpy arrays for easier slicing
+        times = np.array(self.time_history)
+        commands = np.array(self.command_history)
+        velocities = np.array(self.velocity_history)
+
+
+        # Make times relative to current time
+        current_time = self.current_time
+        relative_times = times - current_time
+        
+        # Create a new figure
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=commands[:, 0],
+            name='X command',
+            line=dict(color='red', width=2, dash='dash'),
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=commands[:, 1],
+            name='Y command',
+            line=dict(color='green', width=2, dash='dash'),
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=commands[:, 2],
+            name='Yaw command',
+            line=dict(color='blue', width=2, dash='dash'),
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=velocities[:, 0],
+            name='X vel',
+            line=dict(color='red', width=2),
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=velocities[:, 1],
+            name='Y vel',
+            line=dict(color='green', width=2),
+            showlegend=False
+        ))
+        fig.add_trace(go.Scatter(
+            x=relative_times,
+            y=velocities[:, 2],
+            name='Yaw vel',
+            line=dict(color='blue', width=2),
+            showlegend=False
+        ))
+
+        # Update layout
+        fig.update_layout(
+            title="Commands and Velocities",
+            xaxis_title="Time (seconds ago)",
+            yaxis_title="Velocity",
+            xaxis=dict(
+                range=[-PLOT_TIME_WINDOW, 0],  # Fixed window of last 5 seconds
+                autorange=False  # Disable autoranging
+            ),
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=False,
+        )
+        
+        # # Update the plot
+        self.command_plot.figure = fig
+
 
     def update(self, root_states: torch.Tensor, dof_pos: torch.Tensor):
         """
@@ -697,6 +799,8 @@ class LeggedRobotViser:
             self.time_history = []
             self.action_history = []
             self.dof_pos_history = []
+            self.command_history = []
+            self.velocity_history = []
             self.rew_history = collections.defaultdict(list)
             self.current_time = 0.0
 
@@ -716,6 +820,8 @@ class LeggedRobotViser:
         self.time_history.append(self.current_time)
         self.action_history.append(self.env.actions[env_idx].cpu().numpy())
         self.dof_pos_history.append(dof_pos[env_idx].cpu().numpy())
+        self.command_history.append(self.env.commands[env_idx].cpu().numpy())
+        self.velocity_history.append(np.concatenate([self.env.filtered_lin_vel[env_idx].cpu().numpy(), self.env.filtered_ang_vel[env_idx].cpu().numpy()], axis=-1))
         for name in self.env.rew_dict:
             self.rew_history[name].append(self.env.rew_dict[name][env_idx].item())
 
@@ -723,12 +829,15 @@ class LeggedRobotViser:
             self.time_history = self.time_history[-self.history_length:]
             self.action_history = self.action_history[-self.history_length:]
             self.dof_pos_history = self.dof_pos_history[-self.history_length:]
+            self.command_history = self.command_history[-self.history_length:]
+            self.velocity_history = self.velocity_history[-self.history_length:]
             for name in self.rew_history:
                 self.rew_history[name] = self.rew_history[name][-self.history_length:]
 
         self.update_action_plot()
         self.update_dof_pos_plot()
         self.update_rew_plot()
+        self.update_command_plot()
 
         # Block until either play is true or step is requested
         while not (self.play_pause.value or self.step_requested):
