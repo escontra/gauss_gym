@@ -496,6 +496,7 @@ def learn_image_encoder(
     symmetry_flip_latents=algorithm_cfg["symmetry_flip_latents"],
     dones_key="dones",
     rl_keys=[],
+    rl_normalizers={},
   ):
     # Reconstruction loss.
     recon_loss, metrics = reconstruction_loss(
