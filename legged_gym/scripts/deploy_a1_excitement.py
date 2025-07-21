@@ -18,6 +18,7 @@ def standup_procedure(
         kd= None,
         warmup_timesteps= 25,
         policy=None,
+        wait_for_start=True,
     ):
     """
     Args:
@@ -49,8 +50,8 @@ def standup_procedure(
 
     rospy.loginfo("Robot stood up! press A on the gamepad to continue")
     while not rospy.is_shutdown():
-        print('Waiting for start signal...'g)
-        if env.start_pressed:
+        print('Waiting for start signal...')
+        if env.start_pressed or not wait_for_start:
             break
         if env.quit_pressed:
             env.publish_legs_cmd(env.default_dof_pos[None], kp= 0, kd= 0.5)
@@ -69,7 +70,7 @@ def main(argv = None):
         'runner': {'load_run': ''},
         'debug': False,
         'namespace': '/a112138',
-        'sim_excitement_dir': None,
+        'sim_excitement_dir': '',
     }).parse_known(argv)
 
     if parsed.runner.load_run != '':
@@ -172,6 +173,7 @@ def excite_procedure(env, rate, cfg, sim_excitement_dir):
       kd= 1.5,
       warmup_timesteps= 100,
       policy=None,
+      wait_for_start=False,
   )
   print('Exited standup procedure')
 
