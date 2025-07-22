@@ -639,7 +639,7 @@ class LeggedRobot(base_task.BaseTask):
     def get_small_command_mask(self):
         small_lin_vel_mask = torch.norm(self.commands[:, :2], dim=-1) < self.cfg["commands"]["small_lin_vel_threshold"]
         small_ang_vel_mask = torch.norm(self.commands[:, 2:3], dim=-1) < self.cfg["commands"]["small_ang_vel_threshold"]
-        return torch.logical_and(small_lin_vel_mask, small_ang_vel_mask)
+        return torch.logical_or(torch.logical_and(small_lin_vel_mask, small_ang_vel_mask), self.still_envs)
 
     def _resample_commands(self, reset_env_ids):
         """ Randommly select commands of some environments
@@ -666,6 +666,8 @@ class LeggedRobot(base_task.BaseTask):
 
         # Set small commands or still environments to zero.
         self.commands[self.still_envs, :] = 0.0
+        self.commands[:, :2] *= (self.commands[:, :2] >= self.cfg["commands"]["small_lin_vel_threshold"]).float()
+        self.commands[:, 2:3] *= (torch.abs(self.commands[:, 2:3]) >= self.cfg["commands"]["small_ang_vel_threshold"]).float()
         self.commands[self.get_small_command_mask(), :3] = 0.0
 
     @timer.section("compute_torques")
@@ -1363,7 +1365,7 @@ class LeggedRobot(base_task.BaseTask):
         max_air_time = max_air_time if max_air_time > 0 else 1e6
         time_diff = torch.clip(self.feet_air_time, max=max_air_time) - min_air_time
         rew_air_time = torch.sum(time_diff * self.first_contact, dim=1) # reward only on first contact with the ground
-        rew_air_time *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+        rew_air_time *= ~self.get_small_command_mask()
         return rew_air_time
 
     def _reward_feet_contact_time(self, min_contact_time, max_contact_time):
@@ -1461,14 +1463,14 @@ class LeggedRobot(base_task.BaseTask):
       feet_distance = self.sensors["foot_distance_sensor"].get_data().clamp(min=0.)
       delta = (feet_distance - clearance_distance).clamp(max=0.).mean(dim=-1)
       reward = torch.sum(delta * vel_norm, dim=-1)
-      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      reward *= ~self.get_small_command_mask()
       return reward
 
     def _reward_feet_clearance_clipped(self, clearance_height):
       height_diff = self.swing_peak - clearance_height
       height_diff = torch.clip(height_diff * self.first_contact, max=0.)
       reward = height_diff.sum(dim=-1)
-      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      reward *= ~self.get_small_command_mask()
       return reward
 
     def _reward_feet_clearance_2(self, clearance_height):
@@ -1478,7 +1480,7 @@ class LeggedRobot(base_task.BaseTask):
       feet_z = self.sensors["foot_height_raycaster"].get_data()
       delta = torch.abs(feet_z - clearance_height)
       reward = torch.sum(delta * vel_norm, dim=-1)
-      reward *= ~torch.logical_or(self.get_small_command_mask(), self.still_envs)
+      reward *= ~self.get_small_command_mask()
       return reward
 
     def _reward_no_fly(self):

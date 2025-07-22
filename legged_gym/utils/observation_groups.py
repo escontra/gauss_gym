@@ -85,7 +85,7 @@ DOF_POS = Observation(
 DOF_VEL = Observation(
   name="dof_vel",
   func=O.dof_vel,
-  noise=0.5,
+  noise=1.5,
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 

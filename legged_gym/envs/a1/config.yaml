@@ -418,6 +418,8 @@ rewards:
   dof_pos_limits:
     scale: -10.0
     soft_dof_pos_limit: 0.9
+  stand_still:
+    scale: -1.0
   # energy_substeps:
   #   scale: -0.0001
 
@@ -429,11 +431,11 @@ commands:
   heading_command: True
   num_commands: 4
   resampling_time: 4. # time before command are changed[s]
-  small_lin_vel_threshold: 0.0
-  small_ang_vel_threshold: 0.0
+  small_lin_vel_threshold: 0.2
+  small_ang_vel_threshold: 0.2
   ranges:
-    lin_vel: [0.1, 1.0]
-    ang_vel_yaw: [-1, 1]
+    lin_vel: [0.2, 1.0]
+    ang_vel_yaw: [-1.57, 1.57]
     heading: [-3.14, 3.14]
 
 normalization:
