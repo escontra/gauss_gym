@@ -6,7 +6,7 @@ setup(
     version="1.0.0",
     author="Alejandro Escontrela",
     license="BSD-3-Clause",
-    packages=find_packages(),
+    packages=["legged_gym", "deployment"],
     author_email="escontrela@berkeley.edu",
     description="Photorealistic Gym Environments for Isaac Gym",
     install_requires=[

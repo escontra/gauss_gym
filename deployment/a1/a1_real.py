@@ -1,6 +1,5 @@
 import numpy as np
 import os
-import pygame
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
@@ -80,9 +79,16 @@ class UnitreeA1Real:
         self.actions = np.zeros((self.num_envs, 12), dtype=np.float32)
 
         self.process_configs()
-        self.policy_uses_vision = observation_groups.IMAGE_ENCODER_LATENT in self.observation_groups[self.cfg["policy"]["obs_key"]].observations
+        self.policy_obs_group = None
+        for obs_group in self.observation_groups:
+            if obs_group.name == self.cfg["policy"]["obs_key"]:
+                self.policy_obs_group = obs_group
+        assert self.policy_obs_group is not None
+        self.policy_uses_vision = observation_groups.IMAGE_ENCODER_LATENT in self.policy_obs_group.observations
         if self.vision_only:
             assert self.policy_uses_vision, "IMAGE_ENCODER_LATENT is not in the observation group."
+
+        self.start_pressed, self.quit_pressed = False, False
 
     def process_configs(self):
         self.sim_dof_order = self.deploy_cfg["dof_names"]
@@ -111,7 +117,7 @@ class UnitreeA1Real:
 
         self.default_dof_pos = np.zeros(12, dtype=np.float32)
         for i in range(12):
-            name = self.extra_cfg["dof_names"][i]
+            name = self.sim_dof_order[i]
             default_joint_angle = self.cfg["init_state"]["default_joint_angles"][name]
             self.default_dof_pos[i] = default_joint_angle
 
@@ -240,9 +246,7 @@ class UnitreeA1Real:
     """ Get obs components and cat to a single obs input """
     def compute_observation(self):
         """Use the updated low_state_buffer to compute observation vector."""
-        assert hasattr(self, "legs_cmd_publisher") or self.read_only, "start_ros() not called, ROS handlers are not initialized!"
-        if self.move_by_gamepad:
-            self._poll_gamepad()
+        assert hasattr(self, "legs_cmd_publisher") or self.vision_only, "start_ros() not called, ROS handlers are not initialized!"
         obs_dict = {}
         for group in self.observation_groups:
           if group.name != self.cfg["policy"]["obs_key"]:
@@ -283,7 +287,7 @@ class UnitreeA1Real:
         """ publish the joint position directly to the robot. NOTE: The joint order from input should
         be in simulation order. The value should be absolute value rather than related to dof_pos.
         """
-        assert not self.read_only, "Cannot publish legs cmd in read-only mode."
+        assert not self.vision_only, "Cannot publish legs cmd in vision-only mode."
         robot_coordinates_action = np.clip(
             robot_coordinates_action,
             self.joint_limits_low,
@@ -309,15 +313,15 @@ class UnitreeA1Real:
     """ ROS callbacks and handlers that update the buffer """
     def update_low_state(self, ros_msg):
         self.low_state_buffer = ros_msg
-        if self.move_by_wireless_remote:
-            self.command_buf[0, 0] = self.low_state_buffer.wirelessRemote.ly
-            self.command_buf[0, 1] = -self.low_state_buffer.wirelessRemote.lx # right-moving stick is positive
-            self.command_buf[0, 2] = -self.low_state_buffer.wirelessRemote.rx # right-moving stick is positive
-            # set the command to zero if it is too small
-            if np.linalg.norm(self.command_buf[0, :2]) < self.cfg["commands"]["small_lin_vel_threshold"]:
-                self.command_buf[0, :2] = 0.
-            if np.abs(self.command_buf[0, 2]) < self.cfg["commands"]["small_ang_vel_threshold"]:
-                self.command_buf[0, 2] = 0.
+        # if self.move_by_wireless_remote:
+        #     self.command_buf[0, 0] = self.low_state_buffer.wirelessRemote.ly
+        #     self.command_buf[0, 1] = -self.low_state_buffer.wirelessRemote.lx # right-moving stick is positive
+        #     self.command_buf[0, 2] = -self.low_state_buffer.wirelessRemote.rx # right-moving stick is positive
+        #     # set the command to zero if it is too small
+        #     if np.linalg.norm(self.command_buf[0, :2]) < self.cfg["commands"]["small_lin_vel_threshold"]:
+        #         self.command_buf[0, :2] = 0.
+        #     if np.abs(self.command_buf[0, 2]) < self.cfg["commands"]["small_ang_vel_threshold"]:
+        #         self.command_buf[0, 2] = 0.
         self.low_state_get_time = rospy.Time.now()
   
     def update_visual_embedding(self, ros_msg):
@@ -340,9 +344,9 @@ class UnitreeA1Real:
         lin_vel_range = [0, self.cfg["commands"]["ranges"]["lin_vel"][1]]
         ang_vel_range = self.cfg["commands"]["ranges"]["ang_vel_yaw"]
 
-        vel_x = ros_msg.axes[1] * (lin_vel_range[1] - lin_vel_range[0]) + lin_vel_range[0]
+        vel_x = -1. * ros_msg.axes[1] * (lin_vel_range[1] - lin_vel_range[0]) + lin_vel_range[0]
         vel_y = -1. * ros_msg.axes[0] * (lin_vel_range[1] - lin_vel_range[0]) + lin_vel_range[0]
-        ang_vel = ros_msg.axes[3] * (ang_vel_range[1] - ang_vel_range[0]) + ang_vel_range[0]
+        ang_vel = -1. * ros_msg.axes[2] * (ang_vel_range[1] - ang_vel_range[0]) / 2.0
 
         if np.abs(vel_x) < self.cfg["commands"]["small_lin_vel_threshold"]:
             vel_x = 0.
@@ -354,6 +358,9 @@ class UnitreeA1Real:
         self.command_buf[0, 0] = vel_x
         self.command_buf[0, 1] = vel_y
         self.command_buf[0, 2] = ang_vel
+
+        self.start_pressed = self.start_pressed or bool(ros_msg.buttons[0])
+        self.quit_pressed = self.quit_pressed or bool(ros_msg.buttons[1])
 
     def dummy_handler(self, ros_msg):
         """ To meet the need of teleop-legged-robots requirements """
