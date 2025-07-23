@@ -138,7 +138,6 @@ def main(argv = None):
         inference_start_time = rospy.get_time()
         obs = unitree_real_env.get_obs()
         preds, _ = runner.predict(obs[cfg["policy"]["obs_key"]])
-        print(obs[cfg["policy"]["obs_key"]])
         actions = preds['actions']
         if parsed.debug:
             with open(os.path.join(save_path, f'{rospy.Time.now()}.pkl'), 'wb') as f:

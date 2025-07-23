@@ -48,7 +48,10 @@ def base_lin_vel(env: "LeggedEnv", params, is_real=False):
 
 def base_ang_vel(env: "LeggedEnv", params, is_real=False):
     if is_real:
-        return np.array(env.low_state_buffer.imu.gyroscope, dtype=np.float32)[None]
+        if hasattr(env, "twist_buffer"):
+            return np.array(env.twist_buffer.angular, dtype=np.float32)[None]
+        else:
+            return np.array(env.low_state_buffer.imu.gyroscope, dtype=np.float32)[None]
     else:
         return env.base_ang_vel
 

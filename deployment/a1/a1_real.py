@@ -1,15 +1,15 @@
 import numpy as np
 import os
+import cv2
+import ros_numpy
+import rospy
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
-import rospy
-from unitree_legged_msgs.msg import LowState
-from unitree_legged_msgs.msg import LegsCmd
-from unitree_legged_msgs.msg import Float32MultiArrayStamped
+from unitree_legged_msgs.msg import LowState, LegsCmd, Float32MultiArrayStamped
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Joy, Image
 
 from legged_gym.utils import observation_groups
 
@@ -188,12 +188,15 @@ class UnitreeA1Real:
             self.update_base_pose,
             queue_size=1,
         )
-        self.gamepad_subscriber = rospy.Subscriber(
-            self.robot_namespace + self.gamepad_topic,
-            Joy,
-            self.update_gamepad,
-            queue_size=1,
-        )
+        if self.move_by_gamepad:
+            self.gamepad_subscriber = rospy.Subscriber(
+                self.robot_namespace + self.gamepad_topic,
+                Joy,
+                self.update_gamepad,
+                queue_size=1,
+            )
+        else:
+            rospy.logwarn("Gamepad is not used for control. No way of controlling the robot.")
         self.pose_cmd_subscriber = rospy.Subscriber(
             "/body_pose",
             Pose,
@@ -201,11 +204,19 @@ class UnitreeA1Real:
             queue_size=1,
         )
         if self.vision_only:
+            self.image_subscriber = rospy.Subscriber(
+                self.robot_namespace + self.image_topic,
+                Image,
+                self.update_image,
+                queue_size=1
+            )
             self.visual_embedding_publisher = rospy.Publisher(
                 self.robot_namespace + self.image_embedding_topic,
                 Float32MultiArrayStamped,
                 queue_size=1,
             )
+            self.publish_embedding_timer = rospy.Timer(
+                rospy.Duration(1.0/30.0), self.publish_embedding)
         if not self.vision_only and self.policy_uses_vision:
             self.visual_embedding_subscriber = rospy.Subscriber(
                 self.robot_namespace + self.image_embedding_topic,
@@ -313,15 +324,6 @@ class UnitreeA1Real:
     """ ROS callbacks and handlers that update the buffer """
     def update_low_state(self, ros_msg):
         self.low_state_buffer = ros_msg
-        # if self.move_by_wireless_remote:
-        #     self.command_buf[0, 0] = self.low_state_buffer.wirelessRemote.ly
-        #     self.command_buf[0, 1] = -self.low_state_buffer.wirelessRemote.lx # right-moving stick is positive
-        #     self.command_buf[0, 2] = -self.low_state_buffer.wirelessRemote.rx # right-moving stick is positive
-        #     # set the command to zero if it is too small
-        #     if np.linalg.norm(self.command_buf[0, :2]) < self.cfg["commands"]["small_lin_vel_threshold"]:
-        #         self.command_buf[0, :2] = 0.
-        #     if np.abs(self.command_buf[0, 2]) < self.cfg["commands"]["small_ang_vel_threshold"]:
-        #         self.command_buf[0, 2] = 0.
         self.low_state_get_time = rospy.Time.now()
   
     def update_visual_embedding(self, ros_msg):
@@ -330,6 +332,8 @@ class UnitreeA1Real:
 
     def update_base_pose(self, ros_msg):
         """ update robot odometry for position """
+        self.pose_buffer = ros_msg.pose.pose
+        self.twist_buffer = ros_msg.twist.twist
         self.base_position_buffer[0, 0] = ros_msg.pose.pose.position.x
         self.base_position_buffer[0, 1] = ros_msg.pose.pose.position.y
         self.base_position_buffer[0, 2] = ros_msg.pose.pose.position.z
@@ -361,6 +365,24 @@ class UnitreeA1Real:
 
         self.start_pressed = self.start_pressed or bool(ros_msg.buttons[0])
         self.quit_pressed = self.quit_pressed or bool(ros_msg.buttons[1])
+
+    def update_image(self, ros_msg):
+        image = ros_numpy.numpify(ros_msg)
+        downscale_factor = self.cfg["env"]["camera_params"]["downscale_factor"]
+        assert ros_msg.height == self.cfg["env"]["camera_params"]["cam_height"]
+        assert ros_msg.width == self.cfg["env"]["camera_params"]["cam_width"]
+        rospy.loginfo_once(f"Image received: {image.shape}, {image.dtype}")
+        new_height = int(ros_msg.height / downscale_factor)
+        new_width = int(ros_msg.width / downscale_factor)
+        resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+        rospy.loginfo_once(f"Image downscaled: {resized_image.shape}, {resized_image.dtype}")
+        self.image_buffer = resized_image
+        self.image_buffer_timestamp = image.header.stamp
+
+    def publish_embedding(self, event):
+        if not hasattr(self, "image_buffer"):
+            rospy.loginfo_throttle(1., "Waiting for image buffer...")
+            return
 
     def dummy_handler(self, ros_msg):
         """ To meet the need of teleop-legged-robots requirements """
