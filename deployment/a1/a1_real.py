@@ -3,6 +3,7 @@ import os
 import cv2
 import ros_numpy
 import rospy
+import rosnode
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
@@ -85,8 +86,8 @@ class UnitreeA1Real:
                 self.policy_obs_group = obs_group
         assert self.policy_obs_group is not None
         self.policy_uses_vision = observation_groups.IMAGE_ENCODER_LATENT in self.policy_obs_group.observations
-        if self.vision_only:
-            assert self.policy_uses_vision, "IMAGE_ENCODER_LATENT is not in the observation group."
+        # if self.vision_only:
+        #    assert self.policy_uses_vision, "IMAGE_ENCODER_LATENT is not in the observation group."
 
         self.start_pressed, self.quit_pressed = False, False
 
@@ -371,18 +372,26 @@ class UnitreeA1Real:
         downscale_factor = self.cfg["env"]["camera_params"]["downscale_factor"]
         assert ros_msg.height == self.cfg["env"]["camera_params"]["cam_height"]
         assert ros_msg.width == self.cfg["env"]["camera_params"]["cam_width"]
-        rospy.loginfo_once(f"Image received: {image.shape}, {image.dtype}")
+        rospy.loginfo_once(f"Image received: {image.shape}, {image.dtype} at {ros_msg.header.stamp}")
         new_height = int(ros_msg.height / downscale_factor)
         new_width = int(ros_msg.width / downscale_factor)
         resized_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
         rospy.loginfo_once(f"Image downscaled: {resized_image.shape}, {resized_image.dtype}")
         self.image_buffer = resized_image
-        self.image_buffer_timestamp = image.header.stamp
+        self.image_buffer_timestamp = ros_msg.header.stamp.to_sec()
 
     def publish_embedding(self, event):
-        if not hasattr(self, "image_buffer"):
-            rospy.loginfo_throttle(1., "Waiting for image buffer...")
+        if not hasattr(self, "image_buffer_timestamp"):
+            rospy.logwarn_throttle(1.0, "Waiting for image buffer...")
             return
+
+        time_since_last = rospy.get_time() - self.image_buffer_timestamp
+        if time_since_last > 1.0:
+            me = rospy.get_name()
+            nodes = [n for n in rosnode.get_node_names() if n != me]
+            rosnode.kill_nodes(nodes)   # XML-RPC kill
+            rospy.signal_shutdown("Too long between images!")
+
 
     def dummy_handler(self, ros_msg):
         """ To meet the need of teleop-legged-robots requirements """
