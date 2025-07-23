@@ -48,6 +48,7 @@ class UnitreeA1Real:
             cfg=dict(),
             deploy_cfg=dict(),
             vision_only: bool = False,
+            vision_model=None,
         ):
         """
         NOTE:
@@ -71,6 +72,7 @@ class UnitreeA1Real:
         self.gamepad_topic = gamepad_topic
         self.move_by_gamepad = move_by_gamepad
         self.vision_only = vision_only
+        self.vision_model = vision_model
 
         self.cfg = cfg
         self.deploy_cfg = deploy_cfg
@@ -81,13 +83,16 @@ class UnitreeA1Real:
 
         self.process_configs()
         self.policy_obs_group = None
+        self.vision_obs_group = None
         for obs_group in self.observation_groups:
             if obs_group.name == self.cfg["policy"]["obs_key"]:
                 self.policy_obs_group = obs_group
+            if self.vision_only and obs_group.name == self.cfg["image_encoder"]["obs_key"]:
+                self.vision_obs_group = obs_group
         assert self.policy_obs_group is not None
         self.policy_uses_vision = observation_groups.IMAGE_ENCODER_LATENT in self.policy_obs_group.observations
-        # if self.vision_only:
-        #    assert self.policy_uses_vision, "IMAGE_ENCODER_LATENT is not in the observation group."
+        if self.vision_only:
+            assert self.vision_model is not None, "vision_model is not provided in vision-only mode."
 
         self.start_pressed, self.quit_pressed = False, False
 
@@ -254,37 +259,54 @@ class UnitreeA1Real:
             actions_high = (p_limits_high / self.p_gains) + dof_pos_
             actions = np.clip(actions, actions_low, actions_high)
         return actions
-           
-    """ Get obs components and cat to a single obs input """
-    def compute_observation(self):
+
+    def compute_policy_observation(self):
         """Use the updated low_state_buffer to compute observation vector."""
         assert hasattr(self, "legs_cmd_publisher") or self.vision_only, "start_ros() not called, ROS handlers are not initialized!"
         obs_dict = {}
-        for group in self.observation_groups:
-          if group.name != self.cfg["policy"]["obs_key"]:
-              continue
-          obs_dict[group.name] = {}
-          for observation in group.observations:
-              if observation == observation_groups.IMAGE_ENCODER_LATENT:
-                  continue
-              obs = observation.func(self, observation, is_real=True)
-              if observation.name == "dof_pos":
-                  self.dof_pos = obs + self.default_dof_pos
-              if observation.name == "dof_vel":
-                  self.dof_vel = obs
-              if observation.clip:
-                  obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
-              if observation.scale is not None:
-                  scale = observation.scale
-                  if isinstance(scale, list):
-                      scale = np.array(scale)[None]
-                  obs = scale * obs
-              obs_dict[group.name][observation.name] = obs
+        obs_dict[self.policy_obs_group.name] = {}
+        for observation in self.policy_obs_group.observations:
+            if observation == observation_groups.IMAGE_ENCODER_LATENT:
+                continue
+            obs = observation.func(self, observation, is_real=True)
+            if observation.name == "dof_pos":
+                self.dof_pos = obs + self.default_dof_pos
+            if observation.name == "dof_vel":
+                self.dof_vel = obs
+            if observation.clip:
+                obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
+            if observation.scale is not None:
+                scale = observation.scale
+                if isinstance(scale, list):
+                    scale = np.array(scale)[None]
+                obs = scale * obs
+            obs_dict[self.policy_obs_group.name][observation.name] = obs
 
-        if hasattr(self, "visual_embedding_buffer") and self.use_vision:
-            obs_dict["policy"]["image_encoder"] = self.visual_embedding_buffer
-        self.obs_dict = obs_dict
+        if self.policy_uses_vision and hasattr(self, "visual_embedding_buffer"):
+            obs_dict[self.vision_obs_group.name]["image_encoder"] = self.visual_embedding_buffer
+        return obs_dict
 
+    def compute_vision_observation(self):
+        assert self.vision_only, "compute_vision_observation() is only available in vision-only mode."
+        obs_dict = {}
+        obs_dict[self.vision_obs_group.name] = {}
+        for observation in self.vision_obs_group.observations:
+            if observation == observation_groups.CAMERA_IMAGE:
+                continue
+            obs = observation.func(self, observation, is_real=True)
+            if observation.name == "dof_pos":
+                self.dof_pos = obs + self.default_dof_pos
+            if observation.name == "dof_vel":
+                self.dof_vel = obs
+            if observation.clip:
+                obs = obs.clip(min=observation.clip[0], max=observation.clip[1])
+            if observation.scale is not None:
+                scale = observation.scale
+                if isinstance(scale, list):
+                    scale = np.array(scale)[None]
+                obs = scale * obs
+            obs_dict[self.policy_obs_group.name][observation.name] = obs
+        return obs_dict
 
     """ The methods combined with outer model forms the step function
     NOTE: the outer user handles the loop frequency.
@@ -319,8 +341,7 @@ class UnitreeA1Real:
     def get_obs(self):
         """ The function that refreshes the buffer and return the observation vector.
         """
-        self.compute_observation()
-        return self.obs_dict
+        return self.compute_policy_observation()
 
     """ ROS callbacks and handlers that update the buffer """
     def update_low_state(self, ros_msg):
@@ -391,6 +412,15 @@ class UnitreeA1Real:
             nodes = [n for n in rosnode.get_node_names() if n != me]
             rosnode.kill_nodes(nodes)   # XML-RPC kill
             rospy.signal_shutdown("Too long between images!")
+  
+        obs_dict = self.compute_vision_observation()[self.vision_obs_group.name]
+        obs_dict[observation_groups.CAMERA_IMAGE.name] = np.transpse(self.image_buffer, (2, 0, 1))[None]
+        model_preds, visual_embedding = self.vision_model.predict(obs_dict, rnn_only=False)
+        embedding_msg = Float32MultiArrayStamped()
+        embedding_msg.header.stamp = rospy.Time.now()
+        embedding_msg.header.frame_id = self.robot_namespace + "/camera_color_optical_frame"
+        embedding_msg.data = visual_embedding[0].tolist()
+        self.visual_embedding_publisher.publish(embedding_msg)
 
 
     def dummy_handler(self, ros_msg):

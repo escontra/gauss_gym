@@ -54,16 +54,16 @@ def main(argv=None):
   else:
     raise ValueError("Must specify logdir as 'default' or a path.")
 
-  # runner = deployment_runner_onnx.DeploymentRunner(
-  #         cfg,
-  #         model_name='image_encoder',
-  #         execution_provider='CUDAExecutionProvider')
+  runner = deployment_runner_onnx.DeploymentRunner(
+          cfg,
+          model_name='image_encoder',
+          execution_provider='CUDAExecutionProvider')
 
-  # if cfg["runner"]["resume"]:
-  #   assert cfg["runner"]["load_run"] != "", (
-  #     "Must specify load_run when resuming."
-  #   )
-  #   runner.load(log_root)
+  if cfg["runner"]["resume"]:
+    assert cfg["runner"]["load_run"] != "", (
+      "Must specify load_run when resuming."
+    )
+    runner.load(log_root)
 
   log_level = rospy.DEBUG if parsed.debug else rospy.INFO
   rospy.init_node("a1_visual", log_level=log_level)
@@ -74,6 +74,7 @@ def main(argv=None):
     deploy_cfg=deploy_cfg,
     move_by_gamepad=False,
     vision_only=True,
+    vision_model=runner,
     )
   unitree_real_env.start_ros()
   unitree_real_env.wait_untill_ros_working()
