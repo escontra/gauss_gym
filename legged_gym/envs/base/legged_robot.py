@@ -964,6 +964,8 @@ class LeggedRobot(base_task.BaseTask):
             'feet_names': self.feet_names,
             'base_link_name': self.cfg["asset"]["base_link_name"],
             'camera_link_name': self.cfg["asset"]["camera_link_name"],
+            'dof_pos_limits_low': self.dof_pos_limits[:, 0].cpu().numpy().tolist(),
+            'dof_pos_limits_high': self.dof_pos_limits[:, 1].cpu().numpy().tolist(),
         }
 
     def _create_envs(self):

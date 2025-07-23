@@ -10,27 +10,44 @@ from unitree_legged_msgs.msg import LegsCmd
 from unitree_legged_msgs.msg import Float32MultiArrayStamped
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Joy
 
 from legged_gym.utils import observation_groups
+
+
+ROBOT_JOINT_ORDER = [ # a1_description joint order.
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
+]
 
 
 class UnitreeA1Real:
     """ This is the handler that works for ROS 1 on unitree. """
     def __init__(self,
-            robot_namespace= "a112138",
-            low_state_topic= "/low_state",
-            legs_cmd_topic= "/legs_cmd",
-            forward_depth_topic = "/camera/depth/image_rect_raw",
-            forward_depth_embedding_dims = None,
-            odom_topic= "/odom/filtered",
-            lin_vel_deadband= 0.1,
-            ang_vel_deadband= 0.1,
-            move_by_wireless_remote= False, # if True, command will not listen to move_cmd_subscriber, but wireless remote.
+            robot_namespace: str = "a112138",
+            low_state_topic: str = "/low_state",
+            legs_cmd_topic: str = "/legs_cmd",
+            image_topic: str = "/camera/color/image_raw",
+            image_embedding_topic: str = "/image_encoder",
+            odom_topic: str = "/odom/filtered",
+            gamepad_topic: str = "/sdl_gamepad/joy",
             move_by_gamepad=True, # if True, command will not listen to move_cmd_subscriber, but gamepad.
-            cfg= dict(),
-            extra_cfg= dict(),
-            read_only: bool = False,
-            use_vision: bool = True
+            cfg=dict(),
+            deploy_cfg=dict(),
+            vision_only: bool = False,
         ):
         """
         NOTE:
@@ -48,167 +65,37 @@ class UnitreeA1Real:
         self.robot_namespace = robot_namespace
         self.low_state_topic = low_state_topic
         self.legs_cmd_topic = legs_cmd_topic
-        self.forward_depth_topic = forward_depth_topic
-        self.forward_depth_embedding_dims = forward_depth_embedding_dims
+        self.image_topic = image_topic
+        self.image_embedding_topic = image_embedding_topic
         self.odom_topic = odom_topic
-        self.lin_vel_deadband = lin_vel_deadband
-        self.ang_vel_deadband = ang_vel_deadband
-        self.move_by_wireless_remote = move_by_wireless_remote
+        self.gamepad_topic = gamepad_topic
         self.move_by_gamepad = move_by_gamepad
-        self.read_only = read_only
-        self.use_vision = use_vision
-        assert not (self.move_by_wireless_remote and self.move_by_gamepad), "Cannot move by both wireless remote and gamepad at the same time."
-        self.cfg = cfg
-        self.extra_cfg = dict(
-            torque_limits= np.array([33.5] * 12, dtype=np.float32), # Nm
-            dof_map= [ # from isaacgym simulation joint order to URDF order
-                3, 4, 5,
-                0, 1, 2,
-                9, 10,11,
-                6, 7, 8,
-            ], # real_joint_idx = dof_map[sim_joint_idx]
-            dof_names= [ # NOTE: order matters. This list is the order in simulation.
-                "FL_hip_joint",
-                "FL_thigh_joint",
-                "FL_calf_joint",
+        self.vision_only = vision_only
 
-                "FR_hip_joint",
-                "FR_thigh_joint",
-                "FR_calf_joint",
-                
-                "RL_hip_joint",
-                "RL_thigh_joint",
-                "RL_calf_joint",
-                
-                "RR_hip_joint",
-                "RR_thigh_joint",
-                "RR_calf_joint",
-            ],
-            # motor strength is multiplied directly to the action.
-            motor_strength= np.ones(12, dtype=np.float32),
-        ); self.extra_cfg.update(extra_cfg)
+        self.cfg = cfg
+        self.deploy_cfg = deploy_cfg
+
+        # Buffers for commands and actions.
+        self.command_buf = np.zeros((self.num_envs, 3,), dtype=np.float32) # zeros for initialization
+        self.actions = np.zeros((self.num_envs, 12), dtype=np.float32)
+
+        self.process_configs()
+        self.policy_uses_vision = observation_groups.IMAGE_ENCODER_LATENT in self.observation_groups[self.cfg["policy"]["obs_key"]].observations
+        if self.vision_only:
+            assert self.policy_uses_vision, "IMAGE_ENCODER_LATENT is not in the observation group."
+
+    def process_configs(self):
+        self.sim_dof_order = self.deploy_cfg["dof_names"]
+        # Map from isaacgym joint order to robot joint order.
+        self.dof_map = [ROBOT_JOINT_ORDER.index(name) for name in self.sim_dof_order]
+        self.torque_limits = np.array([33.5] * 12, dtype=np.float32)
         if "torque_limits" in self.cfg["control"]:
             if isinstance(self.cfg["control"]["torque_limits"], (tuple, list)):
                 for i in range(len(self.cfg["control"]["torque_limits"])):
-                    self.extra_cfg["torque_limits"][i] = self.cfg["control"]["torque_limits"][i]
+                    self.torque_limits[i] = self.cfg["control"]["torque_limits"][i]
             else:
-                self.extra_cfg["torque_limits"][:] = self.cfg["control"]["torque_limits"]
-        self.command_buf = np.zeros((self.num_envs, 3,), dtype=np.float32) # zeros for initialization
-        self.actions = np.zeros((1, 12), dtype=np.float32)
+                self.torque_limits[:] = self.cfg["control"]["torque_limits"]
 
-        self.process_configs()
-
-        if self.move_by_gamepad:
-            self.vel_x = 0.0
-            self.vel_y = 0.0
-            self.ang_vel = 0.0
-            self.quit_pressed = False
-            self.start_pressed = False
-            self._initialize_gamepad()
-
-    def _initialize_gamepad(self):
-      # Initialize Pygame and its joystick module
-      pygame.init()
-      pygame.joystick.init()
-
-      # Check for joystick(s)
-      joystick_count = pygame.joystick.get_count()
-      print(f"Number of joysticks: {joystick_count}")
-      if joystick_count == 0:
-          raise ValueError("No joystick detected.")
-      else:
-          # Initialize the first joystick
-          self.joystick = pygame.joystick.Joystick(0)
-          self.joystick.init()
-          print("Joystick initialized:", self.joystick.get_name())
-
-    def _poll_gamepad(self):
-        for event in pygame.event.get():
-            # Handle axis motion events
-            if event.type == pygame.JOYAXISMOTION:
-                if event.axis == 0:
-                  self.vel_y = event.value
-                  self.command_buf[0, 1] = event.value
-                elif event.axis == 1:
-                  self.command_buf[0, 0] = -1 * event.value
-                elif event.axis == 3:
-                  self.command_buf[0, 2] = -1 * event.value
-            elif event.type == pygame.JOYBUTTONDOWN:
-                if event.button == 0:
-                  self.start_pressed = True
-                elif event.button == 1:
-                  self.quit_pressed = True
-        if self.quit_pressed:
-            self.command_buf[0, :] = 0.
-        if np.abs(self.command_buf[0, 0]) < self.lin_vel_deadband:
-            self.command_buf[0, 0] = 0.
-        if np.abs(self.command_buf[0, 1]) < self.lin_vel_deadband:
-            self.command_buf[0, 1] = 0.
-        if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
-            self.command_buf[0, 2] = 0.
-        rospy.loginfo_throttle(2, f"Vel x: {self.command_buf[0, 0]}, Vel y: {self.command_buf[0, 1]}, Ang vel: {self.command_buf[0, 2]}")
-
-    def start_ros(self):
-        # initialze several buffers so that the system works even without message update.
-        # self.low_state_buffer = LowState() # not initialized, let input message update it.
-        self.base_position_buffer = np.zeros((self.num_envs, 3), dtype=np.float32)
-        if not self.read_only:
-          self.legs_cmd_publisher = rospy.Publisher(
-              self.robot_namespace + self.legs_cmd_topic,
-              LegsCmd,
-              queue_size= 1,
-          )
-        # self.debug_publisher = rospy.Publisher(
-        #     "/DNNmodel_debug",
-        #     Float32MultiArray,
-        #     queue_size= 1,
-        # )
-        # NOTE: this launches the subscriber callback function
-        self.low_state_subscriber = rospy.Subscriber(
-            self.robot_namespace + self.low_state_topic,
-            LowState,
-            self.update_low_state,
-            queue_size= 1,
-        )
-        self.odom_subscriber = rospy.Subscriber(
-            self.robot_namespace + self.odom_topic,
-            Odometry,
-            self.update_base_pose,
-            queue_size= 1,
-        )
-        if not self.move_by_wireless_remote:
-            self.move_cmd_subscriber = rospy.Subscriber(
-                "/cmd_vel",
-                Twist,
-                self.update_move_cmd,
-                queue_size= 1,
-            )
-        self.pose_cmd_subscriber = rospy.Subscriber(
-            "/body_pose",
-            Pose,
-            self.dummy_handler,
-            queue_size= 1,
-        )
-        if not self.read_only and self.use_vision:
-            self.visual_embedding_subscriber = rospy.Subscriber(
-                self.robot_namespace + "/visual_embedding",
-                Float32MultiArrayStamped,
-                self.update_visual_embedding,
-                queue_size= 1,
-            )
-    
-    def wait_untill_ros_working(self):
-        rate = rospy.Rate(100)
-        while not hasattr(self, "low_state_buffer"):
-            rate.sleep()
-        rate = rospy.Rate(100)
-        if not self.read_only and self.use_vision:
-            while not hasattr(self, "visual_embedding_buffer"):
-                print("Waiting for visual embedding buffer...")
-                rate.sleep()
-        rospy.loginfo("UnitreeA1Real.low_state_buffer acquired, stop waiting.")
-        
-    def process_configs(self):
         self.up_axis_idx = 2 # 2 for z, 1 for y -> adapt gravity accordingly
         self.gravity_vec = np.zeros((self.num_envs, 3), dtype=np.float32)
         self.gravity_vec[:, self.up_axis_idx] = -1
@@ -221,8 +108,6 @@ class UnitreeA1Real:
             self.cfg["control"]["stiffness"]["joint"] = [self.cfg["control"]["stiffness"]["joint"]] * 12
         self.d_gains = np.array(self.cfg["control"]["damping"]["joint"], dtype=np.float32)
         self.p_gains = np.array(self.cfg["control"]["stiffness"]["joint"], dtype=np.float32)
-        print(f"P Gains: {self.p_gains}")
-        print(f"D Gains: {self.d_gains}")
 
         self.default_dof_pos = np.zeros(12, dtype=np.float32)
         for i in range(12):
@@ -230,20 +115,12 @@ class UnitreeA1Real:
             default_joint_angle = self.cfg["init_state"]["default_joint_angles"][name]
             self.default_dof_pos[i] = default_joint_angle
 
-        print(f"Default dof pos: {self.default_dof_pos}")
-
         self.computer_clip_torque = self.cfg["control"]["computer_clip_torque"]
-        rospy.loginfo("Computer Clip Torque (onboard) is " + str(self.computer_clip_torque))
-        if self.computer_clip_torque:
-            self.torque_limits = self.extra_cfg["torque_limits"]
-            rospy.loginfo("[Env] torque limit: {:.1f} {:.1f} {:.1f}".format(*self.torque_limits[:3]))
         
         # store config values to attributes to improve speed
         # self.clip_obs = self.cfg["normalization"]["clip_observations"]
         self.control_type = self.cfg["control"]["control_type"]
         self.action_scale = self.cfg["control"]["action_scale"]
-        print(f"Action scale: {self.action_scale}")
-        rospy.loginfo("[Env] action scale: {:.1f}".format(self.action_scale))
         self.clip_actions = self.cfg["normalization"]["clip_actions"]
         if self.cfg["normalization"]["clip_actions_method"] == "hard":
             rospy.loginfo("clip_actions_method with hard mode")
@@ -253,7 +130,6 @@ class UnitreeA1Real:
             self.clip_actions_high = np.array(self.cfg["normalization"]["clip_actions_high"], dtype=np.float32)
         else:
             rospy.loginfo("clip_actions_method is " + str(self.cfg["normalization"]["clip_actions_method"]))
-        self.dof_map = self.extra_cfg["dof_map"]
 
         # get ROS params for hardware configs
         self.joint_limits_high = np.array([
@@ -264,33 +140,103 @@ class UnitreeA1Real:
             rospy.get_param(self.robot_namespace + "/joint_limits/{}_min".format(s)) \
             for s in ["hip", "thigh", "calf"] * 4
         ])
-        print(f"Joint limits high: {self.joint_limits_high}")
-        print(f"Joint limits low: {self.joint_limits_low}")
+        self.joint_limits_low_sim = np.array(self.deploy_cfg["dof_pos_limits_low"])
+        self.joint_limits_high_sim = np.array(self.deploy_cfg["dof_pos_limits_high"])
+
+        rospy.loginfo('UnitreeA1Real:')
+        rospy.loginfo(f'SIM JOINT ORDER: {self.sim_dof_order}')
+        rospy.loginfo(f'ROBOT JOINT ORDER: {ROBOT_JOINT_ORDER}')
+        rospy.loginfo(f'Dof map: {self.dof_map}')
+        rospy.loginfo(f'Torque limits: {self.torque_limits.tolist()}')
+        rospy.loginfo(f"Joint limits high: {self.joint_limits_high.tolist()}")
+        rospy.loginfo(f"Joint limits low: {self.joint_limits_low.tolist()}")
+        rospy.loginfo(f"Joint limits low sim: {self.joint_limits_low_sim.tolist()}")
+        rospy.loginfo(f"Joint limits high sim: {self.joint_limits_high_sim.tolist()}")
+        rospy.loginfo(f"P Gains: {self.p_gains.tolist()}")
+        rospy.loginfo(f"D Gains: {self.d_gains.tolist()}")
+        rospy.loginfo(f"Default dof pos: {self.default_dof_pos.tolist()}")
+        rospy.loginfo("Computer Clip Torque (onboard) is " + str(self.computer_clip_torque))
+        if self.computer_clip_torque:
+            rospy.loginfo("[Env] torque limit: {:.1f} {:.1f} {:.1f}".format(*self.torque_limits[:3]))
+        rospy.loginfo("[Env] action scale: {:.1f}".format(self.action_scale))
+
+    def start_ros(self):
+        # initialze several buffers so that the system works even without message update.
+        # self.low_state_buffer = LowState() # not initialized, let input message update it.
+        self.base_position_buffer = np.zeros((self.num_envs, 3), dtype=np.float32)
+        if not self.vision_only:
+          self.legs_cmd_publisher = rospy.Publisher(
+              self.robot_namespace + self.legs_cmd_topic,
+              LegsCmd,
+              queue_size=1,
+          )
+        self.low_state_subscriber = rospy.Subscriber(
+            self.robot_namespace + self.low_state_topic,
+            LowState,
+            self.update_low_state,
+            queue_size=1,
+        )
+        self.odom_subscriber = rospy.Subscriber(
+            self.robot_namespace + self.odom_topic,
+            Odometry,
+            self.update_base_pose,
+            queue_size=1,
+        )
+        self.gamepad_subscriber = rospy.Subscriber(
+            self.robot_namespace + self.gamepad_topic,
+            Joy,
+            self.update_gamepad,
+            queue_size=1,
+        )
+        self.pose_cmd_subscriber = rospy.Subscriber(
+            "/body_pose",
+            Pose,
+            self.dummy_handler,
+            queue_size=1,
+        )
+        if self.vision_only:
+            self.visual_embedding_publisher = rospy.Publisher(
+                self.robot_namespace + self.image_embedding_topic,
+                Float32MultiArrayStamped,
+                queue_size=1,
+            )
+        if not self.vision_only and self.policy_uses_vision:
+            self.visual_embedding_subscriber = rospy.Subscriber(
+                self.robot_namespace + self.image_embedding_topic,
+                Float32MultiArrayStamped,
+                self.update_visual_embedding,
+                queue_size= 1,
+            )
     
-    def clip_action_before_scale(self, actions):
+    def wait_untill_ros_working(self):
+        rate = rospy.Rate(100)
+        while not hasattr(self, "low_state_buffer"):
+            rate.sleep()
+        rate = rospy.Rate(100)
+        rospy.loginfo("UnitreeA1Real.low_state_buffer acquired, stop waiting.")
+        if not self.vision_only and self.policy_uses_vision:
+            while not hasattr(self, "visual_embedding_buffer"):
+                print("Waiting for visual embedding buffer...")
+                rate.sleep()
+        rospy.loginfo("UnitreeA1Real.visual_embedding_buffer acquired, stop waiting.")
+        
+    def process_action(self, actions):
         if getattr(self, "clip_actions_method", None) == "hard":
             actions = np.clip(actions, self.clip_actions_low, self.clip_actions_high)
         else:
             actions = np.clip(actions, -self.clip_actions, self.clip_actions)
+        self.actions[:] = actions
+        actions = actions * self.action_scale
+        if self.cfg["control"]["computer_clip_torque"]:
+            dof_vel = self.dof_vel
+            dof_pos_ = self.dof_pos - self.default_dof_pos
+            p_limits_low = (-self.torque_limits) + self.d_gains * dof_vel
+            p_limits_high = (self.torque_limits) + self.d_gains * dof_vel
+            actions_low = (p_limits_low / self.p_gains) + dof_pos_
+            actions_high = (p_limits_high / self.p_gains) + dof_pos_
+            actions = np.clip(actions, actions_low, actions_high)
         return actions
-
-    def clip_by_torque_limit(self, actions_scaled):
-        """ Different from simulation, we reverse the process and clip the actions directly,
-        so that the PD controller runs in robot but not our script.
-        """
-        control_type = self.cfg["control"]["control_type"]
-        if control_type == "P":
-            p_limits_low = (-self.torque_limits) + self.d_gains*self.dof_vel
-            p_limits_high = (self.torque_limits) + self.d_gains*self.dof_vel
-            actions_low = (p_limits_low/self.p_gains) - self.default_dof_pos + self.dof_pos
-            actions_high = (p_limits_high/self.p_gains) - self.default_dof_pos + self.dof_pos
-            # actions_low = (p_limits_low/self.p_gains) + self.dof_pos
-            # actions_high = (p_limits_high/self.p_gains) + self.dof_pos
-        else:
-            raise NotImplementedError
-
-        return np.clip(actions_scaled, actions_low, actions_high)
-
+           
     """ Get obs components and cat to a single obs input """
     def compute_observation(self):
         """Use the updated low_state_buffer to compute observation vector."""
@@ -330,13 +276,7 @@ class UnitreeA1Real:
     def send_action(self, actions, kp=None, kd=None):
         """ The function that send commands to the real robot.
         """
-        self.actions[:] = self.clip_action_before_scale(actions)
-        if self.computer_clip_torque:
-            robot_coordinates_action = self.clip_by_torque_limit(self.actions * self.action_scale) + self.default_dof_pos[None]
-        else:
-            rospy.logwarn_throttle(60, "You are using control without any torque clip. The network might output torques larger than the system can provide.")
-            robot_coordinates_action = self.actions * self.action_scale + self.default_dof_pos[None]
-
+        robot_coordinates_action = self.process_action(actions) + self.default_dof_pos[None]
         self.publish_legs_cmd(robot_coordinates_action, kp=kp, kd=kd)
 
     def publish_legs_cmd(self, robot_coordinates_action, kp= None, kd= None):
@@ -366,7 +306,6 @@ class UnitreeA1Real:
         self.compute_observation()
         return self.obs_dict
 
-
     """ ROS callbacks and handlers that update the buffer """
     def update_low_state(self, ros_msg):
         self.low_state_buffer = ros_msg
@@ -375,9 +314,9 @@ class UnitreeA1Real:
             self.command_buf[0, 1] = -self.low_state_buffer.wirelessRemote.lx # right-moving stick is positive
             self.command_buf[0, 2] = -self.low_state_buffer.wirelessRemote.rx # right-moving stick is positive
             # set the command to zero if it is too small
-            if np.linalg.norm(self.command_buf[0, :2]) < self.lin_vel_deadband:
+            if np.linalg.norm(self.command_buf[0, :2]) < self.cfg["commands"]["small_lin_vel_threshold"]:
                 self.command_buf[0, :2] = 0.
-            if np.abs(self.command_buf[0, 2]) < self.ang_vel_deadband:
+            if np.abs(self.command_buf[0, 2]) < self.cfg["commands"]["small_ang_vel_threshold"]:
                 self.command_buf[0, 2] = 0.
         self.low_state_get_time = rospy.Time.now()
   
@@ -395,6 +334,26 @@ class UnitreeA1Real:
         self.command_buf[0, 0] = ros_msg.linear.x
         self.command_buf[0, 1] = ros_msg.linear.y
         self.command_buf[0, 2] = ros_msg.angular.z
+
+    def update_gamepad(self, ros_msg):
+        self.gamepad_buffer = ros_msg
+        lin_vel_range = [0, self.cfg["commands"]["ranges"]["lin_vel"][1]]
+        ang_vel_range = self.cfg["commands"]["ranges"]["ang_vel_yaw"]
+
+        vel_x = ros_msg.axes[1] * (lin_vel_range[1] - lin_vel_range[0]) + lin_vel_range[0]
+        vel_y = -1. * ros_msg.axes[0] * (lin_vel_range[1] - lin_vel_range[0]) + lin_vel_range[0]
+        ang_vel = ros_msg.axes[3] * (ang_vel_range[1] - ang_vel_range[0]) + ang_vel_range[0]
+
+        if np.abs(vel_x) < self.cfg["commands"]["small_lin_vel_threshold"]:
+            vel_x = 0.
+        if np.abs(vel_y) < self.cfg["commands"]["small_lin_vel_threshold"]:
+            vel_y = 0.
+        if np.abs(ang_vel) < self.cfg["commands"]["small_ang_vel_threshold"]:
+            ang_vel = 0.
+
+        self.command_buf[0, 0] = vel_x
+        self.command_buf[0, 1] = vel_y
+        self.command_buf[0, 2] = ang_vel
 
     def dummy_handler(self, ros_msg):
         """ To meet the need of teleop-legged-robots requirements """

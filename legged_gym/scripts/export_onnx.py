@@ -180,11 +180,12 @@ def main(argv = None):
           runner.value,
           runner.value_obs_space,
        ),
-       'image_encoder': (
+    }
+    if runner.image_encoder_enabled:
+      model_dicts['image_encoder'] = (
           runner.image_encoder,
           runner.image_encoder_obs_space,
-       )
-    }
+      )
     if parsed.model_name == 'all':
       export_models = list(model_dicts.keys())
     else:
@@ -209,6 +210,8 @@ def main(argv = None):
       if not space_path.exists():
         with open(space_path, "wb") as file:
           pickle.dump(value, file)
+    deploy_cfg_path = output_path / "deploy_config.yaml"
+    config.Config(runner.env.deploy_config()).save(deploy_cfg_path)
 
 
 if __name__ == "__main__":
