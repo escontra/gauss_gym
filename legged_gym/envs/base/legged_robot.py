@@ -1439,16 +1439,16 @@ class LeggedRobot(base_task.BaseTask):
         # sum along decimation axis and dof axis
         return torch.norm(exceeded_torques, p=1, dim=-1).sum(dim=1)
 
-    def _reward_a1_pose(self):
+    def _reward_a1_pose(self, hip_weight: float=1.0, thigh_weight: float=0.1, calf_weight: float=0.1):
       # Stay close to the default pose.
       weights = []
       for name in self.dof_names:
           if 'hip' in name:
-              weights.append(1.0)
+              weights.append(hip_weight)
           elif 'thigh' in name:
-              weights.append(0.3)
+              weights.append(thigh_weight)
           elif 'calf' in name:
-              weights.append(0.1)
+              weights.append(calf_weight)
           else:
               raise ValueError(f"Unknown dof name: {name}")
       weights = torch.tensor(weights, device=self.device)[None]
