@@ -369,8 +369,6 @@ class Runner:
           obs_dict, rew, done, infos = self.env.step(actions)
           if self.reward_normalizer is not None:
             self.reward_normalizer.update(rew, done)
-            if self.multi_gpu:
-              rl_utils.sync_state_dict(self.reward_normalizer, 0)
 
         if self.image_encoder_enabled:
           image_encoder_buffer = infos.pop(f'{self.image_encoder_key}_buffer', None)

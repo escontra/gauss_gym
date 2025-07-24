@@ -252,8 +252,8 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
   init_base_yaw:
-    apply: False
-    range: [0.0, 1.5]
+    apply: True
+    range: [0.0, 0.78]
     operation: "additive"
     distribution: "gaussian"
 

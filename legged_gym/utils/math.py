@@ -293,6 +293,11 @@ def quat_rotate_inverse(q, v):
             shape[0], 3, 1)).squeeze(-1) * 2.0
     return a - b + c
 
+
+def sample_uniform(lower, upper, shape, device):
+    return torch.rand(*shape, device=device) * (upper - lower) + lower
+
+
 def apply_randomization(tensor: Union[torch.Tensor, float], params: Optional[Dict[str, Any]] = None, return_noise: bool = False) -> Union[torch.Tensor, float]:
     if params is None:
         return tensor

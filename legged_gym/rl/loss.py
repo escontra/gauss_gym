@@ -349,6 +349,8 @@ def learn_ppo(
     obs_sym_groups.append(policy_obs_key)
   rl_normalizers = {}
   if algorithm_cfg["normalize_rewards"]:
+    if multi_gpu:
+      utils.sync_state_dict(reward_normalizer, 0)
     rl_normalizers["rewards"] = reward_normalizer
 
   for batch in buffer.reccurent_mini_batch_generator(
