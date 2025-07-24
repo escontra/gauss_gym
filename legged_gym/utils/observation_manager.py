@@ -1,6 +1,7 @@
 import torch
 from typing import List
-from legged_gym.utils import observation_groups, math, timer, space
+from legged_gym.utils import observation_groups, math, timer, space, math
+from legged_gym.rl import utils as rl_utils
 import collections
 
 
@@ -13,6 +14,7 @@ class ObsManager:
         self.obs_buffers_per_group = collections.defaultdict(dict)
         self.latency_buffers_per_group = collections.defaultdict(dict)
         self.delayed_frames_per_group = collections.defaultdict(dict)
+        self.noise_level_per_group = collections.defaultdict(dict)
         self.obs_available_for_timestep = collections.defaultdict(dict)
         self.obs_group_cfg = obs_groups_cfg
         self.initialize_env_ids = []
@@ -52,6 +54,10 @@ class ObsManager:
                     self.latency_buffers_per_group[obs_group.name][obs.name] = sync_latency_buffer
                 else:
                     self.latency_buffers_per_group[obs_group.name][obs.name] = self._sample_latency_buffer(latency_range, env.num_envs)
+                if obs.noise_range:
+                    self.noise_level_per_group[obs_group.name][obs.name] = math.sample_uniform(
+                      *obs.noise_range, (env.num_envs,), self.device
+                    )
                 self.delayed_frames_per_group[obs_group.name][obs.name] = torch.zeros_like(
                     self.latency_buffers_per_group[obs_group.name][obs.name],
                     dtype=torch.long, device=self.device)
@@ -97,6 +103,10 @@ class ObsManager:
                 self.obs_buffers_per_group[obs_group.name][obs.name][:, env_ids] = 0
                 self.delayed_frames_per_group[obs_group.name][obs.name][env_ids] = 0
                 self.obs_available_for_timestep[obs_group.name][obs.name][:, env_ids] = False
+                if obs.noise_range:
+                    self.noise_level_per_group[obs_group.name][obs.name][env_ids] = math.sample_uniform(
+                      *obs.noise_range, (len(env_ids),), self.device
+                    )
         self.initialize_env_ids = env_ids
 
     @timer.section("compute_obs")
@@ -168,8 +178,8 @@ class ObsManager:
                 ].clone()
 
                 # Add noise, scale, and clip if needed.
-                if obs_group.add_noise and obs.noise:
-                    obs_value = self._add_uniform_noise(obs_value, obs.noise)
+                if obs_group.add_noise and obs.noise_range:
+                    obs_value = self._add_uniform_noise(obs_value, self.noise_level_per_group[obs_group.name][obs.name])
                 if obs.clip:
                     obs_value = obs_value.clip(min=obs.clip[0], max=obs.clip[1])
                 if obs.scale is not None:
@@ -181,5 +191,6 @@ class ObsManager:
         self.initialize_env_ids = []
         return self.obs_dict
 
-    def _add_uniform_noise(self, obs, noise_level):
+    def _add_uniform_noise(self, obs, noise_level: torch.Tensor):
+        noise_level = rl_utils.broadcast_right(noise_level, obs)
         return obs + (2 * torch.rand_like(obs) - 1) * noise_level

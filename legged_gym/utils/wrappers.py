@@ -5,6 +5,8 @@ import copy
 from legged_gym.utils import space, observation_groups
 from legged_gym.envs.base import legged_robot
 from legged_gym.rl import experience_buffer
+from legged_gym.rl import utils as rl_utils
+from legged_gym.utils import math
 
 
 class Wrapper:
@@ -45,6 +47,11 @@ class ImageEncoderWrapper(Wrapper):
     self.image_encoder_hidden_states = self.image_encoder.reset(
       torch.zeros(self.env.num_envs, dtype=torch.bool), None)
     self.dones = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.device)
+    self.noise_level = math.sample_uniform(
+      *observation_groups.IMAGE_ENCODER_LATENT.noise_range,
+      (self.env.num_envs,),
+      self.device
+    )
 
   def init_image_encoder_replay_buffer(self, num_steps_per_env: int):
     self.buffer = experience_buffer.ExperienceBuffer(
@@ -72,13 +79,19 @@ class ImageEncoderWrapper(Wrapper):
     for obs_group in self.env.obs_groups:
       if observation_groups.IMAGE_ENCODER_LATENT in obs_group.observations:
         if self.env.obs_groups[self.env.obs_groups.index(obs_group)].add_noise:
-          latent = latent + (2 * torch.rand_like(latent) - 1) * observation_groups.IMAGE_ENCODER_LATENT.noise
+          noise_level = rl_utils.broadcast_right(self.noise_level, latent)
+          latent = latent + (2 * torch.rand_like(latent) - 1) * noise_level
         obs_dict[obs_group.name][observation_groups.IMAGE_ENCODER_LATENT.name] = latent
     return obs_dict
 
   def reset(self):
     self.curr_buffer_idx = 0
     obs_dict = self.env.reset()
+    self.noise_level[:] = math.sample_uniform(
+      *observation_groups.IMAGE_ENCODER_LATENT.noise_range,
+      (self.env.num_envs,),
+      self.device
+    )
 
     if self.buffer is not None:
       self.buffer.update_data(
@@ -109,6 +122,12 @@ class ImageEncoderWrapper(Wrapper):
 
   def step(self, actions: Dict[str, torch.tensor]):
     obs_dict, rew, done, infos = self.env.step(actions)
+    done_ids = done.nonzero(as_tuple=False).flatten()
+    self.noise_level[done_ids] = math.sample_uniform(
+      *observation_groups.IMAGE_ENCODER_LATENT.noise_range,
+      (len(done_ids),),
+      self.device
+    )
     self.dones = torch.logical_or(self.dones, done)
 
     if self._check_observation_available(obs_dict, self.image_encoder_key, self.image_encoder.obs_space):

@@ -8,7 +8,7 @@ class Observation:
   name: str
   func: Callable
   sensor: Union[str, None] = None
-  noise: Union[float, None] = None
+  noise_range: Union[Tuple[float, float], None] = None
   clip: Union[Tuple[float, float], None] = None
   scale: Union[float, None] = None
   latency_range: Tuple[float, float] = (0., 0.)
@@ -59,14 +59,14 @@ BASE_LIN_VEL = Observation(
 BASE_ANG_VEL = Observation(
   name="base_ang_vel",
   func=O.base_ang_vel,
-  noise=0.2,
+  noise_range=(0.1, 0.35),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 PROJECTED_GRAVITY = Observation(
   name="projected_gravity",
   func=O.projected_gravity,
-  noise=0.05,
+  noise_range=(0.025, 0.1),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -78,14 +78,14 @@ VELOCITY_COMMANDS = Observation(
 DOF_POS = Observation(
   name="dof_pos",
   func=O.dof_pos,
-  noise=0.01,
+  noise_range=(0.005, 0.035),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 DOF_VEL = Observation(
   name="dof_vel",
   func=O.dof_vel,
-  noise=1.5,
+  noise_range=(0.3, 1.5),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -184,5 +184,5 @@ IMAGE_ENCODER_LATENT = Observation(
   name="image_encoder",
   func=None,
   ignore_in_observation_manager=True,
-  noise=0.2,
+  noise_range=(0.1, 0.3),
 )
