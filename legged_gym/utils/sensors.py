@@ -426,6 +426,8 @@ class GaussianSplattingRenderer():
             pp_y=scene_pp_y,
             h=self.cam_height,
             w=self.cam_width,
+            motion_blur_frac=0.2,
+            blur_dt=1./30.,
             camera_linear_velocity=scene_linear_velocities,
             camera_angular_velocity=scene_angular_velocities,
             minibatch=1024,

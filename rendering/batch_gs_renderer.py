@@ -221,6 +221,7 @@ class BatchPLYRenderer:
                 dts = -torch.linspace(0, blur_dt, blur_samples, device=self.device)
                 # interleave the original cameras to render more
                 batch_w2cs = repeat(batch_w2cs, 'batch mat1 mat2 -> (batch r) mat1 mat2', r = blur_samples)
+                batch_K = repeat(batch_K, 'batch mat1 mat2 -> (batch r) mat1 mat2', r = blur_samples)
                 # grab the 6-dof velocity vectors
                 batch_vels = torch.cat([camera_linear_velocity[i:i + minibatch], camera_angular_velocity[i:i + minibatch]], dim=-1) # B, 6
                 # also repeat the velocity vectors for each of the blur samples
