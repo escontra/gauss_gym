@@ -39,8 +39,8 @@ env:
     downscale_factor: 5.0
 
     # Cam offset relative to `asset.camera_link_name`.
-    cam_xyz_offset: [0.29, 0.0, 0.06]
-    cam_rpy_offset: [-3.1415927, 0.7853832, 1.5707963]
+    cam_xyz_offset: [0.285, 0.0325, 0.05]
+    cam_rpy_offset: [-3.1415927, 0.7503832, 1.5707963]
 
 observations:
   image_encoder:
