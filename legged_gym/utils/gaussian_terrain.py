@@ -291,6 +291,12 @@ class GaussianSceneManager:
         math.quat_from_y_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][1], 1, self._env.device)),
         math.quat_from_z_rot(self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][2], 1, self._env.device)).detach()
 
+    self.local_rpy_offset = torch.stack([
+      torch.full((self._env.num_envs,), self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][0], device=self._env.device, requires_grad=False),
+      torch.full((self._env.num_envs,), self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][1], device=self._env.device, requires_grad=False),
+      torch.full((self._env.num_envs,), self._env.cfg["env"]["camera_params"]["cam_rpy_offset"][2], device=self._env.device, requires_grad=False),
+    ], dim=-1)
+
     self.robot_frame_transform = math.quat_mul(
       math.quat_from_z_rot(np.pi / 2, 1, self._env.device),
       math.quat_from_y_rot(-np.pi / 2, 1, self._env.device)
@@ -474,7 +480,15 @@ class GaussianSceneManager:
     cam_link_trans, cam_link_quat = self.get_cam_link_pose_world_frame()
     # Apply xyz offset in the local robot frame.
     cam_trans = cam_link_trans + math.quat_apply(cam_link_quat, self.local_offset)
-    cam_quat = math.quat_mul(cam_link_quat, self.cam_rpy_offset.expand(cam_link_quat.shape[0], -1))
+    # cam_quat = math.quat_mul(cam_link_quat, self.cam_rpy_offset.expand(cam_link_quat.shape[0], -1))
+
+    cam_quat_offset = math.quat_mul(
+      math.quat_mul(
+        math.quat_from_x_rot(self.local_rpy_offset[:, 0]),
+        math.quat_from_y_rot(self.local_rpy_offset[:, 1])),
+      math.quat_from_z_rot(self.local_rpy_offset[:, 2])
+    ).detach()
+    cam_quat = math.quat_mul(cam_link_quat, cam_quat_offset)
     return cam_trans, cam_quat
 
   def get_cam_velocity_world_frame(self):

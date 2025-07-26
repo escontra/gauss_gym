@@ -265,8 +265,8 @@ class GaussianSplattingRenderer():
         )
 
         self.viz_state = (None, None)
-        self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device)
-        self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device)
+        self.camera_positions = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
+        self.camera_quats_xyzw = torch.zeros(self.num_envs, 4, device=self.device, requires_grad=False)
         self.env = env
 
         downscale_factor = float(self.env.cfg["env"]["camera_params"]["downscale_factor"])

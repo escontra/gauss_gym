@@ -435,7 +435,7 @@ commands:
   num_commands: 4
   resampling_time: 4. # time before command are changed[s]
   small_lin_vel_threshold: 0.2
-  small_ang_vel_threshold: 0.2
+  small_ang_vel_threshold: 0.05
   ranges:
     lin_vel: [0.2, 1.0]
     ang_vel_yaw: [-1.57, 1.57]
