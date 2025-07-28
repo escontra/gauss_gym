@@ -7,16 +7,24 @@ import time
 from torchvision import transforms
 import matplotlib.pyplot as plt
 
+import pathlib
+from legged_gym import GAUSS_GYM_ROOT_DIR
+print(GAUSS_GYM_ROOT_DIR)
+
 img = Image.open(urlopen(
-    # 'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
     # 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQMXGTLRjhi5Z8LdEFgaFNyR82Pn8wKmdC4Xw&s'
     # 'https://content.homenetiol.com/2000157/2065512/0x0/19ce342addbd4a038bbcadb7dbb00977.jpg'
-    'https://pictures.dealer.com/o/ourismanfairfaxtoyotascion/1234/98e607372ddc4e13abe24a8a01dab278.jpg?impolicy=downsize_bkpt&w=396'
+    # 'https://pictures.dealer.com/o/ourismanfairfaxtoyotascion/1234/98e607372ddc4e13abe24a8a01dab278.jpg?impolicy=downsize_bkpt&w=396'
 ))
 # img_array = torch.tensor(np.array(img)).to('cuda')
 
 # model = timm.create_model('test_convnext.r160_in1k', pretrained=True)
-model = timm.create_model('resnet10t', pretrained=True)
+model_name = 'test_convnext.r160_in1k'
+path = pathlib.Path(GAUSS_GYM_ROOT_DIR) / 'assets' / 'encoders' / model_name
+local_path = f'local-dir:{path}'
+model = timm.create_model(local_path, pretrained=True)
+# model = timm.create_model('resnet10t', pretrained=True)
 model = model.eval()
 print(model.default_cfg)
 model = model.to('cuda')

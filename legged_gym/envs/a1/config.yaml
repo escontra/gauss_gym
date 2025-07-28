@@ -252,7 +252,7 @@ domain_rand:
     operation: "additive"
     distribution: "gaussian"
   init_base_yaw:
-    apply: True
+    apply: False
     range: [0.0, 0.78]
     operation: "additive"
     distribution: "gaussian"
@@ -522,7 +522,8 @@ image_encoder:
     hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
-    model_type: timm_test_convnext
+    from_local: True
+    model_type: timm_test_convnext.r160_in1k
     embedding_dim: 128
     torchaug_transforms: True
 

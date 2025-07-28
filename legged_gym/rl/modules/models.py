@@ -5,12 +5,14 @@ import torch.nn as nn
 from torchvision import transforms
 from typing import Dict, Any, Optional, Tuple, List, Union
 
+from legged_gym import utils
 from legged_gym.utils import math, space
-from legged_gym.rl import utils
+from legged_gym.rl import utils as rl_utils
 from legged_gym.rl.modules import resnet, outs
 from legged_gym.rl.modules.dino import backbones
 from legged_gym.rl.modules.actor_critic import get_activation
 from legged_gym.rl.modules import normalizers
+from legged_gym import GAUSS_GYM_ROOT_DIR
 
 
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
@@ -67,6 +69,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         max_abs_value: Optional[float] = None,
         model_type: str = 'cnn_simple',
         embedding_dim: int = 256,
+        from_local: bool = False,
         dino_pretrained: bool = True,
         torchaug_transforms: bool = True):
 
@@ -77,6 +80,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       obs_space,
       model_type=model_type,
       embedding_dim=embedding_dim,
+      from_local=from_local,
       dino_pretrained=dino_pretrained,
       torchaug_transforms=torchaug_transforms)
     self.cnn_keys = self.image_feature_model.cnn_keys
@@ -174,12 +178,13 @@ class ImageFeature(torch.nn.Module):
       obs_space: Dict[str, space.Space],
       model_type: str = 'cnn_simple',
       embedding_dim: int = 256,
+      from_local: bool = False,
       dino_pretrained: bool = True,
       torchaug_transforms: bool = True):
     super().__init__()
     self._obs_space = obs_space
     self.embedding_dim = embedding_dim
-    _, _, self.cnn_keys, _ = utils.get_mlp_cnn_keys(obs_space)
+    _, _, self.cnn_keys, _ = rl_utils.get_mlp_cnn_keys(obs_space)
     self.model_type = model_type
 
     print(f'{self.__class__.__name__}:')
@@ -203,7 +208,11 @@ class ImageFeature(torch.nn.Module):
           )
         elif self.model_type.startswith('timm'):
           import timm
-          timm_model = timm.create_model(self.model_type[5:], pretrained=dino_pretrained, num_classes=0)
+          model_name = self.model_type[5:]
+          if from_local:
+            model_name = f'local-dir:{GAUSS_GYM_ROOT_DIR}/assets/encoders/{model_name}'
+            utils.print(f'Loading local ImageFeature encoder: {model_name}', color='blue')
+          timm_model = timm.create_model(model_name, pretrained=dino_pretrained, num_classes=0)
           cfg = timm_model.default_cfg
           encoder_dict[key] = nn.Sequential(
             transforms.Normalize(mean=cfg['mean'], std=cfg['std']),
@@ -271,10 +280,10 @@ class ImageFeature(torch.nn.Module):
 
       batch_dims = cnn_obs.shape[:-3]
       spatial_dims = cnn_obs.shape[-3:]
-      cnn_obs = utils.flatten_batch(cnn_obs, spatial_dims) # Shape: [M*N*L*O, C, H, W]
+      cnn_obs = rl_utils.flatten_batch(cnn_obs, spatial_dims) # Shape: [M*N*L*O, C, H, W]
       cnn_obs = self.apply_perturbations(cnn_obs)
       cnn_feat = encoder(cnn_obs)
-      cnn_feat = utils.unflatten_batch(cnn_feat, batch_dims)
+      cnn_feat = rl_utils.unflatten_batch(cnn_feat, batch_dims)
       out_features[key] = cnn_feat
     return out_features
 
@@ -330,7 +339,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     else:
       self.input_projectors = None
 
-    self.mlp_keys, mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = utils.get_mlp_cnn_keys(obs_space, project_dims)
+    self.mlp_keys, mlp_2d_reshape_keys, self.cnn_keys, self.num_mlp_obs = rl_utils.get_mlp_cnn_keys(obs_space, project_dims)
     self.mlp_2d_reshape_keys: List[str] = mlp_2d_reshape_keys or ['_DEFAULT_UNUSED']
     assert self.cnn_keys is None or len(self.cnn_keys) == 0, f"CNN keys are not supported for {self.__class__.__name__}, got: [{self.cnn_keys}]"
     self.obs_size = self.num_mlp_obs
@@ -404,7 +413,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
         if self.max_abs_value is not None:
             processed_obs[k] = torch.clamp(processed_obs[k], -self.max_abs_value, self.max_abs_value)
       if k in self.mlp_2d_reshape_keys:
-        processed_obs[k] = utils.flatten_obs(processed_obs[k], self.obs_space[k].shape)
+        processed_obs[k] = rl_utils.flatten_obs(processed_obs[k], self.obs_space[k].shape)
       if self.symlog_inputs:
         processed_obs[k] = math.symlog(processed_obs[k])
     if self.input_projectors is not None:
@@ -418,7 +427,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     if self.normalize_obs:
       self.obs_normalizer.update(obs)
       if multi_gpu:
-        utils.sync_state_dict(self.obs_normalizer, 0)
+        rl_utils.sync_state_dict(self.obs_normalizer, 0)
 
   def forward(self,
               obs: Dict[str, torch.Tensor],
@@ -440,7 +449,7 @@ class RecurrentMLPModel(torch.nn.Module, RecurrentModel):
     if self.recurrent_skip_connection:
       # Concatenate the processed obs with the rnn state.
       if masks is not None and unpad:
-        processed_obs = utils.unpad_trajectories(processed_obs, masks)
+        processed_obs = rl_utils.unpad_trajectories(processed_obs, masks)
       rnn_state = torch.cat([rnn_state, processed_obs], dim=-1)
 
     # Heads.
@@ -499,7 +508,7 @@ class Memory(torch.nn.Module):
         if masks is not None:  # Batch (update) mode.
             out, _ = self.rnn(input, hidden_states)
             if unpad:
-              out = utils.unpad_trajectories(out, masks)
+              out = rl_utils.unpad_trajectories(out, masks)
             return out, None
         else:  # Inference mode
             out, new_hidden_states = self.rnn(input.unsqueeze(0), hidden_states)

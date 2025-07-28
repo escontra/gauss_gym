@@ -1,0 +1,35 @@
+{
+  "architecture": "test_convnext",
+  "num_classes": 1000,
+  "num_features": 64,
+  "pretrained_cfg": {
+    "tag": "r160_in1k",
+    "custom_load": false,
+    "input_size": [
+      3,
+      160,
+      160
+    ],
+    "fixed_input_size": false,
+    "interpolation": "bicubic",
+    "crop_pct": 0.95,
+    "crop_mode": "center",
+    "mean": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "std": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "num_classes": 1000,
+    "pool_size": [
+      5,
+      5
+    ],
+    "first_conv": "stem.0",
+    "classifier": "head.fc"
+  }
+}

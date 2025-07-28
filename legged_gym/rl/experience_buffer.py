@@ -3,7 +3,8 @@ import torch
 import torch.utils._pytree as pytree
 import dataclasses
 
-from legged_gym.rl import utils
+from legged_gym import utils
+from legged_gym.rl import utils as rl_utils
 
 
 @dataclasses.dataclass
@@ -118,7 +119,7 @@ class ExperienceBuffer:
 
   def _split_and_pad_obs(self, obs_key, dones_key, hidden_states_key=None):
     obs_split = pytree.tree_map(
-      lambda x: utils.split_and_pad_trajectories(x, self.tensor_dict[dones_key]),
+      lambda x: rl_utils.split_and_pad_trajectories(x, self.tensor_dict[dones_key]),
       self.tensor_dict[obs_key],
     )
     obs = pytree.tree_map(
@@ -181,7 +182,7 @@ class ExperienceBuffer:
           else:
             obs_sym[obs_group][key] = symmetry_fn(obs_group, key)(value).detach()
 
-    mini_batch_size = self.num_envs // num_mini_batches
+    mini_batch_size = max(self.num_envs // num_mini_batches, 1)
     for _ in range(num_learning_epochs):
       first_traj = 0
       with torch.no_grad():
@@ -193,6 +194,10 @@ class ExperienceBuffer:
         start = i * mini_batch_size
         stop = (i + 1) * mini_batch_size
         last_traj = first_traj + torch.sum(last_was_done[:, start:stop]).item()
+        if first_traj == last_traj:
+          utils.print(f'Skipping empty mini batch start: {start}, stop: {stop}, first_traj: {first_traj}, last_traj: {last_traj} obs: {obs["image_encoder"]["camera_image"].shape}', color='yellow')
+          first_traj = last_traj
+          continue
 
         masks_batch = traj_masks[:, first_traj:last_traj]
         obs_batch, obs_sym_batch, hidden_states_batch, hidden_states_sym_batch = {}, {}, {}, {}
@@ -204,7 +209,7 @@ class ExperienceBuffer:
             hs = pytree.tree_map(lambda x: x[:, first_traj:last_traj], hidden_states[obs_group])
             hidden_states_batch[obs_group] = hs
             if symmetry_flip_latents:
-              hidden_states_sym_batch[obs_group] = utils.mirror_latent(hs)
+              hidden_states_sym_batch[obs_group] = rl_utils.mirror_latent(hs)
             else:
               hidden_states_sym_batch[obs_group] = hs
 
