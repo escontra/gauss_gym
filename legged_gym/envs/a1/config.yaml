@@ -222,22 +222,22 @@ domain_rand:
     distribution: "uniform"
   focal_length:
     apply: True
-    range: [0.0, 8.0]
+    range: [0.0, 3.0]
     operation: "additive"
     distribution: "gaussian"
   principal_point:
     apply: True
-    range: [0.0, 2.0]
+    range: [0.0, 1.0]
     operation: "additive"
     distribution: "gaussian"
   camera_pos:
     apply: True
-    range: [-0.04, 0.04]
+    range: [-0.02, 0.02]
     operation: "additive"
     distribution: "uniform"
   camera_rot:
     apply: True
-    range: [-0.1, 0.1]
+    range: [-0.03, 0.03]
     operation: "additive"
     distribution: "uniform"
 
@@ -380,23 +380,23 @@ rewards:
   only_positive_rewards: True
 
   tracking_lin_vel_x:
-    scale: 1.0
+    scale: 2.0
     tracking_sigma: 0.25
   tracking_lin_vel_y:
-    scale: 1.0
+    scale: 2.0
     tracking_sigma: 0.25
   tracking_ang_vel:
-    scale: 0.5
+    scale: 1.0
     tracking_sigma: 0.25
   lin_vel_z:
     scale: -1.0
   ang_vel_xy:
     scale: -0.05
   dof_acc:
-    scale: -1.5e-8
+    scale: -2.5e-8
     method: last
   torques:
-    scale: -0.0001
+    scale: -0.0002
   feet_air_time:
     scale: 1.0
     min_air_time: 0.3
@@ -438,7 +438,7 @@ commands:
   small_ang_vel_threshold: 0.05
   ranges:
     lin_vel: [0.2, 1.0]
-    ang_vel_yaw: [-1.57, 1.57]
+    ang_vel_yaw: [-1., 1.]
     heading: [-3.14, 3.14]
 
 normalization:
