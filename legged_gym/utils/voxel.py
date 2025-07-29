@@ -76,3 +76,22 @@ def unsaturated_voxels_mask(occupancy_grid: torch.Tensor):
     saturated_columns = lower_saturated | upper_saturated
     unsaturated_mask = ~saturated_columns
     return unsaturated_mask
+
+def voxels_to_heightmap(voxel_one_hot: torch.Tensor, centroid_grid: torch.Tensor, min_height: float=-1.0, max_height: float=1.0) -> torch.Tensor:
+    """
+    Convert voxel occupancy and centroid grid back to heightmap.
+    Args:
+        voxel_one_hot: [..., N, M, H] bool tensor indicating voxel occupancy
+        centroid_grid: [..., N, M, H] float tensor containing normalized height within voxel
+        min_height: Minimum height value used when creating voxels
+        max_height: Maximum height value used when creating voxels
+    Returns:
+        heightmap: [..., N, M] float tensor of reconstructed heights
+    """
+    H = voxel_one_hot.shape[-1]
+    voxel_height = (max_height - min_height) / (H - 2)
+    z_norm = centroid_grid.sum(dim=-1)  # [..., N, M]
+    voxel_indices = voxel_one_hot.to(torch.int64).argmax(dim=-1)  # [..., N, M]
+    heightmap = min_height + (voxel_indices.to(z_norm.dtype) - 1 + z_norm) * voxel_height
+    heightmap = heightmap.clamp(min_height, max_height)
+    return heightmap

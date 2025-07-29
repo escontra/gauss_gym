@@ -13,6 +13,8 @@ import viser.transforms as vtf
 import plotly.graph_objects as go
 
 from legged_gym import utils
+from legged_gym.utils import voxel
+from isaacgym import gymtorch, gymapi, gymutil
 
 
 if sys.version_info < (3, 9):
@@ -77,10 +79,16 @@ class LeggedRobotViser:
         self._robot_camera_handle = None
         self._contact_handles = None
         self._mesh_handle = None
+        self._pred_height_pcl_handle = None
+        self._gt_height_pcl_handle = None
+        self._transform_handle = None
 
         self.scene_manager = self.env.scene_manager
         self.current_rendered_env_id = 0
         self.last_rendered_env_id = -1 # set to -1 to force camera update on first render
+
+        self.cam_local_offset_orig = self.scene_manager.local_offset.cpu().numpy()
+        self.cam_local_rpy_offset_orig = self.scene_manager.local_rpy_offset.cpu().numpy()
 
         self.add_gui_elements()
 
@@ -242,7 +250,7 @@ class LeggedRobotViser:
         with self.camera_viz_folder:
             self.show_robot_frustum = self.server.gui.add_checkbox(
                 "Show Robot Frustum",
-                initial_value=False,
+                initial_value=True,
                 hint="Toggle robot frustum visibility"
             )
             self.show_robot_velocities = self.server.gui.add_checkbox(
@@ -259,6 +267,27 @@ class LeggedRobotViser:
                 "Show Contacts",
                 initial_value=False,
                 hint="Toggle contacts visibility"
+            )
+      
+        self.transform_viz_folder = self.server.gui.add_folder("Transform Visualization")
+        with self.transform_viz_folder:
+            self.show_transform_handle = self.server.gui.add_checkbox(
+                "Show Transform Handle",
+                initial_value=False,
+                hint="Toggle transform handle visibility"
+            )
+
+        self.encoder_pred_folder = self.server.gui.add_folder("Encoder Predictions")
+        with self.encoder_pred_folder:
+            self.show_pred_height_pcl = self.server.gui.add_checkbox(
+                "Show Predicted Height PCL",
+                initial_value=False,
+                hint="Toggle predicted height PCL visibility"
+            )
+            self.show_pred_vel = self.server.gui.add_checkbox(
+                "Show Predicted Velocity",
+                initial_value=False,
+                hint="Toggle predicted velocity visibility"
             )
 
         self.gaussian_splatting_viz_folder = self.server.gui.add_folder("Gaussian Splatting")
@@ -354,10 +383,22 @@ class LeggedRobotViser:
                 name="/terrain",
                 vertices=mesh.vertices,
                 faces=mesh.faces,
+                opacity=0.5,
                 color=(0.282, 0.247, 0.361),
                 side='double',
                 visible=self.show_mesh.value,
             )
+            with self.mesh_viz_folder:
+              self.mesh_opacity_slider = self.server.gui.add_slider(
+                  "mesh opacity",
+                  min=0.0,
+                  max=1.0,
+                  step=0.01,
+                  initial_value=0.5,
+              )
+            @self.mesh_opacity_slider.on_update
+            def _(event) -> None:
+              self._mesh_handle.opacity = event.target.value
         else:
             self._mesh_handle.visible = self.show_mesh.value
             self._mesh_handle.vertices = mesh.vertices
@@ -446,6 +487,82 @@ class LeggedRobotViser:
             client.camera.position = position
             client.camera.look_at = lookat
 
+    def update_pred_height_pcl(self, env_idx: int):
+
+        voxel_dist = self.env.image_encoder_dists['critic/ray_cast']
+        occupancy_grid, centroid_grid = voxel_dist.pred()
+        occupancy_grid_probs = torch.nn.functional.sigmoid(voxel_dist.occupancy_dist.logit[env_idx]).cpu().numpy()
+        occupancy_grid, centroid_grid = occupancy_grid[env_idx], centroid_grid[env_idx]
+        pred_heightmap = voxel.voxels_to_heightmap(occupancy_grid, centroid_grid).cpu().numpy()
+        occupancy_grid = occupancy_grid.cpu().numpy()
+        centroid_grid = centroid_grid.cpu().numpy()
+        occupancy_grid_probs = (occupancy_grid * occupancy_grid_probs).sum(axis=-1)
+        gt_heights = self.env.sensors["raycast_grid"].ray_hits_world[env_idx].cpu().numpy()
+
+        base_height = self.env.root_states[env_idx, 2].item()
+        base_init_height = self.env.base_init_state[2].item()
+        pred_heightmap = -1. * pred_heightmap + base_height - base_init_height
+        
+        pred_heights = gt_heights.copy()
+        pred_heights[..., 2] = pred_heightmap
+
+        gt_heights = gt_heights.reshape(-1, 3)
+        pred_heights = pred_heights.reshape(-1, 3)
+        pred_probs = occupancy_grid_probs.reshape(-1,).clip(0.0, 1.0)
+        pred_colors = np.zeros_like(pred_heights, dtype=np.uint8)
+        pred_colors[..., 0] = 255 * pred_probs
+
+        if self._pred_height_pcl_handle is None:
+            self._pred_height_pcl_handle = self.server.scene.add_point_cloud(
+                name="/pred_height_pcl",
+                points=pred_heights,
+                colors=pred_colors,
+                point_shape='circle',
+                point_size=0.03,
+                visible=self.show_pred_height_pcl.value,
+            )
+            self._gt_height_pcl_handle = self.server.scene.add_point_cloud(
+                name="/gt_height_pcl",
+                points=gt_heights,
+                colors=(0, 0, 255),
+                point_shape='circle',
+                point_size=0.03,
+                visible=self.show_pred_height_pcl.value,
+            )
+        else:
+            self._pred_height_pcl_handle.visible = self.show_pred_height_pcl.value
+            self._pred_height_pcl_handle.points = pred_heights
+            self._pred_height_pcl_handle.colors = pred_colors
+            self._gt_height_pcl_handle.visible = self.show_pred_height_pcl.value
+            self._gt_height_pcl_handle.points = gt_heights
+
+    def update_transform_handle(self, env_idx: int):
+        root_state = self.env.root_states[env_idx].cpu().numpy()
+        root_rot = vtf.SO3.from_quaternion_xyzw(root_state[3:7])
+        root_pos = root_state[:3]
+
+        if self._transform_handle is None:
+            self._transform_handle = self.server.scene.add_transform_controls(
+                name="/transform_handle",
+                wxyz=root_rot.wxyz,
+                position=root_pos,
+                visible=self.show_transform_handle.value,
+            )
+        
+            @self._transform_handle.on_update
+            def _(event) -> None:
+              self.env.root_states[env_idx, :3] = torch.tensor(event.target.position, device=self.env.device)
+              target_rot = vtf.SO3(event.target.wxyz)
+              self.env.root_states[env_idx, 3:7] = torch.tensor(target_rot.as_quaternion_xyzw(), device=self.env.device)
+              env_ids_int32 = torch.tensor([env_idx], dtype=torch.int32, device=self.env.device)
+              self.env.gym.set_actor_root_state_tensor_indexed(self.env.sim,
+                                                          gymtorch.unwrap_tensor(self.env.root_states),
+                                                          gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        else:
+            self._transform_handle.visible = self.show_transform_handle.value
+            self._transform_handle.wxyz = root_rot.wxyz
+            self._transform_handle.position = root_pos
+            
     def update_contacts(self, env_idx: int):
         foot_contact_sensor = self.env.sensors["foot_contact_sensor"]
         feet_edge_pos = foot_contact_sensor.feet_edge_pos[env_idx].cpu().numpy().reshape(-1, 3)
@@ -531,6 +648,68 @@ class LeggedRobotViser:
                     cast_shadow=False,
                     receive_shadow=False,
                 )
+            with self.transform_viz_folder:
+              self.x_slider = self.server.gui.add_slider(
+                  "cam offset x",
+                  min=-0.1,
+                  max=0.1,
+                  step=0.001,
+                  initial_value=0.,
+              )
+              self.y_slider = self.server.gui.add_slider(
+                  "cam offset y",
+                  min=-0.1,
+                  max=0.1,
+                  step=0.001,
+                  initial_value=0.,
+              )
+              self.z_slider = self.server.gui.add_slider(
+                  "cam offset z",
+                  min=-0.1,
+                  max=0.1,
+                  step=0.001,
+                  initial_value=0.
+              )
+              self.rpy_r_slider = self.server.gui.add_slider(
+                  "cam rot r",
+                  min=-0.5,
+                  max=0.5,
+                  step=0.005,
+                  initial_value=0.,
+              )
+              self.rpy_p_slider = self.server.gui.add_slider(
+                  "cam rot p",
+                  min=-0.5,
+                  max=0.5,
+                  step=0.005,
+                  initial_value=0.,
+              )
+              self.rpy_y_slider = self.server.gui.add_slider(
+                  "cam rot y",
+                  min=-0.5,
+                  max=0.5,
+                  step=0.005,
+                  initial_value=0.
+              )
+            @self.x_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_offset[env_idx, 0] = self.cam_local_offset_orig[env_idx, 0] + event.target.value
+            @self.y_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_offset[env_idx, 1] = self.cam_local_offset_orig[env_idx, 1] + event.target.value
+            @self.z_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_offset[env_idx, 2] = self.cam_local_offset_orig[env_idx, 2] + event.target.value
+            @self.rpy_r_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_rpy_offset[env_idx, 0] = self.cam_local_rpy_offset_orig[env_idx, 0] + event.target.value
+            @self.rpy_p_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_rpy_offset[env_idx, 1] = self.cam_local_rpy_offset_orig[env_idx, 1] + event.target.value
+            @self.rpy_y_slider.on_update
+            def _(event) -> None:
+              self.scene_manager.local_rpy_offset[env_idx, 2] = self.cam_local_rpy_offset_orig[env_idx, 2] + event.target.value
+
         else:
             self._frustrum_handle.image = rgb_image
             self._frustrum_handle.wxyz = final_quat
@@ -854,6 +1033,9 @@ class LeggedRobotViser:
         self.update_camera_frustum(env_idx)
         self.update_velocities(env_idx)
         self.update_contacts(env_idx)
+        if hasattr(self.env, 'image_encoder_dists'):
+            self.update_pred_height_pcl(env_idx)
+        self.update_transform_handle(env_idx)
         # Update IsaacGym visualization
         self._isaac_world_node.position = root_pos
         self._isaac_world_node.wxyz = viser_quat

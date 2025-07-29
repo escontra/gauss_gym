@@ -26,9 +26,13 @@ def test_heightmap_to_voxels():
     occupancy_grid_torch, centroid_grid_torch = voxel.heightmap_to_voxels(
         heightmap_torch, num_voxels, min_height, max_height
     )
+    heightmap_torch = voxel.voxels_to_heightmap(occupancy_grid_torch, centroid_grid_torch, min_height, max_height)
 
     print('PyTorch - Occupancy grid shape:', occupancy_grid_torch.shape)
     print('PyTorch - Centroid grid shape:', centroid_grid_torch.shape)
+    print('PyTorch - Heightmap shape:', heightmap_torch.shape)
+    print(f'Orig heightmap:\n{heightmap_np}')
+    print(f'Reconstructed heightmap:\n{heightmap_torch.cpu().numpy()}')
 
     unsaturated_mask = voxel.unsaturated_voxels_mask(occupancy_grid_torch)
     

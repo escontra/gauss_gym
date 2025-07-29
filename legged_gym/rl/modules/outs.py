@@ -331,7 +331,17 @@ class VoxelDist:
     self.centroid_dist = MSE(centroid_grid)
 
   def pred(self) -> Tuple[torch.Tensor, torch.Tensor]:
-    return (self.occupancy_dist.pred(), self.centroid_dist.pred())
+    # select the bin with the highest occupancy logit as one-hot
+    occ_logits = self.occupancy_dist.logit
+    idx = occ_logits.argmax(dim=-1, keepdim=True)
+    one_hot = torch.zeros_like(occ_logits, dtype=torch.bool)
+    one_hot.scatter_(-1, idx, True)
+    # get centroid predictions and mask non-selected bins
+    centroids = self.centroid_dist.pred()
+    masked_centroids = torch.where(one_hot, centroids, torch.zeros_like(centroids))
+    return one_hot, masked_centroids
+
+    # return (self.occupancy_dist.pred(), self.centroid_dist.pred())
 
   @torch.jit.unused
   def occupancy_grid_loss(self, event: torch.Tensor) -> torch.Tensor:

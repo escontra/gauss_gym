@@ -105,10 +105,10 @@ class ImageEncoderWrapper(Wrapper):
       self.curr_buffer_idx = 1
 
     with torch.no_grad():
-      _, self.image_encoder_rnn_state, self.image_encoder_hidden_states = self.image_encoder(
+      self.env.image_encoder_dists, self.image_encoder_rnn_state, self.image_encoder_hidden_states = self.image_encoder(
         obs_dict[self.image_encoder_key],
         self.image_encoder_hidden_states,
-        rnn_only=True
+        rnn_only=not self.env.use_viser
       )
     return self.add_latent_to_obs_dict(obs_dict, self.image_encoder_rnn_state)
 
@@ -150,10 +150,10 @@ class ImageEncoderWrapper(Wrapper):
 
       # Encode the new image.
       with torch.no_grad():
-        _, self.image_encoder_rnn_state, self.image_encoder_hidden_states = self.image_encoder(
+        self.env.image_encoder_dists, self.image_encoder_rnn_state, self.image_encoder_hidden_states = self.image_encoder(
           obs_dict[self.image_encoder_key],
           self.image_encoder_hidden_states,
-          rnn_only=True
+          rnn_only=not self.env.use_viser
         )
 
       if self.buffer is not None:
