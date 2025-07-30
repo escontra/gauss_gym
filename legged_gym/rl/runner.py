@@ -159,7 +159,7 @@ class Runner:
       image_encoder_parameters = list(self.image_encoder.recurrent_model.parameters())
       if not self.cfg["image_encoder"]["freeze_encoder"]:
         image_encoder_parameters.extend(list(self.image_encoder.image_feature_model.parameters()))
-      self.image_encoder_optimizer = torch.optim.Adam(
+      self.image_encoder_optimizer = torch.optim.AdamW(
         image_encoder_parameters, lr=self.image_encoder_learning_rate_scheduler(0)
       )
 

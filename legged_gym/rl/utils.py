@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.utils._pytree as pytree
 import torch.distributed as torch_distributed
+import torch.nn.functional as F
 
 from legged_gym import utils
 
@@ -276,3 +277,10 @@ def flatten_batch(tensor: torch.Tensor, obs_size: List[int]) -> torch.Tensor:
 @torch.jit.ignore
 def unflatten_batch(tensor: torch.Tensor, batch_size: List[int]) -> torch.Tensor:
   return tensor.reshape(*batch_size, *tensor.shape[1:])
+
+@torch.jit.ignore
+def pad_to_multiple(x: torch.Tensor, patch_size: int, mode='constant', value=0):
+    H, W = x.shape[-2:]
+    pad_h = (patch_size - H % patch_size) % patch_size
+    pad_w = (patch_size - W % patch_size) % patch_size
+    return F.pad(x, (0, pad_w, 0, pad_h), mode=mode, value=value)

@@ -69,6 +69,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
         max_abs_value: Optional[float] = None,
         model_type: str = 'cnn_simple',
         embedding_dim: int = 256,
+        freeze_encoder: bool = False,
         from_local: bool = False,
         dino_pretrained: bool = True,
         torchaug_transforms: bool = True):
@@ -76,6 +77,7 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
     super().__init__()
     print(f'{self.__class__.__name__}:')
     self.obs_space = obs_space
+    self.freeze_encoder = freeze_encoder
     self.image_feature_model = ImageFeature(
       obs_space,
       model_type=model_type,
@@ -83,6 +85,9 @@ class RecurrentCNNModel(torch.nn.Module, RecurrentModel):
       from_local=from_local,
       dino_pretrained=dino_pretrained,
       torchaug_transforms=torchaug_transforms)
+    if self.freeze_encoder:
+      utils.print('Freezing image feature model', color='blue')
+      self.image_feature_model.requires_grad_(False)
     self.cnn_keys = self.image_feature_model.cnn_keys
     self.mlp_obs_space = {**obs_space, **self.image_feature_model.modified_obs_space()}
     dont_normalize_keys = dont_normalize_keys or []
@@ -282,6 +287,9 @@ class ImageFeature(torch.nn.Module):
       spatial_dims = cnn_obs.shape[-3:]
       cnn_obs = rl_utils.flatten_batch(cnn_obs, spatial_dims) # Shape: [M*N*L*O, C, H, W]
       cnn_obs = self.apply_perturbations(cnn_obs)
+      if self.model_type.startswith('dino'):
+        # Pad to multiple of 14.
+        cnn_obs = rl_utils.pad_to_multiple(cnn_obs, 14)
       cnn_feat = encoder(cnn_obs)
       cnn_feat = rl_utils.unflatten_batch(cnn_feat, batch_dims)
       out_features[key] = cnn_feat

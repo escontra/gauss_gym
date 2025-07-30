@@ -526,6 +526,7 @@ image_encoder:
     model_type: timm_test_convnext.r160_in1k
     embedding_dim: 128
     torchaug_transforms: True
+    freeze_encoder: False
 
 policy:
   class_name: RecurrentMLPModel
