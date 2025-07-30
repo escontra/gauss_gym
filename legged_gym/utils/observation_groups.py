@@ -59,14 +59,14 @@ BASE_LIN_VEL = Observation(
 BASE_ANG_VEL = Observation(
   name="base_ang_vel",
   func=O.base_ang_vel,
-  noise_range=(0.1, 0.35),
+  noise_range=(0.2, 0.2),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 PROJECTED_GRAVITY = Observation(
   name="projected_gravity",
   func=O.projected_gravity,
-  noise_range=(0.025, 0.1),
+  noise_range=(0.05, 0.05),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -78,14 +78,14 @@ VELOCITY_COMMANDS = Observation(
 DOF_POS = Observation(
   name="dof_pos",
   func=O.dof_pos,
-  noise_range=(0.005, 0.035),
+  noise_range=(0.01, 0.01),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
 DOF_VEL = Observation(
   name="dof_vel",
   func=O.dof_vel,
-  noise_range=(0.3, 1.5),
+  noise_range=(1.5, 1.5),
   latency_range=(0.04-0.0125, 0.04+0.0075),
 )
 
@@ -184,5 +184,5 @@ IMAGE_ENCODER_LATENT = Observation(
   name="image_encoder",
   func=None,
   ignore_in_observation_manager=True,
-  noise_range=(0.1, 0.3),
+  noise_range=(0.2, 0.2),
 )
