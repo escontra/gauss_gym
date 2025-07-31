@@ -205,6 +205,8 @@ class ImageFeature(torch.nn.Module):
               resnet.BasicBlock, [2, 2, 2, 2], num_classes=embedding_dim)
         elif self.model_type.startswith('dino'):
           dino = getattr(backbones, self.model_type)(pretrained=dino_pretrained)
+          if hasattr(dino, "patch_size"):
+            dino.register_forward_pre_hook(lambda module, inputs: (backbones.CenterPadding(dino.patch_size)(inputs[0]).clone(),))
           encoder_dict[key] = nn.Sequential(
             transforms.Normalize(
                 mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, inplace=True),
@@ -287,9 +289,6 @@ class ImageFeature(torch.nn.Module):
       spatial_dims = cnn_obs.shape[-3:]
       cnn_obs = rl_utils.flatten_batch(cnn_obs, spatial_dims) # Shape: [M*N*L*O, C, H, W]
       cnn_obs = self.apply_perturbations(cnn_obs)
-      if self.model_type.startswith('dino'):
-        # Pad to multiple of 14.
-        cnn_obs = rl_utils.pad_to_multiple(cnn_obs, 14)
       cnn_feat = encoder(cnn_obs)
       cnn_feat = rl_utils.unflatten_batch(cnn_feat, batch_dims)
       out_features[key] = cnn_feat

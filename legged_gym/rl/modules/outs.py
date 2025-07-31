@@ -4,6 +4,7 @@ import numpy as np
 import torch.utils._pytree as pytree
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from legged_gym.utils import math, space
 from legged_gym.rl.modules import decoder
@@ -335,13 +336,13 @@ class VoxelDist:
     occ_logits = self.occupancy_dist.logit
     idx = occ_logits.argmax(dim=-1, keepdim=True)
     one_hot = torch.zeros_like(occ_logits, dtype=torch.bool)
-    one_hot.scatter_(-1, idx, True)
+    one_hot = F.one_hot(idx, num_classes=occ_logits.size(-1)).to(torch.bool)
+    one_hot = torch.squeeze(one_hot, dim=-2)
+
     # get centroid predictions and mask non-selected bins
     centroids = self.centroid_dist.pred()
     masked_centroids = torch.where(one_hot, centroids, torch.zeros_like(centroids))
     return one_hot, masked_centroids
-
-    # return (self.occupancy_dist.pred(), self.centroid_dist.pred())
 
   @torch.jit.unused
   def occupancy_grid_loss(self, event: torch.Tensor) -> torch.Tensor:
