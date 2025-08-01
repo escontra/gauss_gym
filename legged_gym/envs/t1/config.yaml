@@ -186,6 +186,7 @@ asset:
                   [-0.1015, -0.05, -0.03]] # x,y,z [m]
   feet_contact_radius: 0.01
 
+  disable_joint_limits: True
   disable_gravity: False
   collapse_fixed_joints: False
   fix_base_link: False
@@ -207,7 +208,7 @@ curriculum:
 
   dof_friction:
     apply: True
-    epochs: 3000
+    epochs: 0
     update_every: 10
     start: 0.1
     end: 0.0
@@ -227,22 +228,22 @@ domain_rand:
     distribution: "uniform"
   focal_length:
     apply: True
-    range: [0.0, 8.0]
+    range: [0.0, 3.0]
     operation: "additive"
     distribution: "gaussian"
   principal_point:
     apply: True
-    range: [0.0, 2.0]
+    range: [0.0, 1.0]
     operation: "additive"
     distribution: "gaussian"
   camera_pos:
     apply: True
-    range: [-0.04, 0.04]
+    range: [-0.02, 0.02]
     operation: "additive"
     distribution: "uniform"
   camera_rot:
     apply: True
-    range: [-0.1, 0.1]
+    range: [-0.03, 0.03]
     operation: "additive"
     distribution: "uniform"
 
@@ -295,7 +296,7 @@ domain_rand:
 
   motor_strength:
     apply: True
-    range: [0.9, 1.1]
+    range: [0.8, 1.2]
     operation: "scaling"
     distribution: "uniform"
   motor_error:
@@ -311,7 +312,7 @@ domain_rand:
     distribution: "uniform"
   dof_damping:
     apply: True
-    range: [0.95, 1.05]
+    range: [0.9, 1.1]
     operation: "scaling"
     distribution: "uniform"
   dof_damping_ankles:
@@ -412,9 +413,9 @@ rewards:
   t1_pose:
     scale: 1.0
   dof_acc:
-    scale: -1.e-7
+    scale: -1.e-8
   dof_pos_limits:
-    scale: -1.0
+    scale: -5.0
     soft_dof_pos_limit: 1.0
   collision:
     scale: -1.0
@@ -521,9 +522,11 @@ image_encoder:
     hidden_layer_sizes: [512, 256, 256]
     symlog_inputs: True
     normalize_obs: True
-    model_type: timm_test_convnext
+    from_local: True
+    model_type: timm_test_convnext.r160_in1k
     embedding_dim: 128
     torchaug_transforms: True
+    freeze_encoder: False
 
 policy:
   class_name: RecurrentMLPModel
@@ -595,8 +598,8 @@ algorithm:
     damping: -0.001
   desired_kl: 0.01
   kl_key: actions
-  symmetry_loss: True
-  symmetry_augmentation: False
+  symmetry_loss: False
+  symmetry_augmentation: True
   symmetry_flip_latents: True
   symmetry_coefs:
     actions: 3.0
@@ -611,6 +614,7 @@ algorithm:
     actions: 1.0
   train_image_encoder: True
   image_encoder_batch_size: 48
+  normalize_rewards: False
 
 runner:
   record_video: True
