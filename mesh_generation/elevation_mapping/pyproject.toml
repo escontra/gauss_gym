@@ -1,0 +1,7 @@
+[project]
+name = "em"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["notebook", "zarr", "matplotlib", "plotly", "rich", "opencv-python", "IPython", "scipy", "imageio", "pathlib", "huggingface_hub"]
