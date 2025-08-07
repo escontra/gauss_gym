@@ -17,7 +17,7 @@ from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation as R, Slerp
 from pytictac import Timer
 
-TOLERANCE = 100 # 20
+TOLERANCE = 100  # 20
 
 
 def pq_to_se3(p, q):
@@ -221,7 +221,14 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
             lidar_colors = np.zeros_like(lidar_points)
             lidar_points_mask = np.zeros(lidar_points.shape[0], dtype=bool)
 
-            tf_t_lidar = get_closest_tf(lidar_timestamp)
+            tf = get_closest_tf(lidar_timestamp)
+
+            if ODOM_TAG == "dlio_map_odometry":
+                dlio_world_to_hesai = tf
+                odom_to_box_base = dlio_world_to_hesai @ attrs_to_se3(mission_root["hesai_points_undistorted"].attrs)
+                odom_to_base__tlidar = odom_to_box_base @ np.linalg.inv(base_to_box_base)
+            elif ODOM_TAG == "anymal_state_odometry":
+                odom_to_base__tlidar = tf
 
             image_idx_lookup = {}
             for image_tag in image_tags:
@@ -230,29 +237,28 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
                 image_idx_lookup[image_tag] = idx
 
             for image_tag, idx in image_idx_lookup.items():
-                # TODO check if it works under motion
-                print(f"Motion compensation and tf lookup interpolation not verified!!")
+                image_timestamp = image_timestamps[image_tag][idx]
+
+                tf = get_closest_tf(image_timestamp)
 
                 if ODOM_TAG == "dlio_map_odometry":
-                  dlio_world_to_hesai = tf_t_lidar  # FYI
-                  odom_to_box_base = dlio_world_to_hesai @ attrs_to_se3(
-                                  mission_root["hesai_points_undistorted"].attrs
-                              )  # hesai to box_base
-                  tf_t_lidar = odom_to_box_base @ np.linalg.inv(base_to_box_base)  # box_base to box_base
+                    dlio_world_to_hesai = tf
+                    odom_to_box_base = dlio_world_to_hesai @ attrs_to_se3(
+                        mission_root["hesai_points_undistorted"].attrs
+                    )
+                    odom_to_base__tcam = odom_to_box_base @ np.linalg.inv(base_to_box_base)
+                elif ODOM_TAG == "anymal_state_odometry":
+                    odom_to_base__tcam = tf
 
-                image_timestamp = image_timestamps[image_tag][idx]
-                tf_t_camera = get_closest_tf(image_timestamp)
                 # compute relate pointcloud motion
-                t1_t2_motion = tf_t_camera @ np.linalg.inv(tf_t_lidar)
+                t1_t2_motion = odom_to_base__tcam @ np.linalg.inv(odom_to_base__tlidar)
                 box_base_image = attrs_to_se3(mission_root[image_tag].attrs)
                 box_base_lidar = attrs_to_se3(mission_root[lidar_tag].attrs)
 
                 # if ODOM_TAG == "anymal_state_odometry":
                 lidar_to_box_base = attrs_to_se3(mission_root[lidar_tag].attrs)
                 box_base_to_lidar = np.linalg.inv(lidar_to_box_base)
-                odom_to_lidar = tf_t_lidar @ base_to_box_base @ box_base_to_lidar
-                # elif ODOM_TAG == "dlio_map_odometry":
-                #   odom_to_lidar = np.linalg.inv(tf_t_lidar)
+                odom_to_lidar = odom_to_base__tlidar @ base_to_box_base @ box_base_to_lidar
 
                 # get translation from lidar_timestamp to image timestamp
                 box_lidar_image = np.linalg.inv(box_base_lidar @ np.linalg.inv(box_base_image))
@@ -275,7 +281,6 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
                 # 0 == dynamic, 1 == not dynamic
                 mask_image = grey_erosion(mask_image, size=(TOLERANCE, TOLERANCE))
 
-
                 # with Timer('valid ray stuff'):
                 valid_rays = np.unique(mapping_image[mask_image])
                 valid_rays = valid_rays[valid_rays >= 0]  # Remove -1 values
@@ -284,18 +289,18 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
                 # with Timer('load rgb stuff'):
                 rgb_image = Image.open(mission_folder / "images" / image_tag / f"{idx:06d}.jpeg")
                 rgb_image = np.array(rgb_image)
-                
+
                 # with Timer('color stuff 1'):
                 ray_indices = mapping_image[mask_image]
 
                 # with Timer('color stuff 2'):
-                rgb_image = torch.from_numpy(rgb_image).to('cuda:0')
-                mask_image = torch.from_numpy(mask_image).to('cuda:0')
+                rgb_image = torch.from_numpy(rgb_image).to("cuda:0")
+                mask_image = torch.from_numpy(mask_image).to("cuda:0")
                 valid_colors = rgb_image[mask_image] / 255.0
-                
+
                 # with Timer('color stuff 3'):
-                lidar_colors = torch.from_numpy(lidar_colors).to('cuda:0')
-                ray_indices = torch.from_numpy(ray_indices).to('cuda:0')
+                lidar_colors = torch.from_numpy(lidar_colors).to("cuda:0")
+                ray_indices = torch.from_numpy(ray_indices).to("cuda:0")
                 lidar_colors[ray_indices] = valid_colors
                 lidar_colors = lidar_colors.cpu().numpy()
 
@@ -310,11 +315,10 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
                 pcd += pcd_keep
 
                 if bar.n % 50 == 0:
-                  pcd = pcd.voxel_down_sample(voxel_size=0.02)
-                  pcd = pcd.remove_duplicated_points()
+                    pcd = pcd.voxel_down_sample(voxel_size=0.02)
+                    pcd = pcd.remove_duplicated_points()
 
                 if visu_3d:
-
                     print(f"Visualizing lidar points for lidar_id {lidar_id} and image_tag {image_tag}")
                     # Point cloud with mask (e.g. non-human points) - red, larger, opaque
                     pcd_keep.paint_uniform_color([0, 1, 0])  # green
@@ -410,7 +414,6 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
 
                 mission_root[f"{lidar_tag}_filtered"]["points"][lidar_id] = lidar_points_filtered
                 mission_root[f"{lidar_tag}_filtered"]["valid"][lidar_id] = nr_points
-
 
 
 if __name__ == "__main__":
