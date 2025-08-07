@@ -221,7 +221,7 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
             lidar_colors = np.zeros_like(lidar_points)
             lidar_points_mask = np.zeros(lidar_points.shape[0], dtype=bool)
 
-            base_odom_t_lidar = get_closest_tf(lidar_timestamp)
+            tf_t_lidar = get_closest_tf(lidar_timestamp)
 
             image_idx_lookup = {}
             for image_tag in image_tags:
@@ -233,19 +233,26 @@ def filter_lidar(mission_root, lidar_tags, image_tags, mission_folder):
                 # TODO check if it works under motion
                 print(f"Motion compensation and tf lookup interpolation not verified!!")
 
+                if ODOM_TAG == "dlio_map_odometry":
+                  dlio_world_to_hesai = tf_t_lidar  # FYI
+                  odom_to_box_base = dlio_world_to_hesai @ attrs_to_se3(
+                                  mission_root["hesai_points_undistorted"].attrs
+                              )  # hesai to box_base
+                  tf_t_lidar = odom_to_box_base @ np.linalg.inv(base_to_box_base)  # box_base to box_base
+
                 image_timestamp = image_timestamps[image_tag][idx]
-                base_odom_t_camera = get_closest_tf(image_timestamp)
+                tf_t_camera = get_closest_tf(image_timestamp)
                 # compute relate pointcloud motion
-                t1_t2_motion = base_odom_t_camera @ np.linalg.inv(base_odom_t_lidar)
+                t1_t2_motion = tf_t_camera @ np.linalg.inv(tf_t_lidar)
                 box_base_image = attrs_to_se3(mission_root[image_tag].attrs)
                 box_base_lidar = attrs_to_se3(mission_root[lidar_tag].attrs)
 
-                if ODOM_TAG == "anymal_state_odometry":
-                  lidar_to_box_base = attrs_to_se3(mission_root[lidar_tag].attrs)
-                  box_base_to_lidar = np.linalg.inv(lidar_to_box_base)
-                  odom_to_lidar = base_odom_t_lidar @ base_to_box_base @ box_base_to_lidar
-                elif ODOM_TAG == "dlio_map_odometry":
-                  odom_to_lidar = np.linalg.inv(base_odom_t_lidar)
+                # if ODOM_TAG == "anymal_state_odometry":
+                lidar_to_box_base = attrs_to_se3(mission_root[lidar_tag].attrs)
+                box_base_to_lidar = np.linalg.inv(lidar_to_box_base)
+                odom_to_lidar = tf_t_lidar @ base_to_box_base @ box_base_to_lidar
+                # elif ODOM_TAG == "dlio_map_odometry":
+                #   odom_to_lidar = np.linalg.inv(tf_t_lidar)
 
                 # get translation from lidar_timestamp to image timestamp
                 box_lidar_image = np.linalg.inv(box_base_lidar @ np.linalg.inv(box_base_image))
