@@ -120,3 +120,24 @@ class T1(LeggedRobot):
       weights = torch.tensor(weights, device=self.device)[None]
       reward =  torch.exp(-torch.sum(torch.square(self.dof_pos - self.default_dof_pos) * weights, dim=-1))
       return reward
+
+    def _reward_dof_vel_head(self):
+        # Penalize dof velocity of the head
+        idxs = [self.dof_names.index(name) for name in ['Head_pitch', 'AAHead_yaw']]
+        return torch.sum(torch.square(self.dof_vel[:, idxs]), dim=-1)
+
+    def _reward_dof_acc_head(self, method: str='mean'):
+        # Penalize dof accelerations
+        # Use the last dof acc if method is 'last', 'mean' to use the mean of
+        # the substeps.
+        idxs = [self.dof_names.index(name) for name in ['Head_pitch', 'AAHead_yaw']]
+        if method == 'last':
+            dof_acc = self.substep_dof_acc[:, -1, :]
+        elif method == 'mean':
+            dof_acc = torch.mean(self.substep_dof_acc, dim=1)
+        else:
+            raise ValueError(f'Invalid method: {method}')
+        reward = torch.sum(torch.square(dof_acc[:, idxs]), dim=-1)
+        return reward
+
+        

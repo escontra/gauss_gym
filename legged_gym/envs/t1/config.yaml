@@ -412,6 +412,10 @@ rewards:
     scale: -0.1 # -0.5
   t1_pose:
     scale: 1.0
+  dof_vel_head:
+    scale: -0.1
+  dof_acc_head:
+    scale: -0.0
   dof_acc:
     scale: -1.e-8
   dof_pos_limits:
