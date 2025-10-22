@@ -3,7 +3,7 @@ set -ex
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
-rm -rf /etc/apt/sources.list.d/cuda.list
+# rm -rf /etc/apt/sources.list.d/cuda.list
 
 # Create overall workspace
 source ${SCRIPT_DIR}/source_common.sh
