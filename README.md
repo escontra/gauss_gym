@@ -31,7 +31,7 @@
 
 Clone `gauss_gym` and install.
 ```bash
-git clone https://github.com/Alescontrela/gauss_gym.git
+git clone https://github.com/escontra/gauss_gym.git
 cd gauss_gym
 bash setup_dev.sh
 ```
