@@ -18,3 +18,4 @@ dependencies:
   - s5cmd
   - unzip
   - zlib
+  - crypt
