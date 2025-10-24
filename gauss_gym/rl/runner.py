@@ -614,7 +614,10 @@ class Runner:
         )
         completion_stats = {k: v['mean_window'] for k, v in completion_snapshot.items()}
         task_curriculum_stats = self.env.update_curriculum(
-          {k.lstrip('completion/'): v for k, v in completion_stats.items()}
+          {
+            (k.split('completion/', 1)[1] if k.startswith('completion/') else k): v
+            for k, v in completion_stats.items()
+          }
         )
         task_curriculum_stats = {
           f'task_curriculum/{k}': v for k, v in task_curriculum_stats.items()

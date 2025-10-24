@@ -153,12 +153,12 @@ terrain:
     max_num_scenes: 10
     iphone_data:
       class_name: GaussGymData
-      split_frac: 0.5
+      split_frac: 1.0
       repo_id: 'escontra/gauss_gym_data'
       scene: ''
     grand_tour:
       class_name: GrandTourData
-      split_frac: 0.5
+      split_frac: 0.0
       mission: ''
     arkit:
       class_name: ARKitData
