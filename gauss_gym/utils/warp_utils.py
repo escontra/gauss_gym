@@ -56,7 +56,6 @@ def ray_cast(ray_starts_world, ray_directions_world, wp_mesh):
     dtype=wp.vec3,
     shape=(num_rays,),
     copy=False,
-    owner=False,
     device=wp_mesh.device,
   )
   ray_directions_world_wp = wp.types.array(
@@ -64,7 +63,6 @@ def ray_cast(ray_starts_world, ray_directions_world, wp_mesh):
     dtype=wp.vec3,
     shape=(num_rays,),
     copy=False,
-    owner=False,
     device=wp_mesh.device,
   )
   ray_hits_world = torch.zeros((num_rays, 3), device=ray_starts_world.device)
@@ -74,7 +72,6 @@ def ray_cast(ray_starts_world, ray_directions_world, wp_mesh):
     dtype=wp.vec3,
     shape=(num_rays,),
     copy=False,
-    owner=False,
     device=wp_mesh.device,
   )
   wp.launch(
@@ -131,7 +128,6 @@ def nearest_point(points, wp_mesh):
     dtype=wp.vec3,
     shape=(num_points,),
     copy=False,
-    owner=False,
     device=wp_mesh.device,
   )
   mesh_points = torch.zeros((num_points, 3), device=points.device)
@@ -141,7 +137,6 @@ def nearest_point(points, wp_mesh):
     dtype=wp.vec3,
     shape=(num_points,),
     copy=False,
-    owner=False,
     device=wp_mesh.device,
   )
   wp.launch(
