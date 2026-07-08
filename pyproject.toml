@@ -17,7 +17,9 @@ dependencies = [
     "isaacgym",
     "viser==1.0.0",
     "plotly==6.2.0",
-    "warp-lang==1.7.1",
+    # 1.7.1 fails cuda_init on CUDA 13.x drivers (falls back to CPU); 1.10.1 is
+    # the last release supporting py3.8
+    "warp-lang==1.10.1",
     "ruamel.yaml==0.18.12",
     "wandb[media]==0.19.8",
     "plyfile==1.0.3",
@@ -29,7 +31,9 @@ dependencies = [
     "trimesh[recommend]==4.7.4",
     "scipy==1.10.1",
     "einops==0.8.0",
-    "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git",
+    # gsplat master as of the gauss_gym release (2025-10-21); newer commits need
+    # CUDA >= 12.2 (cuda/std/optional) and pull in nvtx, which has no py3.8 wheels
+    "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@65042cc501d1cdbefaf1d6f61a9a47575eec8c71",
     "tensorflow-cpu==2.11.* ; platform_machine == 'x86_64' and python_version < '3.11'",
     "tdigest",
     "msgpack",
